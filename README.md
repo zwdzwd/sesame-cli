@@ -116,5 +116,11 @@ is a 10-byte *unpadded* record. It is fuzzed and run under ASan/UBSan.
 
 ## License
 
-MIT, matching sesame. Note `preprocessCore` is LGPL-2 — its `qnorm.c` must not
-be copied; the quantile-normalization replacement is clean-room.
+MIT, matching sesame.
+
+The quantile-normalization step is a clean-room reimplementation rather than a
+use of `preprocessCore` (`LGPL >= 2`). Not because the licences are
+incompatible — LGPL permits linking from MIT, and the R package does exactly
+that — but because copying `qnorm.c` in would mean relicensing code we do not
+own, and vendoring it as LGPL would make this project mixed-licence and burden a
+static binary with LGPL's relink obligation. See `NUMERICS.md` (D8).

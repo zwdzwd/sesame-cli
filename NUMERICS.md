@@ -24,9 +24,29 @@ arbitrary-precision oracle showing sesame is closer to truth.
 ### D8 — the one difference I could not eliminate, and why
 
 `normalize.quantiles.use.target` is the only compiled third-party dependency in
-the QCDPB path. **preprocessCore is LGPL-2 and sesame is MIT**, so `qnorm.c` may
-not be read or copied. It was therefore characterized purely by black-box
-probing:
+the QCDPB path. preprocessCore is `LGPL (>= 2)`; sesame-cli is MIT.
+
+**To be precise, since it is easy to get wrong:** LGPL exists specifically to
+permit linking from code under any licence, including MIT — that is what
+separates it from GPL. The R package already does exactly this (MIT, with
+`importFrom(preprocessCore, normalize.quantiles.use.target)`), and it is fine.
+What is *not* permitted is copying `qnorm.c` into an MIT source tree and
+relabelling it MIT: we do not hold the copyright, so we cannot relicense it.
+
+So this is a **trade, not an impossibility**. Vendoring `qnorm.c` and keeping it
+LGPL would probably buy bit-exactness and erase this entry, at the cost of:
+
+- the project becoming mixed-licence (MIT + an LGPL component) rather than MIT;
+- LGPL's relink obligation on static linking — we would have to ship object
+  files or source so a user can substitute their own preprocessCore, which
+  directly undercuts the "one static binary, no strings" goal that motivates
+  sesame-cli in the first place;
+- extraction anyway: preprocessCore's `include/` + stubs are `LinkingTo:`
+  plumbing for R packages, not a system library a standalone C program can link.
+
+Given the measured cost below is ~2 ULP on a value in [0,1] — biologically and
+numerically meaningless — the clean-room is judged the better side of that
+trade. It was characterized purely by black-box probing:
 
 | probe | observed |
 |---|---|

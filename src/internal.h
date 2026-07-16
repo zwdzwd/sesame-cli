@@ -29,10 +29,11 @@ double sesame__median_sorted(const double *x, int32_t n);
 
 void sesame__sort(double *x, int32_t n);
 
-/* preprocessCore::normalize.quantiles.use.target, CLEAN-ROOM (preprocessCore is
- * LGPL-2, sesame is MIT: qnorm.c must not be read or copied). Characterized by
- * black-box probing; see the comment in numerics.c. x_sorted must be ascending
- * and NaN-free; tgt is sorted in place; out holds n doubles. */
+/* preprocessCore::normalize.quantiles.use.target, CLEAN-ROOM -- characterized by
+ * black-box probing rather than vendored, to keep sesame-cli single-licence and
+ * free of LGPL's relink obligation on static linking. See NUMERICS.md (D8).
+ * x_sorted must be ascending and NaN-free; tgt is sorted in place; out holds n
+ * doubles. */
 void sesame__qnorm_use_target(const double *x_sorted, int32_t n,
                               double *tgt, int32_t m, double *out);
 

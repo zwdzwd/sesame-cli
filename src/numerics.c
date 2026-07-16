@@ -93,8 +93,14 @@ double sesame__median_sorted(const double *x, int32_t n)
 
 /* preprocessCore::normalize.quantiles.use.target(matrix(x), target).
  *
- * CLEAN-ROOM. preprocessCore is LGPL-2 and sesame is MIT, so qnorm.c must not
- * be read or copied. This was characterized purely by black-box probing:
+ * CLEAN-ROOM, characterized purely by black-box probing.
+ *
+ * Not because LGPL and MIT cannot mix -- LGPL exists precisely to allow linking
+ * from any licence, and the R package already does so. Rather: copying qnorm.c
+ * into an MIT tree would mean relicensing code we do not own, and vendoring it
+ * as LGPL would make the project mixed-licence and saddle a single static binary
+ * with LGPL's relink obligation -- which is the opposite of why sesame-cli
+ * exists. See NUMERICS.md (D8) for the trade. Observations:
  *
  *   n==m, no ties  -> sorted(target)[rank(x)]
  *   n!=m           -> quantile(target, (rank-1)/(n-1), type=7)
