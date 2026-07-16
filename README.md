@@ -37,6 +37,8 @@ Only dependency is zlib.
 ```sh
 make            # build ./sesamec
 make test       # golden tests vs the R oracle (needs Rscript + sesame)
+                # uses $SESAMEC_TEST_IDATS (default ~/repo/InfiniumTestIDATs)
+                # for real full-size arrays, in addition to sesameData extdata
 make asan       # build with ASan/UBSan
 make fuzz       # libFuzzer target (Linux/clang; Apple clang has no libFuzzer)
 make fuzz-replay  # corpus replayer under ASan/UBSan (works everywhere)
@@ -58,7 +60,7 @@ R is the oracle forever, not for one release. The golden ladder:
 
 | level | gate |
 |---|---|
-| 1. IDAT reader | `IlluminaID`/`Mean`/`SD`/`NBeads` **bit-identical**. No tolerance. ✅ passing |
+| 1. IDAT reader | `IlluminaID`/`Mean`/`SD`/`NBeads` **bit-identical**. No tolerance. ✅ passing — 33/33 files, ~20.4M bead records, 9 platforms (EPIC, EPIC+, EPICv2, HM27, HM450, Mammal40, MM285, MSA), plain and gzipped |
 | 2. Index | exact set + order equality vs `sesameAnno_buildAddressFile()` / `getMask()` / `backgroundMask()` |
 | 3. Per-step `Q C D P B` | applied independently against a fixed SigDF |
 | 4. End-to-end betas | `quantile(\|Δβ\|, 0.9999) < 1e-6`, 100% of residual attributable to a `NUMERICS.md` entry |

@@ -2,6 +2,11 @@
 # Golden level-1: the C IDAT reader must agree with R's readIDAT() bit-for-bit
 # on IlluminaID / Mean / SD / NBeads. No tolerance -- these are integers.
 #
+# Corpora:
+#   1. sesameData's extdata (small HM450 subset, always available)
+#   2. $SESAMEC_TEST_IDATS (default ~/repo/InfiniumTestIDATs) -- real
+#      full-size arrays across every platform, plain and gzipped.
+#
 # Requires Rscript with sesame + sesameData installed (the R oracle).
 set -eu
 
@@ -13,49 +18,79 @@ trap 'rm -rf "$work"' EXIT
 
 [ -x "$bin" ] || { echo "FAIL: $bin not built"; exit 1; }
 
-extdata=$(Rscript -e 'cat(system.file("extdata","",package="sesameData"))' 2>/dev/null)
-[ -n "$extdata" ] || { echo "SKIP: sesameData not installed"; exit 0; }
-
 fail=0
 pass=0
 
-for f in "$extdata"/*.idat; do
-    name=$(basename "$f")
+check_one() {
+    f=$1
+    label=$2
 
     # R oracle: dump addr/mean/sd/nbeads in file order, no header.
-    Rscript --vanilla -e '
+    if ! Rscript --vanilla -e '
         suppressMessages(library(sesame))
         f <- commandArgs(trailingOnly=TRUE)[1]
         r <- suppressWarnings(sesame:::readIDAT(f))
         q <- r$Quants
         cat(sprintf("%s\t%d\t%d\t%d",
             rownames(q), q[,"Mean"], q[,"SD"], q[,"NBeads"]), sep="\n")
-    ' "$f" > "$work/r.tsv" 2>"$work/r.err" || {
-        echo "FAIL $name: R oracle errored"; sed 's/^/    /' "$work/r.err"; fail=$((fail+1)); continue; }
+    ' "$f" > "$work/r.tsv" 2>"$work/r.err"; then
+        echo "FAIL $label: R oracle errored"
+        sed 's/^/    /' "$work/r.err" | head -3
+        fail=$((fail+1)); return
+    fi
 
-    "$bin" idat-dump --tsv "$f" > "$work/c.tsv" || {
-        echo "FAIL $name: sesamec errored"; fail=$((fail+1)); continue; }
+    if ! "$bin" idat-dump --tsv "$f" > "$work/c.tsv" 2>"$work/c.err"; then
+        echo "FAIL $label: sesamec errored"
+        sed 's/^/    /' "$work/c.err" | head -3
+        fail=$((fail+1)); return
+    fi
 
     if cmp -s "$work/r.tsv" "$work/c.tsv"; then
         n=$(wc -l < "$work/c.tsv" | tr -d ' ')
-        echo "ok   $name ($n records, bit-identical)"
+        printf 'ok   %-52s %8s records\n' "$label" "$n"
         pass=$((pass+1))
     else
-        echo "FAIL $name: C and R differ"
-        echo "  first differing lines (R | C):"
+        echo "FAIL $label: C and R differ"
         diff "$work/r.tsv" "$work/c.tsv" | head -6 | sed 's/^/    /'
         fail=$((fail+1))
     fi
-done
+}
 
-# gz round-trip: the same file gzipped must read identically.
-src=$(ls "$extdata"/*_Grn.idat 2>/dev/null | head -1)
+echo "== corpus 1: sesameData extdata =="
+extdata=$(Rscript -e 'cat(system.file("extdata","",package="sesameData"))' 2>/dev/null || true)
+if [ -n "${extdata:-}" ] && [ -d "$extdata" ]; then
+    for f in "$extdata"/*.idat; do
+        [ -e "$f" ] || continue
+        check_one "$f" "$(basename "$f")"
+    done
+else
+    echo "SKIP: sesameData not installed"
+fi
+
+echo
+echo "== corpus 2: real arrays, all platforms =="
+idats=${SESAMEC_TEST_IDATS:-$HOME/repo/InfiniumTestIDATs}
+if [ -d "$idats" ]; then
+    # List first, then loop with a redirect (not a pipe) so the counters stay
+    # in this shell rather than a forked subshell.
+    find "$idats" \( -iname '*.idat' -o -iname '*.idat.gz' \) 2>/dev/null \
+      | grep -v '/\.git/' | sort > "$work/list"
+    while IFS= read -r f; do
+        check_one "$f" "${f#"$idats"/}"
+    done < "$work/list"
+else
+    echo "SKIP: $idats not found (set SESAMEC_TEST_IDATS)"
+fi
+
+echo
+echo "== gz round-trip =="
+src=$(ls "$extdata"/*_Grn.idat 2>/dev/null | head -1 || true)
 if [ -n "${src:-}" ]; then
     gzip -c "$src" > "$work/t.idat.gz"
-    "$bin" idat-dump --tsv "$src"          > "$work/plain.tsv"
+    "$bin" idat-dump --tsv "$src"            > "$work/plain.tsv"
     "$bin" idat-dump --tsv "$work/t.idat.gz" > "$work/gz.tsv"
     if cmp -s "$work/plain.tsv" "$work/gz.tsv"; then
-        echo "ok   gz round-trip (plain == gz)"
+        echo "ok   plain == gz"
         pass=$((pass+1))
     else
         echo "FAIL gz round-trip"
