@@ -10,6 +10,9 @@
  * sesame__fail(...)`. Never longjmps, never writes to stderr. */
 int sesame__fail(sesame_err_t *err, int code, const char *fmt, ...);
 
+/* SHA-256 hex digest of a file; out must hold 65 bytes. 0 on success. */
+int sesame__sha256_file(const char *path, char out[65]);
+
 /* Index accessors -- keep the on-disk layout private to index.c. */
 const uint32_t *sesame__index_M(const sesame_index_t *ix);
 const uint32_t *sesame__index_U(const sesame_index_t *ix);

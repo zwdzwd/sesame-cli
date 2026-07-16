@@ -72,6 +72,30 @@ typedef struct sesame_index_t sesame_index_t;
 #define SESAME_COL_G  1  /* Infinium-I, green in-band */
 #define SESAME_COL_R  2  /* Infinium-I, red in-band   */
 
+/* Platform auto-detection from the IDAT bead count (nSNPsRead). Returns NULL
+ * when the count is not one we have verified -- callers must then be told the
+ * platform explicitly rather than have it guessed. Avoids depending on
+ * sesameData's idatSignature. */
+const char *sesame_platform_from_beads(int32_t beads);
+
+/* Cache directory: $SESAMEC_CACHE | $XDG_CACHE_HOME/sesamec | ~/.cache/sesamec
+ * (~/Library/Caches/sesamec on macOS). Returns out. */
+const char *sesame_cache_dir(char *out, size_t n);
+
+/* Finds an existing index for platform. 0 and fills out on success, -1 if
+ * absent. Never downloads, never prompts. */
+int sesame_index_locate(const char *platform, char *out, size_t n);
+
+/* Fills msg with actionable "no index found, here is how to fix it" text. */
+void sesame_index_missing_help(const char *platform, char *msg, size_t n);
+
+/* Downloads the pinned index for platform into the cache and verifies its
+ * sha256. force=1 refetches even if present. This is the ONLY download path --
+ * nothing else in sesamec touches the network, so behaviour is identical with
+ * or without a TTY. */
+int sesame_fetch_index(const char *platform, int force,
+                       char *out_path, size_t out_n, sesame_err_t *err);
+
 sesame_index_t *sesame_index_open(const char *path, sesame_err_t *err);
 void            sesame_index_close(sesame_index_t *ix);
 int32_t         sesame_index_nprobes(const sesame_index_t *ix);
