@@ -116,8 +116,9 @@ const char     *sesame_index_probe_id(const sesame_index_t *ix, int32_t i);
 
 /* Status bits. R signals these conditions silently or not at all; we surface
  * them so a pipeline can count fallbacks instead of finding them in the betas. */
-#define SESAME_STAT_ADDR_MISSING  (1u << 0) /* manifest address absent from IDAT */
-#define SESAME_STAT_PAIR_MISMATCH (1u << 1) /* Grn/Red address vectors disagree  */
+#define SESAME_STAT_ADDR_MISSING   (1u << 0) /* manifest address absent from IDAT */
+#define SESAME_STAT_PAIR_MISMATCH  (1u << 1) /* Grn/Red address vectors disagree  */
+#define SESAME_STAT_DYEBIAS_FAILED (1u << 2) /* D gave up: green channel failed   */
 
 typedef struct {
     const sesame_index_t *ix;
@@ -157,6 +158,12 @@ void sesame_sigdf_free(sesame_sigdf_t *sdf);
  * and do not mask them. */
 int sesame_prep_infer_channel(sesame_sigdf_t *sdf, int switch_failed,
                               int mask_failed, sesame_err_t *err);
+
+/* D -- dyeBiasNL (R/dye_bias.R:118-167). Pulls the Red and Green Infinium-I
+ * distributions to their common midpoint. If the green channel has failed
+ * (RGdistort NA or > 10) it masks all Inf-I green probes, sets
+ * SESAME_STAT_DYEBIAS_FAILED and returns -- R does this silently. */
+int sesame_prep_dye_bias_nl(sesame_sigdf_t *sdf, sesame_err_t *err);
 
 /* Beta values, one per probe, in index order. NaN for NA and for masked probes
  * when apply_mask is non-zero. out must hold sesame_index_nprobes() doubles. */

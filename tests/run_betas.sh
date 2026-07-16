@@ -17,33 +17,41 @@ trap 'rm -rf "$work"' EXIT
 fail=0
 pass=0
 
-# platform <space> prefix-relative-to-$idats
-while IFS=' ' read -r plat rel; do
+# platform <space> prefix-relative-to-$idats <space> prep <space> tol
+# tol 0 => must be bit-identical
+while IFS=' ' read -r plat rel prep tol; do
     [ -n "$plat" ] || continue
+    [ "$prep" = "-" ] && prep=""
+    tol=${tol:-0}
     idx="$root/data/$plat.ordering.tsv.gz"
     pfx="$idats/$rel"
     if [ ! -f "$idx" ]; then
         echo "SKIP $plat: no $idx (run: make index)"
         continue
     fi
-    if ! "$bin" betas --index "$idx" --f64 "$pfx" > "$work/c.f64" 2>"$work/c.err"; then
+    if ! "$bin" betas --index "$idx" --prep "$prep" --f64 "$pfx" \
+           > "$work/c.f64" 2>"$work/c.err"; then
         echo "FAIL $plat: sesame errored"; sed 's/^/    /' "$work/c.err" | head -3
         fail=$((fail+1)); continue
     fi
     if Rscript --vanilla "$here/compare_betas.R" "$plat" "$pfx" "$work/c.f64" \
-         2>"$work/r.err"; then
+         "$prep" "$tol" 2>"$work/r.err"; then
         pass=$((pass+1))
     else
         sed 's/^/    /' "$work/r.err" | head -3
         fail=$((fail+1))
     fi
 done <<'EOF'
-HM450 HM450/3999492009_R01C01
-EPIC EPIC/GSM2995280_201868590258_R01C01
-EPICv2 EPICv2/206909630040_R03C01
-EPICv2 EPICv2/206909630042_R08C01
-EPICv2 EPICv2/MaleBlood/206909630014_R05C01
-MSA MSA/207760740030_R01C03
+HM450 HM450/3999492009_R01C01 - 0
+EPIC EPIC/GSM2995280_201868590258_R01C01 - 0
+EPICv2 EPICv2/206909630040_R03C01 - 0
+EPICv2 EPICv2/206909630042_R08C01 - 0
+EPICv2 EPICv2/MaleBlood/206909630014_R05C01 - 0
+MSA MSA/207760740030_R01C03 - 0
+HM450 HM450/3999492009_R01C01 CD 1e-12
+EPIC EPIC/GSM2995280_201868590258_R01C01 CD 1e-12
+EPICv2 EPICv2/206909630040_R03C01 CD 1e-12
+MSA MSA/207760740030_R01C03 CD 1e-12
 EOF
 
 echo

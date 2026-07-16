@@ -18,7 +18,49 @@ arbitrary-precision oracle showing sesame is closer to truth.
 | D4 | `R/readIDAT.R:44-46` `readLong` | `readBin(what="integer", size=8)` — base R does not support 8-byte integers; this works by accident. | Real `int64_t`. | **done (P0)** |
 | D5 | `R/background.R:143-167` `normExpSignal` | Computes `exp(dnorm(...,log=TRUE) - pnorm(...,lower.tail=FALSE,log.p=TRUE))`; a difference of logs, which loses precision in the left tail where the `1e-6` floor fires. | Evaluates the inverse Mills ratio `λ(t)=φ(t)/Φ(t)` directly (`erfc` for `t > -5`, Laplace continued fraction below). Mathematically identical, better conditioned, never differences logs. | planned (P4) |
 | D6 | `MASS::huber` via `R/background.R:132,135` | **Errors** when `MAD == 0`. | Falls back to `s = max(mad, IQR/1.349, 1e-8)` and sets a status bit — a single degenerate array must not abort a 100k-sample run. | planned (P3) |
-| D7 | `R/dye_bias.R:122`, `R/background.R:98`, `R/detection.R:155`, `R/mask.R:173` | Escape hatches are **silent**: `dyeBiasNL`→`maskIG` when RGdistort is NA or >10; `noob` returns unchanged if background <100; `pOOBAH` substitutes a `1:1000` prior; `backgroundMask` returns NULL for unknown platforms (silently changing both `noob` and `pOOBAH` background composition). | Each sets a bit in a per-sample status word exposed by the API, so pipelines can count fallbacks instead of discovering them in the betas. | planned (P2–P4) |
+| D7 | `R/dye_bias.R:122`, `R/background.R:98`, `R/detection.R:155`, `R/mask.R:173` | Escape hatches are **silent**: `dyeBiasNL`→`maskIG` when RGdistort is NA or >10; `noob` returns unchanged if background <100; `pOOBAH` substitutes a `1:1000` prior; `backgroundMask` returns NULL for unknown platforms (silently changing both `noob` and `pOOBAH` background composition). | Each sets a bit in a per-sample status word exposed by the API, so pipelines can count fallbacks instead of discovering them in the betas. Done for `dyeBiasNL` (`SESAME_STAT_DYEBIAS_FAILED`); rest planned. | partial |
+| D8 | `preprocessCore::normalize.quantiles.use.target` via `R/dye_bias.R:135,150` | preprocessCore's own compiled C (`qnorm.c`). | Clean-room reimplementation — see below. Algebraically identical; **not bit-identical**. | **done (D)** |
+
+### D8 — the one difference I could not eliminate, and why
+
+`normalize.quantiles.use.target` is the only compiled third-party dependency in
+the QCDPB path. **preprocessCore is LGPL-2 and sesame is MIT**, so `qnorm.c` may
+not be read or copied. It was therefore characterized purely by black-box
+probing:
+
+| probe | observed |
+|---|---|
+| `n == m`, no ties | `sorted(target)[rank(x)]` |
+| `n != m` | `quantile(target, (rank-1)/(n-1), type=7)` |
+| ties in `x` | quantile at the **average** rank |
+| NA in target | dropped before ranking |
+| NA in `x` | preserved; ranking uses non-NA only |
+
+The tie rule was pinned with a deliberately non-linear target, which separates
+"quantile at the average rank" (actual: `100`) from "mean of the quantiles at
+each tied rank" (`106.67`). The former wins.
+
+**The algebra is settled; the last bit is not.** I could not find an arithmetic
+form that reproduces `qnorm.c` bit-for-bit. Both `(1-h)*lo + h*hi` and
+`lo + h*(hi-lo)`, across three index formulations, top out at ~92% bitwise
+agreement — so preprocessCore evaluates it in some third order I would have to
+read the source to learn, which is precisely what the licence forbids.
+
+Measured consequence on end-to-end betas (`prep="CD"`, NA patterns identical
+everywhere):
+
+| platform | betas differing | max abs | max rel |
+|---|---|---|---|
+| HM450 | 1.05% | 5.6e-16 | 2.5e-15 |
+| EPIC | 1.47% | 1.0e-15 | 4.0e-15 |
+| EPICv2 | 1.82% | 7.8e-16 | 3.0e-15 |
+| MSA | 4.39% | 3.3e-16 | 1.1e-15 |
+
+~2 ULP on a value in [0,1]. The acceptance gate for `D` is max relative
+difference ≤ 1e-12, which this clears by three orders of magnitude — and the
+project's own stated gate was 1e-8. This is accepted as last-bit arithmetic
+ordering, not an algorithmic difference: it is not attributable to any decision
+in this implementation, and neither result is "more correct" than the other.
 
 ## Observations about the R implementation (not divergences)
 

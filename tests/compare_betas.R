@@ -23,15 +23,24 @@
 suppressMessages(library(sesame))
 
 args <- commandArgs(trailingOnly = TRUE)
-if (length(args) < 3) stop("usage: compare_betas.R <platform> <prefix> <c_out.f64>")
+if (length(args) < 3)
+    stop("usage: compare_betas.R <platform> <prefix> <c_out.f64> [prep] [tol]")
 platform <- args[1]; prefix <- args[2]; cfile <- args[3]
+prep <- if (length(args) >= 4) args[4] else ""
+tol  <- if (length(args) >= 5) as.numeric(args[5]) else 0   # 0 => bit-identical
 
 sdf <- suppressWarnings(readIDATpair(prefix, platform = platform, min_beads = NULL))
+for (ch in strsplit(prep, "")[[1]])
+    sdf <- switch(ch,
+        "C" = inferInfiniumIChannel(sdf),
+        "D" = dyeBiasNL(sdf),
+        stop(sprintf("compare_betas.R has no oracle for prep code '%s'", ch)))
 rb  <- unname(getBetas(sdf))   # mask=TRUE by default
 cb  <- readBin(cfile, "double", n = length(rb), size = 8, endian = "little")
 
 ok <- TRUE
-tag <- sprintf("%s/%s", platform, basename(prefix))
+tag <- sprintf("%s/%s prep=%s", platform, basename(prefix),
+               if (nzchar(prep)) prep else "\"\"")
 
 if (length(rb) != length(cb)) {
     cat(sprintf("FAIL %s: length R=%d C=%d\n", tag, length(rb), length(cb)))
@@ -46,17 +55,30 @@ if (!identical(is.na(rb), is.na(cb))) {
     ok <- FALSE
 }
 
-# Values must be bit-identical.
+# Values. tol == 0 demands bit-identity; otherwise gate on relative difference.
 both <- !is.na(rb) & !is.na(cb)
-if (ok && !identical(rb[both], cb[both])) {
-    d <- abs(rb[both] - cb[both])
-    cat(sprintf("FAIL %s: %d/%d betas differ, max|diff|=%.3g\n",
-                tag, sum(d > 0), sum(both), max(d)))
-    ok <- FALSE
+if (ok && tol == 0) {
+    if (!identical(rb[both], cb[both])) {
+        d <- abs(rb[both] - cb[both])
+        cat(sprintf("FAIL %s: %d/%d betas differ, max|diff|=%.3g\n",
+                    tag, sum(d > 0), sum(both), max(d)))
+        ok <- FALSE
+    } else {
+        cat(sprintf("ok   %-30s %7d betas bit-identical (%d NA)\n",
+                    tag, length(rb), sum(is.na(rb))))
+    }
+} else if (ok) {
+    d   <- abs(rb[both] - cb[both])
+    rel <- d / pmax(abs(rb[both]), 1e-300)
+    if (max(rel) > tol) {
+        cat(sprintf("FAIL %s: max|rel|=%.3g exceeds tol=%.3g (%d/%d differ)\n",
+                    tag, max(rel), tol, sum(d > 0), sum(both)))
+        ok <- FALSE
+    } else {
+        # D8: last-bit only, from the clean-room qnorm. See NUMERICS.md.
+        cat(sprintf("ok   %-30s %7d betas, max|rel|=%.2g <= %.g (%d differ, D8)\n",
+                    tag, length(rb), max(rel), tol, sum(d > 0)))
+    }
 }
-
-if (ok)
-    cat(sprintf("ok   %-38s %7d betas bit-identical (%d NA)\n",
-                tag, length(rb), sum(is.na(rb))))
 
 quit(status = if (ok) 0 else 1)

@@ -28,7 +28,7 @@ static int usage(void)
       "      NOTE: no preprocessing yet -- QCDPB is not implemented.\n"
       "      --min-beads N  mask probes with any bead count < N (default: off)\n"
       "      --no-mask      ignore the mask column; emit every beta\n"
-      "      --prep CODE    preprocessing steps to apply (only C so far)\n"
+      "      --prep CODE    preprocessing steps to apply (C, D so far)\n"
       "      --dump-col     emit Probe_ID<TAB>col (G/R/2) instead of betas,\n"
       "                     for differential-testing a prep step\n"
       "      --f64          write raw little-endian float64 to stdout instead\n"
@@ -199,9 +199,14 @@ static int cmd_betas(int argc, char **argv)
                 fprintf(stderr, "sesame: %s\n", e.msg); goto out;
             }
             break;
+        case 'D':
+            if (sesame_prep_dye_bias_nl(s, &e) != SESAME_OK) {
+                fprintf(stderr, "sesame: %s\n", e.msg); goto out;
+            }
+            break;
         default:
             fprintf(stderr, "sesame: prep code '%c' not implemented "
-                            "(have: C)\n", *c);
+                            "(have: C, D)\n", *c);
             goto out;
         }
     }

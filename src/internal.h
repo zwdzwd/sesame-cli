@@ -19,8 +19,22 @@ int sesame__sha256_file(const char *path, char out[65]);
  * na.rm=TRUE / sort(na.last=NA): NAs drop *before* n is taken. */
 int32_t sesame__drop_na(const double *x, int32_t n, double *out);
 
-/* R's quantile(x, p, type=7) on NaN-filtered data. Sorts x in place. */
+/* R's quantile(x, p, type=7). _sorted takes ascending NaN-free data; the other
+ * sorts x in place first. */
+double sesame__quantile7_sorted(const double *x, int32_t n, double p);
 double sesame__quantile7(double *x, int32_t n, double p);
+
+/* R's median() -- identical to quantile type 7 at p=0.5. */
+double sesame__median_sorted(const double *x, int32_t n);
+
+void sesame__sort(double *x, int32_t n);
+
+/* preprocessCore::normalize.quantiles.use.target, CLEAN-ROOM (preprocessCore is
+ * LGPL-2, sesame is MIT: qnorm.c must not be read or copied). Characterized by
+ * black-box probing; see the comment in numerics.c. x_sorted must be ascending
+ * and NaN-free; tgt is sorted in place; out holds n doubles. */
+void sesame__qnorm_use_target(const double *x_sorted, int32_t n,
+                              double *tgt, int32_t m, double *out);
 
 /* R's pmax(a, b) with NO na.rm -- NA propagates. Note C's fmax() does the
  * opposite and would silently disagree. */
