@@ -7,10 +7,18 @@
 # cannot drift. Re-run whenever an index is rebuilt, and publish the matching
 # file to the tag named in the table.
 #
-# Tag scheme: index-<platform>-v<n>. Per-platform, so updating one platform is
-# one tag and one row -- the others keep pointing at their existing tags. The
-# asset FILENAME is stable across versions: the tag already carries the version,
-# and asset names need only be unique within a release.
+# Tag scheme: <platform>.<artifact>.v<n>, e.g. EPICv2.ordering.v1 -- the asset
+# name minus .tsv.gz, plus the version. The tag mirrors the file rather than
+# inventing a parallel vocabulary, and it scales to several artifact types per
+# platform that version independently:
+#
+#     EPICv2.ordering.v1  -> EPICv2.ordering.tsv.gz
+#     EPICv2.masks.v3     -> EPICv2.masks.tsv.gz     (moves on its own schedule)
+#
+# Per-platform and per-artifact, so updating one thing is one tag and one row --
+# everything else keeps its tag and is not re-downloaded. The asset FILENAME is
+# stable across versions: the tag carries the version, and asset names need only
+# be unique within a release.
 set -eu
 
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -47,7 +55,7 @@ cat <<EOF
 typedef struct {
     const char *platform;
     int32_t     beads;     /* IDAT nSNPsRead; 0 = no auto-detect */
-    const char *tag;       /* index-<platform>-v<n> */
+    const char *tag;       /* <platform>.<artifact>.v<n> */
     const char *file;      /* stable across versions */
     const char *sha256;
     long long   bytes;
@@ -62,7 +70,7 @@ for f in "$root"/data/*.ordering.tsv.gz; do
     plat=${b%%.ordering.tsv.gz}
     sum=$(shasum -a 256 "$f" | cut -d' ' -f1)
     size=$(wc -c < "$f" | tr -d ' ')
-    printf '    { "%s", %s, "index-%s-v%s", "%s",\n      "%s", %s },\n' \
+    printf '    { "%s", %s, "%s.ordering.v%s", "%s",\n      "%s", %s },\n' \
         "$plat" "$(beads_for "$plat")" "$plat" "$n" "$b" "$sum" "$size"
 done
 

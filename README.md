@@ -52,7 +52,7 @@ make fuzz-replay  # corpus replayer under ASan/UBSan (works everywhere)
 Ordering tables are published as **per-platform release assets**:
 
 ```
-https://github.com/zwdzwd/sesame-cli/releases/download/index-EPICv2-v1/EPICv2.ordering.tsv.gz
+https://github.com/zwdzwd/sesame-cli/releases/download/EPICv2.ordering.v1/EPICv2.ordering.tsv.gz
                                                        ^^^^^^^^^^^^^^^ tag carries the version
 ```
 
@@ -64,8 +64,8 @@ re-upload under an existing one.
 Retrieval is `(tag, file)`, and the cache mirrors the URL so pinned versions coexist:
 
 ```
-~/.cache/sesame/index-EPICv2-v1/EPICv2.ordering.tsv.gz
-~/.cache/sesame/index-EPICv2-v2/EPICv2.ordering.tsv.gz
+~/.cache/sesame/EPICv2.ordering.v1/EPICv2.ordering.tsv.gz
+~/.cache/sesame/EPICv2.ordering.v2/EPICv2.ordering.tsv.gz
 ```
 
 Resolution order: `--index <path>` > `$SESAME_INDEX_DIR` > `./` > `./data` > cache
@@ -84,7 +84,7 @@ sesame idat-dump --tsv sample_Grn.idat.gz   # addr<TAB>mean<TAB>sd<TAB>nbeads
 
 sesame index-info                           # cache dir + which platforms are present
 sesame fetch EPICv2                         # download the pinned index
-sesame fetch --tag index-EPICv2-v2 EPICv2.ordering.tsv.gz   # explicit (tag, file)
+sesame fetch --tag EPICv2.ordering.v2 EPICv2.ordering.tsv.gz   # explicit (tag, file)
 
 # Betas (no preprocessing yet -- equivalent to openSesame(prefix, prep=""))
 sesame betas <prefix>                       # platform auto-detected from bead count

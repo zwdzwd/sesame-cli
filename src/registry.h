@@ -14,20 +14,20 @@
 typedef struct {
     const char *platform;
     int32_t     beads;     /* IDAT nSNPsRead; 0 = no auto-detect */
-    const char *tag;       /* index-<platform>-v<n> */
+    const char *tag;       /* <platform>.<artifact>.v<n> */
     const char *file;      /* stable across versions */
     const char *sha256;
     long long   bytes;
 } sesame_reg_t;
 
 static const sesame_reg_t SESAME_REGISTRY[] = {
-    { "EPIC", 1051815, "index-EPIC-v1", "EPIC.ordering.tsv.gz",
+    { "EPIC", 1051815, "EPIC.ordering.v1", "EPIC.ordering.tsv.gz",
       "8c8418c718ed54007f857e3f42cf7019594ee4fd42d761ea46b0d27bdd7d2324", 7826207 },
-    { "EPICv2", 1105209, "index-EPICv2-v1", "EPICv2.ordering.tsv.gz",
+    { "EPICv2", 1105209, "EPICv2.ordering.v1", "EPICv2.ordering.tsv.gz",
       "f8db6c80713e3f80aec30e9a14805514a32c125b930be1e069708563248dd14f", 8661990 },
-    { "HM450", 622399, "index-HM450-v1", "HM450.ordering.tsv.gz",
+    { "HM450", 622399, "HM450.ordering.v1", "HM450.ordering.tsv.gz",
       "13440a4ee136c273bc9b39b32b9588dd186bb451e86b7079b1167dc9bc18342d", 4641900 },
-    { "MSA", 384497, "index-MSA-v1", "MSA.ordering.tsv.gz",
+    { "MSA", 384497, "MSA.ordering.v1", "MSA.ordering.tsv.gz",
       "80d07c78fa6dad9e2c49e9e5f96cf3e895cc7c6d695e5519471503bf1344b9e2", 2943777 },
     { NULL, 0, NULL, NULL, NULL, 0 }
 };
