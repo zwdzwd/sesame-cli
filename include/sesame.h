@@ -145,6 +145,19 @@ sesame_sigdf_t *sesame_sigdf_from_idats(const sesame_idat_t *grn,
                                         sesame_err_t *err);
 void sesame_sigdf_free(sesame_sigdf_t *sdf);
 
+/* --------------------------------------------------------------- prep ---
+ *
+ * prepSesame steps. Order matters (R/open.R:30-35). Only C is implemented.
+ */
+
+/* C -- inferInfiniumIChannel (R/channel_inference.R:20-55). Reassigns each
+ * Infinium-I probe to its brighter channel, judged against the 95th percentile
+ * of the pooled out-of-band signal under the new assignment. Defaults
+ * (switch_failed=0, mask_failed=0) revert failed probes to the manifest channel
+ * and do not mask them. */
+int sesame_prep_infer_channel(sesame_sigdf_t *sdf, int switch_failed,
+                              int mask_failed, sesame_err_t *err);
+
 /* Beta values, one per probe, in index order. NaN for NA and for masked probes
  * when apply_mask is non-zero. out must hold sesame_index_nprobes() doubles. */
 int sesame_get_betas(const sesame_sigdf_t *sdf, int apply_mask,

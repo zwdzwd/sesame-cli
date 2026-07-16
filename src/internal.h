@@ -13,6 +13,19 @@ int sesame__fail(sesame_err_t *err, int code, const char *fmt, ...);
 /* SHA-256 hex digest of a file; out must hold 65 bytes. 0 on success. */
 int sesame__sha256_file(const char *path, char out[65]);
 
+/* --- numerics: each replicates a specific R semantic exactly --- */
+
+/* Copy non-NaN values of x into out (>= n); returns the count. Mirrors R's
+ * na.rm=TRUE / sort(na.last=NA): NAs drop *before* n is taken. */
+int32_t sesame__drop_na(const double *x, int32_t n, double *out);
+
+/* R's quantile(x, p, type=7) on NaN-filtered data. Sorts x in place. */
+double sesame__quantile7(double *x, int32_t n, double p);
+
+/* R's pmax(a, b) with NO na.rm -- NA propagates. Note C's fmax() does the
+ * opposite and would silently disagree. */
+double sesame__pmax2(double a, double b);
+
 /* Registry lookup (registry.h must be included by the TU that uses the type). */
 struct sesame_reg_t;
 

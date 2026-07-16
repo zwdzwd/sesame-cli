@@ -28,6 +28,9 @@ static int usage(void)
       "      NOTE: no preprocessing yet -- QCDPB is not implemented.\n"
       "      --min-beads N  mask probes with any bead count < N (default: off)\n"
       "      --no-mask      ignore the mask column; emit every beta\n"
+      "      --prep CODE    preprocessing steps to apply (only C so far)\n"
+      "      --dump-col     emit Probe_ID<TAB>col (G/R/2) instead of betas,\n"
+      "                     for differential-testing a prep step\n"
       "      --f64          write raw little-endian float64 to stdout instead\n"
       "                     of text (NA as NaN). For lossless comparison: R's\n"
       "                     text parser does not correctly round 17-digit\n"
@@ -112,8 +115,8 @@ static int cmd_index_info(int argc, char **argv)
 
 static int cmd_betas(int argc, char **argv)
 {
-    const char *idxpath = NULL, *prefix = NULL, *platform = NULL;
-    int min_beads = 0, apply_mask = 1, f64 = 0, i, rc = 1;
+    const char *idxpath = NULL, *prefix = NULL, *platform = NULL, *prep = "";
+    int min_beads = 0, apply_mask = 1, f64 = 0, dump_col = 0, i, rc = 1;
     char gpath[4096], rpath[4096], resolved[4096];
     sesame_index_t *ix = NULL;
     sesame_idat_t *g = NULL, *r = NULL;
@@ -130,6 +133,10 @@ static int cmd_betas(int argc, char **argv)
             min_beads = (int)strtol(argv[++i], NULL, 10);
         } else if (strcmp(argv[i], "--no-mask") == 0) {
             apply_mask = 0;
+        } else if (strcmp(argv[i], "--prep") == 0 && i + 1 < argc) {
+            prep = argv[++i];
+        } else if (strcmp(argv[i], "--dump-col") == 0) {
+            dump_col = 1;
         } else if (strcmp(argv[i], "--f64") == 0) {
             f64 = 1;
         } else if (argv[i][0] == '-' && argv[i][1] != '\0') {
@@ -182,6 +189,29 @@ static int cmd_betas(int argc, char **argv)
     }
     if (!(s = sesame_sigdf_from_idats(g, r, ix, min_beads, &e))) {
         fprintf(stderr, "sesame: %s\n", e.msg); goto out;
+    }
+
+    /* Apply prep steps in the order given. */
+    for (const char *c = prep; *c; c++) {
+        switch (*c) {
+        case 'C':
+            if (sesame_prep_infer_channel(s, 0, 0, &e) != SESAME_OK) {
+                fprintf(stderr, "sesame: %s\n", e.msg); goto out;
+            }
+            break;
+        default:
+            fprintf(stderr, "sesame: prep code '%c' not implemented "
+                            "(have: C)\n", *c);
+            goto out;
+        }
+    }
+
+    if (dump_col) {
+        static const char *nm[] = { "2", "G", "R" };
+        for (int32_t k = 0; k < s->n; k++)
+            printf("%s\t%s\n", sesame_index_probe_id(ix, k), nm[s->col[k]]);
+        rc = 0;
+        goto out;
     }
 
     betas = (double *)malloc((size_t)s->n * sizeof(double));
