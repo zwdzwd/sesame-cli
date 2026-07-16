@@ -3,6 +3,7 @@
  */
 #include "sesame.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,9 +20,116 @@ static int usage(void)
       "      --head N limits to the first N records (default: all for --tsv,\n"
       "      5 for summary).\n"
       "\n"
+      "  sesamec betas --index <ordering.tsv.gz> [--min-beads N] [--no-mask]\n"
+      "                [--f64] <prefix>\n"
+      "      Compute beta values from <prefix>_Grn.idat[.gz] and\n"
+      "      <prefix>_Red.idat[.gz]. Emits Probe_ID<TAB>beta (NA for missing).\n"
+      "      Equivalent to openSesame(prefix, prep=\"\", func=getBetas).\n"
+      "      NOTE: no preprocessing yet -- QCDPB is not implemented.\n"
+      "      --min-beads N  mask probes with any bead count < N (default: off)\n"
+      "      --no-mask      ignore the mask column; emit every beta\n"
+      "      --f64          write raw little-endian float64 to stdout instead\n"
+      "                     of text (NA as NaN). For lossless comparison: R's\n"
+      "                     text parser does not correctly round 17-digit\n"
+      "                     decimals, so text round-trips lose up to 1 ULP.\n"
+      "\n"
       "  sesamec version\n",
       stderr);
     return 2;
+}
+
+/* Resolve <prefix>_Grn.idat, trying .gz as R does (R/sesame.R:331-345). */
+static int resolve_idat(const char *prefix, const char *chan,
+                        char *out, size_t outsz)
+{
+    FILE *f;
+    snprintf(out, outsz, "%s_%s.idat", prefix, chan);
+    if ((f = fopen(out, "rb"))) { fclose(f); return 0; }
+    snprintf(out, outsz, "%s_%s.idat.gz", prefix, chan);
+    if ((f = fopen(out, "rb"))) { fclose(f); return 0; }
+    return -1;
+}
+
+static int cmd_betas(int argc, char **argv)
+{
+    const char *idxpath = NULL, *prefix = NULL;
+    int min_beads = 0, apply_mask = 1, f64 = 0, i, rc = 1;
+    char gpath[4096], rpath[4096];
+    sesame_index_t *ix = NULL;
+    sesame_idat_t *g = NULL, *r = NULL;
+    sesame_sigdf_t *s = NULL;
+    double *betas = NULL;
+    sesame_err_t e;
+
+    for (i = 0; i < argc; i++) {
+        if (strcmp(argv[i], "--index") == 0 && i + 1 < argc) {
+            idxpath = argv[++i];
+        } else if (strcmp(argv[i], "--min-beads") == 0 && i + 1 < argc) {
+            min_beads = (int)strtol(argv[++i], NULL, 10);
+        } else if (strcmp(argv[i], "--no-mask") == 0) {
+            apply_mask = 0;
+        } else if (strcmp(argv[i], "--f64") == 0) {
+            f64 = 1;
+        } else if (argv[i][0] == '-' && argv[i][1] != '\0') {
+            fprintf(stderr, "sesamec: unknown option %s\n", argv[i]);
+            return usage();
+        } else {
+            prefix = argv[i];
+        }
+    }
+    if (!idxpath || !prefix) return usage();
+
+    if (resolve_idat(prefix, "Grn", gpath, sizeof gpath)) {
+        fprintf(stderr, "sesamec: Grn IDAT does not exist for %s\n", prefix);
+        return 1;
+    }
+    if (resolve_idat(prefix, "Red", rpath, sizeof rpath)) {
+        fprintf(stderr, "sesamec: Red IDAT does not exist for %s\n", prefix);
+        return 1;
+    }
+
+    if (!(ix = sesame_index_open(idxpath, &e))) {
+        fprintf(stderr, "sesamec: %s\n", e.msg); goto out;
+    }
+    if (sesame_idat_read(gpath, &g, &e) != SESAME_OK ||
+        sesame_idat_read(rpath, &r, &e) != SESAME_OK) {
+        fprintf(stderr, "sesamec: %s\n", e.msg); goto out;
+    }
+    if (!(s = sesame_sigdf_from_idats(g, r, ix, min_beads, &e))) {
+        fprintf(stderr, "sesamec: %s\n", e.msg); goto out;
+    }
+
+    betas = (double *)malloc((size_t)s->n * sizeof(double));
+    if (!betas) { fprintf(stderr, "sesamec: out of memory\n"); goto out; }
+    if (sesame_get_betas(s, apply_mask, betas, &e) != SESAME_OK) {
+        fprintf(stderr, "sesamec: %s\n", e.msg); goto out;
+    }
+
+    if (f64) {
+        /* Raw float64 so comparisons are lossless. */
+        if (fwrite(betas, sizeof(double), (size_t)s->n, stdout) != (size_t)s->n) {
+            fprintf(stderr, "sesamec: short write\n"); goto out;
+        }
+    } else {
+        for (int32_t k = 0; k < s->n; k++) {
+            const char *id = sesame_index_probe_id(ix, k);
+            if (isnan(betas[k])) printf("%s\tNA\n", id);
+            else                 printf("%s\t%.17g\n", id, betas[k]);
+        }
+    }
+
+    if (s->status & SESAME_STAT_ADDR_MISSING)
+        fprintf(stderr, "sesamec: note: %d probes had addresses absent from the IDAT\n",
+                s->n_addr_missing);
+    rc = 0;
+
+out:
+    free(betas);
+    sesame_sigdf_free(s);
+    sesame_idat_free(g);
+    sesame_idat_free(r);
+    sesame_index_close(ix);
+    return rc;
 }
 
 static int cmd_idat_dump(int argc, char **argv)
@@ -78,6 +186,8 @@ int main(int argc, char **argv)
     if (argc < 2) return usage();
     if (strcmp(argv[1], "idat-dump") == 0)
         return cmd_idat_dump(argc - 2, argv + 2);
+    if (strcmp(argv[1], "betas") == 0)
+        return cmd_betas(argc - 2, argv + 2);
     if (strcmp(argv[1], "version") == 0) {
         puts("sesamec 0.0.1-dev");
         return 0;

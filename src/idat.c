@@ -20,8 +20,8 @@
  * SPDX-License-Identifier: MIT
  */
 #include "sesame.h"
+#include "internal.h"
 
-#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -39,29 +39,7 @@
 #define FC_MEAN       104
 #define FC_NBEADS     107
 
-const char *sesame_strerror(int code)
-{
-    switch (code) {
-    case SESAME_OK:              return "ok";
-    case SESAME_ERR_IO:          return "I/O error";
-    case SESAME_ERR_FORMAT:      return "malformed IDAT";
-    case SESAME_ERR_UNSUPPORTED: return "unsupported IDAT";
-    case SESAME_ERR_NOMEM:       return "out of memory";
-    default:                     return "unknown error";
-    }
-}
-
-static int fail(sesame_err_t *e, int code, const char *fmt, ...)
-{
-    if (e) {
-        va_list ap;
-        e->code = code;
-        va_start(ap, fmt);
-        vsnprintf(e->msg, sizeof(e->msg), fmt, ap);
-        va_end(ap);
-    }
-    return code;
-}
+#define fail sesame__fail
 
 /* gzread() is int-limited and may return short reads; loop until satisfied.
  * Returns 0 on success, -1 on short read/error. */
