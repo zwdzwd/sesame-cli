@@ -1,0 +1,7 @@
+*.o
+*.dSYM/
+/sesamec
+/fuzz_idat
+/fuzz_replay
+/corpus/
+compile_commands.json
