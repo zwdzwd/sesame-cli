@@ -44,6 +44,17 @@ LGPL would probably buy bit-exactness and erase this entry, at the cost of:
 - extraction anyway: preprocessCore's `include/` + stubs are `LinkingTo:`
   plumbing for R packages, not a system library a standalone C program can link.
 
+**The copyleft route was considered explicitly and declined (2026-07-16).**
+Relicensing sesame-cli as AGPL-3 or GPL-3 *would* make vendoring legitimate and
+erase this entry: preprocessCore is `LGPL (>= 2)`, so a recipient may elect
+LGPL-3, which is GPL-3 plus permissions and therefore absorbable into a GPL-3 /
+AGPL-3 work — and AGPL already requires shipping complete source, so LGPL's
+relink obligation becomes moot. It was rejected because it trades three of the
+project's four drivers (Python bindings would be largely unadoptable under
+AGPL; many pharma/biotech legal departments ban it outright; it would diverge
+from sesame's MIT) for ~2 ULP. **Do not reopen this on D8's account** — only if
+copyleft is wanted for its own sake.
+
 Given the measured cost below is ~2 ULP on a value in [0,1] — biologically and
 numerically meaningless — the clean-room is judged the better side of that
 trade. It was characterized purely by black-box probing:
