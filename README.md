@@ -1,10 +1,12 @@
-# sesamec
+# sesame-cli
+
+`sesame` — a standalone C implementation of Infinium preprocessing.
 
 A standalone C implementation of [sesame](https://github.com/zwdzwd/sesame)'s
 basic Infinium DNA methylation preprocessing: **IDAT → betas**, with no R and no
-Bioconductor.
+Bioconductor. Builds one binary, `sesame`.
 
-> Status: **P0 done, P1 partial.** `sesamec betas` produces beta values that are
+> Status: **P0 done, P1 partial.** `sesame betas` produces beta values that are
 > **bit-identical to R** with `prep=""`. Preprocessing (QCDPB) is NOT yet
 > implemented -- that is P2-P4.
 
@@ -36,25 +38,58 @@ sex/ethnicity) — those stay in R.
 Only dependency is zlib.
 
 ```sh
-make            # build ./sesamec
+make            # build ./sesame
 make test       # golden tests vs the R oracle (needs Rscript + sesame)
-                # uses $SESAMEC_TEST_IDATS (default ~/repo/InfiniumTestIDATs)
+                # uses $SESAME_TEST_IDATS (default ~/repo/InfiniumTestIDATs)
                 # for real full-size arrays, in addition to sesameData extdata
 make asan       # build with ASan/UBSan
 make fuzz       # libFuzzer target (Linux/clang; Apple clang has no libFuzzer)
 make fuzz-replay  # corpus replayer under ASan/UBSan (works everywhere)
 ```
 
+## Index files
+
+Ordering tables are published as **per-platform release assets**:
+
+```
+https://github.com/zwdzwd/sesame-cli/releases/download/index-EPICv2-v1/EPICv2.ordering.tsv.gz
+                                                       ^^^^^^^^^^^^^^^ tag carries the version
+```
+
+The filename is stable across versions — the tag is the version, so updating one
+platform means one new tag and one registry row; the others are untouched and are
+not re-downloaded. Assets are immutable: new data always means a new tag, never a
+re-upload under an existing one.
+
+Retrieval is `(tag, file)`, and the cache mirrors the URL so pinned versions coexist:
+
+```
+~/.cache/sesame/index-EPICv2-v1/EPICv2.ordering.tsv.gz
+~/.cache/sesame/index-EPICv2-v2/EPICv2.ordering.tsv.gz
+```
+
+Resolution order: `--index <path>` > `$SESAME_INDEX_DIR` > `./` > `./data` > cache
+(`$SESAME_CACHE` | `$XDG_CACHE_HOME/sesame` | `~/Library/Caches/sesame` | `~/.cache/sesame`).
+
+**sesame never downloads implicitly and never prompts** — a prompt would hang
+forever, silently, in a Nextflow job or a Docker build. `sesame fetch` is the only
+path that touches the network, so behaviour is identical with or without a TTY.
+Downloads are verified against a pinned sha256; a mismatch is fatal.
+
 ## Use
 
 ```sh
-sesamec idat-dump sample_Grn.idat            # summary
-sesamec idat-dump --tsv sample_Grn.idat.gz   # addr<TAB>mean<TAB>sd<TAB>nbeads
+sesame idat-dump sample_Grn.idat            # summary
+sesame idat-dump --tsv sample_Grn.idat.gz   # addr<TAB>mean<TAB>sd<TAB>nbeads
+
+sesame index-info                           # cache dir + which platforms are present
+sesame fetch EPICv2                         # download the pinned index
+sesame fetch --tag index-EPICv2-v2 EPICv2.ordering.tsv.gz   # explicit (tag, file)
 
 # Betas (no preprocessing yet -- equivalent to openSesame(prefix, prep=""))
-make index                                   # export ordering tables from R
-sesamec betas --index data/EPICv2.ordering.tsv.gz  /path/to/206909630040_R03C01
-sesamec betas --index data/HM450.ordering.tsv.gz --f64 <prefix> > betas.f64
+sesame betas <prefix>                       # platform auto-detected from bead count
+sesame betas --index data/EPICv2.ordering.tsv.gz <prefix>
+sesame betas --f64 <prefix> > betas.f64     # lossless
 ```
 
 Both plain `.idat` and gzipped `.idat.gz` are read through the same path.

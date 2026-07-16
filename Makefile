@@ -1,13 +1,13 @@
-# sesamec -- POSIX make. No external build system; zlib is the only dependency.
+# sesame -- POSIX make. No external build system; zlib is the only dependency.
 #
-#   make            build sesamec
+#   make            build sesame
 #   make asan       build with ASan/UBSan
 #   make test       run the golden tests (requires Rscript for the R oracle)
 #   make clean
 
 CC      ?= cc
 CFLAGS  ?= -O2 -g
-CFLAGS  += -DSESAMEC_HAVE_CURL -std=c11 -Wall -Wextra -Wpedantic -Wshadow -Wconversion \
+CFLAGS  += -DSESAME_HAVE_CURL -std=c11 -Wall -Wextra -Wpedantic -Wshadow -Wconversion \
            -Wstrict-prototypes -Iinclude
 LDLIBS  += -lz -lm -lcurl
 
@@ -15,7 +15,7 @@ SRC     := src/util.c src/sha256.c src/idat.c src/index.c src/sigdf.c src/cache.
 CLI_SRC := cli/main.c
 OBJ     := $(SRC:.c=.o)
 CLI_OBJ := $(CLI_SRC:.c=.o)
-BIN     := sesamec
+BIN     := sesame
 
 .PHONY: all asan test test-idat test-betas index fuzz fuzz-replay clean
 

@@ -6,8 +6,8 @@ set -eu
 
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 root=$(dirname "$here")
-bin="$root/sesamec"
-idats=${SESAMEC_TEST_IDATS:-$HOME/repo/InfiniumTestIDATs}
+bin="$root/sesame"
+idats=${SESAME_TEST_IDATS:-$HOME/repo/InfiniumTestIDATs}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
@@ -27,7 +27,7 @@ while IFS=' ' read -r plat rel; do
         continue
     fi
     if ! "$bin" betas --index "$idx" --f64 "$pfx" > "$work/c.f64" 2>"$work/c.err"; then
-        echo "FAIL $plat: sesamec errored"; sed 's/^/    /' "$work/c.err" | head -3
+        echo "FAIL $plat: sesame errored"; sed 's/^/    /' "$work/c.err" | head -3
         fail=$((fail+1)); continue
     fi
     if Rscript --vanilla "$here/compare_betas.R" "$plat" "$pfx" "$work/c.f64" \

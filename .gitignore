@@ -1,6 +1,6 @@
 *.o
 *.dSYM/
-/sesamec
+/sesame
 /fuzz_idat
 /fuzz_replay
 /corpus/

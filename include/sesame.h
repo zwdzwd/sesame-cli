@@ -1,4 +1,4 @@
-/* sesame.h -- public API for libsesamec
+/* sesame.h -- public API for libsesame
  *
  * A standalone C implementation of sesame's basic Infinium preprocessing.
  * See NUMERICS.md for documented divergences from the R implementation.
@@ -78,8 +78,8 @@ typedef struct sesame_index_t sesame_index_t;
  * sesameData's idatSignature. */
 const char *sesame_platform_from_beads(int32_t beads);
 
-/* Cache directory: $SESAMEC_CACHE | $XDG_CACHE_HOME/sesamec | ~/.cache/sesamec
- * (~/Library/Caches/sesamec on macOS). Returns out. */
+/* Cache directory: $SESAME_CACHE | $XDG_CACHE_HOME/sesame | ~/.cache/sesame
+ * (~/Library/Caches/sesame on macOS). Returns out. */
 const char *sesame_cache_dir(char *out, size_t n);
 
 /* Finds an existing index for platform. 0 and fills out on success, -1 if
@@ -89,10 +89,18 @@ int sesame_index_locate(const char *platform, char *out, size_t n);
 /* Fills msg with actionable "no index found, here is how to fix it" text. */
 void sesame_index_missing_help(const char *platform, char *msg, size_t n);
 
-/* Downloads the pinned index for platform into the cache and verifies its
- * sha256. force=1 refetches even if present. This is the ONLY download path --
- * nothing else in sesamec touches the network, so behaviour is identical with
- * or without a TTY. */
+/* Retrieval primitive: fetch (tag, file) into <cache>/<tag>/<file>, mirroring
+ * the release URL <base>/releases/download/<tag>/<file>. want_sha may be NULL
+ * for an unpinned explicit fetch; when given, a mismatch is fatal.
+ *
+ * This and sesame_fetch_index are the ONLY paths that touch the network --
+ * nothing downloads implicitly and nothing ever prompts, so behaviour is
+ * identical with or without a TTY. */
+int sesame_fetch(const char *tag, const char *file, const char *want_sha,
+                 int force, char *out_path, size_t out_n, sesame_err_t *err);
+
+/* Convenience over sesame_fetch: uses the platform's pinned (tag, file,
+ * sha256) from the registry. */
 int sesame_fetch_index(const char *platform, int force,
                        char *out_path, size_t out_n, sesame_err_t *err);
 

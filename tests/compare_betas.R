@@ -1,7 +1,7 @@
 #!/usr/bin/env Rscript
-# Differential test: sesamec betas vs R, with no preprocessing (prep="").
+# Differential test: sesame betas vs R, with no preprocessing (prep="").
 #
-#   Rscript tests/compare_betas.R <platform> <idat_prefix> <sesamec_out.f64>
+#   Rscript tests/compare_betas.R <platform> <idat_prefix> <sesame_out.f64>
 #
 # The R side is readIDATpair(min_beads=NULL) + getBetas(), which is what
 # openSesame(prefix, prep="", func=getBetas) reduces to with preprocessing off.

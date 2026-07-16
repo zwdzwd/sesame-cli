@@ -1,16 +1,16 @@
 # NUMERICS.md — divergence register
 
-sesamec is an independent implementation of sesame's basic preprocessing. It is
+sesame is an independent implementation of sesame's basic preprocessing. It is
 **not** bit-exact with the R package by mandate: where the R code has a defect or
-a numerically fragile construction, sesamec fixes it and records the difference
+a numerically fragile construction, sesame fixes it and records the difference
 here.
 
 The R package (`zwdzwd/sesame`) remains the reference oracle and is never
 modified by this project. Every difference below must be *justified*, not merely
 reported — for numerical reformulations that means a proof or an
-arbitrary-precision oracle showing sesamec is closer to truth.
+arbitrary-precision oracle showing sesame is closer to truth.
 
-| id | site | R behavior | sesamec behavior | status |
+| id | site | R behavior | sesame behavior | status |
 |----|------|-----------|------------------|--------|
 | D1 | `R/sesame.R:293-298` `readIDAT1` | Merges Grn/Red by **positional `cbind`**, rownames taken from Grn. No join on IlluminaID. The assumption *holds for well-formed files* (verified: Grn/Red address vectors are identical, sorted and unique on every test array). It fails silently and array-wide only when mismatched IDATs are paired. | Verifies the address vectors match and errors otherwise. Confirmed: pairing an EPICv2 Grn with an HM450 Red is rejected, where R would silently emit garbage. | **done (P1)** |
 | D2 | `R/detection.R:163-165` `pOOBAH` | `pmax(..., na.rm=TRUE)` but `pmin(...)` **without** `na.rm` → an NA in one channel yields `p=NA`, and `NA > 0.05` is NA, so the probe is **not** masked. Sibling `ELBAR` at `R/detection.R:60` does `pvals[is.na(pvals)] <- 1.0`, evidence this is an oversight. | Both channels NA → `p=1` (mask). One channel NA → use the other. | planned (P4) |
@@ -26,7 +26,7 @@ arbitrary-precision oracle showing sesamec is closer to truth.
 a `mask` column built by `sesameAnno_buildAddressFile` from
 `create_default_mask()$ref_issue` (`R/sesameAnno.R:170`). Nothing ever reads it:
 `chipAddressToSignal` explicitly sets `mask=FALSE` (`R/sesame.R:475,498`) and a
-grep over `R/` finds no consumer anywhere in the pipeline. sesamec parses the
+grep over `R/` finds no consumer anywhere in the pipeline. sesame parses the
 column but deliberately ignores it, matching R. Seeding the SigDF mask from it
 would wrongly mask ~257 (HM450) / ~2263 (EPICv2) / ~3120 (MSA) probes that R
 keeps. Design masking is `qualityMask`'s job (the `Q` step), which uses a

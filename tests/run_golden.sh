@@ -4,7 +4,7 @@
 #
 # Corpora:
 #   1. sesameData's extdata (small HM450 subset, always available)
-#   2. $SESAMEC_TEST_IDATS (default ~/repo/InfiniumTestIDATs) -- real
+#   2. $SESAME_TEST_IDATS (default ~/repo/InfiniumTestIDATs) -- real
 #      full-size arrays across every platform, plain and gzipped.
 #
 # Requires Rscript with sesame + sesameData installed (the R oracle).
@@ -12,7 +12,7 @@ set -eu
 
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 root=$(dirname "$here")
-bin="$root/sesamec"
+bin="$root/sesame"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
@@ -40,7 +40,7 @@ check_one() {
     fi
 
     if ! "$bin" idat-dump --tsv "$f" > "$work/c.tsv" 2>"$work/c.err"; then
-        echo "FAIL $label: sesamec errored"
+        echo "FAIL $label: sesame errored"
         sed 's/^/    /' "$work/c.err" | head -3
         fail=$((fail+1)); return
     fi
@@ -69,7 +69,7 @@ fi
 
 echo
 echo "== corpus 2: real arrays, all platforms =="
-idats=${SESAMEC_TEST_IDATS:-$HOME/repo/InfiniumTestIDATs}
+idats=${SESAME_TEST_IDATS:-$HOME/repo/InfiniumTestIDATs}
 if [ -d "$idats" ]; then
     # List first, then loop with a redirect (not a pipe) so the counters stay
     # in this shell rather than a forked subshell.
@@ -79,7 +79,7 @@ if [ -d "$idats" ]; then
         check_one "$f" "${f#"$idats"/}"
     done < "$work/list"
 else
-    echo "SKIP: $idats not found (set SESAMEC_TEST_IDATS)"
+    echo "SKIP: $idats not found (set SESAME_TEST_IDATS)"
 fi
 
 echo

@@ -28,7 +28,7 @@
 
 static void run_once(const uint8_t *data, size_t size)
 {
-    char tmpl[] = "/tmp/sesamec_fuzz_XXXXXX";
+    char tmpl[] = "/tmp/sesame_fuzz_XXXXXX";
     int fd = mkstemp(tmpl);
     if (fd < 0) return;
 

@@ -1,4 +1,4 @@
-/* main.c -- sesamec command line interface
+/* main.c -- sesame command line interface
  * SPDX-License-Identifier: MIT
  */
 #include "sesame.h"
@@ -11,16 +11,16 @@
 static int usage(void)
 {
     fputs(
-      "sesamec -- Infinium DNA methylation preprocessing\n"
+      "sesame -- Infinium DNA methylation preprocessing\n"
       "\n"
       "usage:\n"
-      "  sesamec idat-dump [--head N] [--tsv] <file.idat|file.idat.gz>\n"
+      "  sesame idat-dump [--head N] [--tsv] <file.idat|file.idat.gz>\n"
       "      Print IDAT contents. Default prints a summary header;\n"
       "      --tsv emits addr<TAB>mean<TAB>sd<TAB>nbeads with no header.\n"
       "      --head N limits to the first N records (default: all for --tsv,\n"
       "      5 for summary).\n"
       "\n"
-      "  sesamec betas [--index <ordering.tsv.gz>] [--platform P]\n"
+      "  sesame betas [--index <ordering.tsv.gz>] [--platform P]\n"
       "                [--min-beads N] [--no-mask] [--f64] <prefix>\n"
       "      Compute beta values from <prefix>_Grn.idat[.gz] and\n"
       "      <prefix>_Red.idat[.gz]. Emits Probe_ID<TAB>beta (NA for missing).\n"
@@ -33,17 +33,20 @@ static int usage(void)
       "                     text parser does not correctly round 17-digit\n"
       "                     decimals, so text round-trips lose up to 1 ULP.\n"
       "      If --index is omitted the platform is detected from the IDAT bead\n"
-      "      count and the index looked up in $SESAMEC_INDEX_DIR, ., ./data,\n"
-      "      then the cache. sesamec never downloads implicitly.\n"
+      "      count and the index looked up in $SESAME_INDEX_DIR, ., ./data,\n"
+      "      then the cache. sesame never downloads implicitly.\n"
       "\n"
-      "  sesamec fetch <platform> [--force]\n"
-      "      Download the pinned index into the cache and verify its sha256.\n"
-      "      The ONLY path that touches the network.\n"
+      "  sesame fetch <platform> [--force]\n"
+      "  sesame fetch --tag <tag> <file> [--force]\n"
+      "      Download into the cache at <cache>/<tag>/<file>, mirroring the\n"
+      "      release URL. The platform form uses the pinned tag+digest and\n"
+      "      verifies sha256; the --tag form fetches any asset unpinned.\n"
+      "      The ONLY path that touches the network. Never prompts.\n"
       "\n"
-      "  sesamec index-info\n"
+      "  sesame index-info\n"
       "      Show the cache location and which indexes are present.\n"
       "\n"
-      "  sesamec version\n",
+      "  sesame version\n",
       stderr);
     return 2;
 }
@@ -62,23 +65,27 @@ static int resolve_idat(const char *prefix, const char *chan,
 
 static int cmd_fetch(int argc, char **argv)
 {
-    const char *platform = NULL;
-    int force = 0, i;
+    const char *platform = NULL, *tag = NULL;
+    int force = 0, i, rc;
     char path[4096];
     sesame_err_t e;
 
     for (i = 0; i < argc; i++) {
         if (strcmp(argv[i], "--force") == 0) force = 1;
+        else if (strcmp(argv[i], "--tag") == 0 && i + 1 < argc) tag = argv[++i];
         else if (argv[i][0] == '-' && argv[i][1] != '\0') return usage();
-        else platform = argv[i];
+        else platform = argv[i];   /* platform, or <file> when --tag is given */
     }
     if (!platform) return usage();
 
-    if (sesame_fetch_index(platform, force, path, sizeof path, &e) != SESAME_OK) {
-        fprintf(stderr, "sesamec: %s\n", e.msg);
+    /* --tag <tag> <file>: the raw (tag, file) primitive, unpinned. */
+    rc = tag ? sesame_fetch(tag, platform, NULL, force, path, sizeof path, &e)
+             : sesame_fetch_index(platform, force, path, sizeof path, &e);
+    if (rc != SESAME_OK) {
+        fprintf(stderr, "sesame: %s\n", e.msg);
         return 1;
     }
-    fprintf(stderr, "sesamec: %s ready at %s\n", platform, path);
+    fprintf(stderr, "sesame: ready at %s\n", path);
     return 0;
 }
 
@@ -90,15 +97,15 @@ static int cmd_index_info(int argc, char **argv)
 
     sesame_cache_dir(dir, sizeof dir);
     printf("cache dir          %s\n", dir);
-    printf("SESAMEC_INDEX_DIR  %s\n",
-           getenv("SESAMEC_INDEX_DIR") ? getenv("SESAMEC_INDEX_DIR") : "(unset)");
+    printf("SESAME_INDEX_DIR  %s\n",
+           getenv("SESAME_INDEX_DIR") ? getenv("SESAME_INDEX_DIR") : "(unset)");
     printf("\n%-10s %-9s %s\n", "platform", "status", "path");
     for (int i = 0; plats[i]; i++) {
         if (sesame_index_locate(plats[i], path, sizeof path) == 0)
             printf("%-10s %-9s %s\n", plats[i], "present", path);
         else
             printf("%-10s %-9s %s\n", plats[i], "MISSING",
-                   "(sesamec fetch ...)");
+                   "(sesame fetch ...)");
     }
     return 0;
 }
@@ -126,7 +133,7 @@ static int cmd_betas(int argc, char **argv)
         } else if (strcmp(argv[i], "--f64") == 0) {
             f64 = 1;
         } else if (argv[i][0] == '-' && argv[i][1] != '\0') {
-            fprintf(stderr, "sesamec: unknown option %s\n", argv[i]);
+            fprintf(stderr, "sesame: unknown option %s\n", argv[i]);
             return usage();
         } else {
             prefix = argv[i];
@@ -135,17 +142,17 @@ static int cmd_betas(int argc, char **argv)
     if (!prefix) return usage();
 
     if (resolve_idat(prefix, "Grn", gpath, sizeof gpath)) {
-        fprintf(stderr, "sesamec: Grn IDAT does not exist for %s\n", prefix);
+        fprintf(stderr, "sesame: Grn IDAT does not exist for %s\n", prefix);
         return 1;
     }
     if (resolve_idat(prefix, "Red", rpath, sizeof rpath)) {
-        fprintf(stderr, "sesamec: Red IDAT does not exist for %s\n", prefix);
+        fprintf(stderr, "sesame: Red IDAT does not exist for %s\n", prefix);
         return 1;
     }
 
     if (sesame_idat_read(gpath, &g, &e) != SESAME_OK ||
         sesame_idat_read(rpath, &r, &e) != SESAME_OK) {
-        fprintf(stderr, "sesamec: %s\n", e.msg); goto out;
+        fprintf(stderr, "sesame: %s\n", e.msg); goto out;
     }
 
     /* Resolve the index: explicit path > explicit platform > bead-count
@@ -156,37 +163,37 @@ static int cmd_betas(int argc, char **argv)
             platform = sesame_platform_from_beads(g->n);
             if (!platform) {
                 fprintf(stderr,
-                    "sesamec: cannot identify platform from %d beads.\n"
+                    "sesame: cannot identify platform from %d beads.\n"
                     "  pass --platform <P> or --index <path>.\n", g->n);
                 goto out;
             }
-            fprintf(stderr, "sesamec: detected %s (%d beads)\n", platform, g->n);
+            fprintf(stderr, "sesame: detected %s (%d beads)\n", platform, g->n);
         }
         if (sesame_index_locate(platform, resolved, sizeof resolved) != 0) {
             sesame_index_missing_help(platform, help, sizeof help);
-            fprintf(stderr, "sesamec: %s\n", help);
+            fprintf(stderr, "sesame: %s\n", help);
             goto out;
         }
         idxpath = resolved;
     }
 
     if (!(ix = sesame_index_open(idxpath, &e))) {
-        fprintf(stderr, "sesamec: %s\n", e.msg); goto out;
+        fprintf(stderr, "sesame: %s\n", e.msg); goto out;
     }
     if (!(s = sesame_sigdf_from_idats(g, r, ix, min_beads, &e))) {
-        fprintf(stderr, "sesamec: %s\n", e.msg); goto out;
+        fprintf(stderr, "sesame: %s\n", e.msg); goto out;
     }
 
     betas = (double *)malloc((size_t)s->n * sizeof(double));
-    if (!betas) { fprintf(stderr, "sesamec: out of memory\n"); goto out; }
+    if (!betas) { fprintf(stderr, "sesame: out of memory\n"); goto out; }
     if (sesame_get_betas(s, apply_mask, betas, &e) != SESAME_OK) {
-        fprintf(stderr, "sesamec: %s\n", e.msg); goto out;
+        fprintf(stderr, "sesame: %s\n", e.msg); goto out;
     }
 
     if (f64) {
         /* Raw float64 so comparisons are lossless. */
         if (fwrite(betas, sizeof(double), (size_t)s->n, stdout) != (size_t)s->n) {
-            fprintf(stderr, "sesamec: short write\n"); goto out;
+            fprintf(stderr, "sesame: short write\n"); goto out;
         }
     } else {
         for (int32_t k = 0; k < s->n; k++) {
@@ -197,7 +204,7 @@ static int cmd_betas(int argc, char **argv)
     }
 
     if (s->status & SESAME_STAT_ADDR_MISSING)
-        fprintf(stderr, "sesamec: note: %d probes had addresses absent from the IDAT\n",
+        fprintf(stderr, "sesame: note: %d probes had addresses absent from the IDAT\n",
                 s->n_addr_missing);
     rc = 0;
 
@@ -224,7 +231,7 @@ static int cmd_idat_dump(int argc, char **argv)
         } else if (strcmp(argv[i], "--head") == 0 && i + 1 < argc) {
             head = strtol(argv[++i], NULL, 10);
         } else if (argv[i][0] == '-' && argv[i][1] != '\0') {
-            fprintf(stderr, "sesamec: unknown option %s\n", argv[i]);
+            fprintf(stderr, "sesame: unknown option %s\n", argv[i]);
             return usage();
         } else {
             path = argv[i];
@@ -233,7 +240,7 @@ static int cmd_idat_dump(int argc, char **argv)
     if (!path) return usage();
 
     if (sesame_idat_read(path, &d, &e) != SESAME_OK) {
-        fprintf(stderr, "sesamec: %s: %s\n", path, e.msg);
+        fprintf(stderr, "sesame: %s: %s\n", path, e.msg);
         return 1;
     }
 
@@ -271,7 +278,7 @@ int main(int argc, char **argv)
     if (strcmp(argv[1], "index-info") == 0)
         return cmd_index_info(argc - 2, argv + 2);
     if (strcmp(argv[1], "version") == 0) {
-        puts("sesamec 0.0.1-dev");
+        puts("sesame 0.0.1-dev");
         return 0;
     }
     return usage();

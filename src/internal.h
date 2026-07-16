@@ -1,4 +1,4 @@
-/* internal.h -- shared across libsesamec TUs. Not installed, not public.
+/* internal.h -- shared across libsesame TUs. Not installed, not public.
  * SPDX-License-Identifier: MIT
  */
 #ifndef SESAME_INTERNAL_H
@@ -12,6 +12,9 @@ int sesame__fail(sesame_err_t *err, int code, const char *fmt, ...);
 
 /* SHA-256 hex digest of a file; out must hold 65 bytes. 0 on success. */
 int sesame__sha256_file(const char *path, char out[65]);
+
+/* Registry lookup (registry.h must be included by the TU that uses the type). */
+struct sesame_reg_t;
 
 /* Index accessors -- keep the on-disk layout private to index.c. */
 const uint32_t *sesame__index_M(const sesame_index_t *ix);
