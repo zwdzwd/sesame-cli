@@ -1,26 +1,29 @@
 /* cache.c -- index discovery and fetching.
  *
- * The store holds exactly ONE version of the annotation, flat:
+ * The store mirrors the remote exactly, one version, one subfolder per platform:
  *
- *   <store>/EPIC.ordering.tsv.gz
- *   <store>/EPICv2.ordering.tsv.gz
- * (SHA256SUMS is fetched per platform, verified, parsed, and discarded -- it is
- * not kept in the store. The tag is fixed by this build.)
+ *   <store>/MSA/SHA256SUMS         byte-identical copy of the remote
+ *   <store>/MSA/MSA.ordering.tsv.gz
+ *   <store>/MSA/MSA.hg38.mask.cm
+ *   <store>/MSA/KYCG/...           room to grow, no cross-platform conflicts
+ *
+ * Mirroring means the store is self-describing and hand-verifiable per platform
+ * (cd <store>/MSA && shasum -a 256 -c SHA256SUMS), with no local bookkeeping.
  *
  * No tag subdirectories, no `current` symlink, no local version management.
  * Most users only ever want one version; anyone who genuinely needs two can
  * point SESAME_INDEX_DIR at two directories, which is simpler than anything we
  * could build for them.
  *
- * De-duplication falls out of that: fetch pulls the tag's SHA256SUMS first (a
- * few hundred bytes), compares each digest against what is already on disk, and
- * downloads only the files that differ. Moving v1 -> v2 when only EPICv2 changed
- * therefore transfers only EPICv2. Upstream, git is content-addressed, so the
- * unchanged files cost nothing in the new tag either.
+ * De-duplication falls out of that: fetch pulls the platform's SHA256SUMS first
+ * (a few hundred bytes), compares each digest against what is already on disk,
+ * and downloads only the files that differ. When the build's pinned tag bumps,
+ * unchanged files are not re-downloaded; upstream, git is content-addressed, so
+ * they cost nothing in the new tag either.
  *
- * SHA256SUMS for the pinned tag is verified against a digest compiled into this
- * build -- a hard trust anchor. For any other tag it is trusted on first use,
- * which still gives per-file integrity within that tag.
+ * The trust anchor is a per-platform sha256(SHA256SUMS) compiled into this build
+ * (see registry.h). Fetch verifies the downloaded SHA256SUMS against it, then
+ * verifies every file against a digest from that SHA256SUMS -- a hard chain.
  *
  * Store location (fetch writes here). ONE sesame variable, deliberately:
  *
@@ -32,8 +35,8 @@
  * Resolution order (explicit always wins; same rule for library, CLI and any
  * future binding):
  *
- *   1. --index <path>                        (caller-supplied)
- *   2. <store>/<platform>.ordering.tsv.gz
+ *   1. --index <path>                                 (caller-supplied)
+ *   2. <store>/<platform>/<platform>.ordering.tsv.gz
  *   3. ./<platform>.ordering.tsv.gz
  *
  * sesame NEVER prompts and NEVER downloads implicitly. If the index is missing,
@@ -194,10 +197,11 @@ int sesame_index_locate(const char *platform, char *out, size_t n)
 
     (void)reg;
     sesame_store_dir(dir, sizeof dir);
-    snprintf(out, n, "%s/%s.ordering.tsv.gz", dir, platform);
+    /* The store mirrors the remote: <store>/<platform>/<platform>.ordering.tsv.gz */
+    snprintf(out, n, "%s/%s/%s.ordering.tsv.gz", dir, platform, platform);
     if (is_file(out)) return 0;
 
-    snprintf(out, n, "./%s.ordering.tsv.gz", platform);
+    snprintf(out, n, "./%s.ordering.tsv.gz", platform);   /* cwd convenience */
     if (is_file(out)) return 0;
 
     out[0] = '\0';
@@ -214,14 +218,14 @@ void sesame_index_missing_help(const char *platform, char *msg, size_t n)
     snprintf(msg, n,
         "no index found for platform %s\n"
         "  searched:\n"
-        "    %s/%s\n"
+        "    %s/%s/%s\n"
         "    ./%s.ordering.tsv.gz\n"
         "  fix, any of:\n"
         "    sesame fetch                 download the pinned tag (%s)\n"
         "    sesame betas --index <path> ...\n"
         "    export SESAME_INDEX_DIR=<dir>",
         platform,
-        dir, reg ? reg->ordering : "<platform>.ordering.tsv.gz",
+        dir, platform, reg ? reg->ordering : "<platform>.ordering.tsv.gz",
         platform,
         SESAME_DEFAULT_TAG);
 }
@@ -315,11 +319,14 @@ static int on_xfer(void *p, curl_off_t dltotal, curl_off_t dlnow,
     return 0;
 }
 
-/* label == NULL: fetch silently (used for the tiny SHA256SUMS). Otherwise show
- * a progress bar on a TTY, and a one-line result either way. */
+/* label == NULL: fetch silently (used for the tiny SHA256SUMS). Otherwise show a
+ * progress bar on a TTY while downloading, then a one-line "got it" for files
+ * actually downloaded -- files already present and correct print nothing, so
+ * a fetch that has nothing to do stays quiet. *downloaded (if non-NULL) reports
+ * whether a transfer happened. */
 static int download_verify(const char *url, const char *want_sha,
                            const char *dest, const char *label,
-                           int force, sesame_err_t *err)
+                           int force, int *downloaded, sesame_err_t *err)
 {
     char tmp[4096], got[65], sz[24];
     CURL *cu;
@@ -329,15 +336,11 @@ static int download_verify(const char *url, const char *want_sha,
     progress_t pr;
     struct stat st;
 
+    if (downloaded) *downloaded = 0;
+
     if (!force && want_sha && is_file(dest) &&
-        sesame__sha256_file(dest, got) == 0 && strcmp(got, want_sha) == 0) {
-        if (label) {
-            if (stat(dest, &st) == 0) { human_size((double)st.st_size, sz, sizeof sz); }
-            else sz[0] = '\0';
-            fprintf(stderr, "  \xe2\x9c\x93 %-24s %s  (cached)\n", label, sz);
-        }
-        return SESAME_OK;                 /* already correct; no download */
-    }
+        sesame__sha256_file(dest, got) == 0 && strcmp(got, want_sha) == 0)
+        return SESAME_OK;                 /* already correct; nothing to do */
 
     snprintf(tmp, sizeof tmp, "%s.part", dest);
     if (!(f = fopen(tmp, "wb")))
@@ -388,6 +391,7 @@ static int download_verify(const char *url, const char *want_sha,
         remove(tmp);
         return sesame__fail(err, SESAME_ERR_IO, "cannot install %s", dest);
     }
+    if (downloaded) *downloaded = 1;
     if (label) {
         if (stat(dest, &st) == 0) { human_size((double)st.st_size, sz, sizeof sz); }
         else sz[0] = '\0';
@@ -396,21 +400,35 @@ static int download_verify(const char *url, const char *want_sha,
     return SESAME_OK;
 }
 
-/* Fetch one platform at the pinned tag into the flat store.
+/* mkdir -p the parent directory of a file path. */
+static void mkdir_parent(const char *path)
+{
+    char tmp[4096];
+    char *slash;
+    snprintf(tmp, sizeof tmp, "%s", path);
+    slash = strrchr(tmp, '/');
+    if (slash) { *slash = '\0'; mkdirs(tmp); }
+}
+
+/* Fetch one platform at the pinned tag into <store>/<platform>/, mirroring the
+ * remote exactly.
  *
- * Repo layout is <base>/<tag>/<platform>/{SHA256SUMS, <files...>}. We pull the
- * platform's SHA256SUMS first and verify it against the digest compiled into
- * this build -- a hard trust anchor -- then fetch every file it lists (the
- * ordering table plus, for later steps, the .cm mask). A file already on disk
- * with the right digest is skipped, which is the whole de-duplication story. */
+ * Repo layout: <base>/<tag>/<platform>/{SHA256SUMS, <files...>}, where files may
+ * themselves be nested (e.g. KYCG/foo.cm). We pull the platform's SHA256SUMS
+ * first, verify it against the digest compiled into this build (a hard trust
+ * anchor) and KEEP it -- so <store>/<platform>/SHA256SUMS is a byte-identical
+ * copy of the remote and `shasum -a 256 -c SHA256SUMS` verifies the platform by
+ * hand. Then every file it lists is fetched (ordering + .cm mask + whatever
+ * else), a matching one skipped. Mirroring the remote means no cross-platform
+ * naming conflicts and room to grow subfolders, with no local merge logic. */
 int sesame_fetch_index(const char *platform, int force,
                        char *out_path, size_t out_n, sesame_err_t *err)
 {
     const sesame_reg_t *reg = sesame__reg_for_platform(platform);
     const char *tag = SESAME_DEFAULT_TAG;
-    char dir[4096], url[4096], sums_path[4096], ordering[4096] = "";
+    char store[4096], pdir[4096], url[4096], sums_path[4096], ordering[4096] = "";
     sums_t sums[SUMS_MAX];
-    int nsums, i;
+    int nsums, i, ndl = 0, dl;
 
     if (err) { err->code = SESAME_OK; err->msg[0] = '\0'; }
     if (!reg)
@@ -420,31 +438,46 @@ int sesame_fetch_index(const char *platform, int force,
         return sesame__fail(err, SESAME_ERR_UNSUPPORTED,
             "%s is not published at tag %s yet", platform, tag);
 
-    sesame_store_dir(dir, sizeof dir);
-    mkdirs(dir);
+    sesame_store_dir(store, sizeof store);
+    snprintf(pdir, sizeof pdir, "%s/%s", store, platform);
+    mkdirs(pdir);
 
+    /* SHA256SUMS: verified against the anchor, and kept in place. */
     snprintf(url, sizeof url, "%s/%s/%s/%s",
              SESAME_BASE_URL, tag, platform, SESAME_SUMS_FILE);
-    snprintf(sums_path, sizeof sums_path, "%s/.%s.SHA256SUMS.tmp", dir, platform);
-    if (download_verify(url, reg->sums_sha256, sums_path, NULL, 1, err) != SESAME_OK)
+    snprintf(sums_path, sizeof sums_path, "%s/%s", pdir, SESAME_SUMS_FILE);
+    if (download_verify(url, reg->sums_sha256, sums_path, NULL, 1, NULL, err)
+            != SESAME_OK)
         return err ? err->code : SESAME_ERR_IO;
 
     nsums = sums_load(sums_path, sums, SUMS_MAX);
-    remove(sums_path);                    /* transient; not part of the store */
     if (nsums <= 0)
         return sesame__fail(err, SESAME_ERR_FORMAT,
                             "empty or unreadable SHA256SUMS for %s", platform);
 
     for (i = 0; i < nsums; i++) {
         char dest[4096];
-        snprintf(dest, sizeof dest, "%s/%s", dir, sums[i].file);
+        snprintf(dest, sizeof dest, "%s/%s", pdir, sums[i].file);
         snprintf(url,  sizeof url,  "%s/%s/%s/%s",
                  SESAME_BASE_URL, tag, platform, sums[i].file);
-        if (download_verify(url, sums[i].sha, dest, sums[i].file, force, err) != SESAME_OK)
+        mkdir_parent(dest);                /* nested files, e.g. KYCG/foo.cm */
+        if (download_verify(url, sums[i].sha, dest, sums[i].file, force, &dl, err)
+                != SESAME_OK)
             return err ? err->code : SESAME_ERR_IO;
+        ndl += dl;
         if (strcmp(sums[i].file, reg->ordering) == 0)
             snprintf(ordering, sizeof ordering, "%s", dest);
     }
+
+    /* One clear summary. When nothing was downloaded, say so plainly instead of
+     * repeating a "(cached)" line for every file. */
+    if (ndl == 0)
+        fprintf(stderr, "sesame: %s up to date (%s, %d files)\n",
+                platform, tag, nsums);
+    else
+        fprintf(stderr, "sesame: %s ready (%s, %d file%s downloaded)\n",
+                platform, tag, ndl, ndl == 1 ? "" : "s");
+
     if (out_path) snprintf(out_path, out_n, "%s", ordering);
     return SESAME_OK;
 }

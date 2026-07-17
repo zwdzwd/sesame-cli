@@ -85,20 +85,15 @@ static int cmd_fetch(int argc, char **argv)
         else platform = argv[i];
     }
 
-    sesame_store_dir(dir, sizeof dir);
+    (void)dir;
     if (platform) {
         if (sesame_fetch_index(platform, force, path, sizeof path, &e) != SESAME_OK) {
             fprintf(stderr, "sesame: %s\n", e.msg);
             return 1;
         }
-        fprintf(stderr, "sesame: %s ready at %s\n", platform, path);
-    } else {
-        if (sesame_fetch_all(force, &e) != SESAME_OK) {
-            fprintf(stderr, "sesame: %s\n", e.msg);
-            return 1;
-        }
-        fprintf(stderr, "sesame: %s (%s) ready in %s\n",
-                "all published platforms", sesame_default_tag(), dir);
+    } else if (sesame_fetch_all(force, &e) != SESAME_OK) {
+        fprintf(stderr, "sesame: %s\n", e.msg);
+        return 1;
     }
     return 0;
 }

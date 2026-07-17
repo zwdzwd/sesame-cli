@@ -61,5 +61,5 @@ fuzz-replay:
 	    fuzz/fuzz_idat.c src/idat.c src/util.c -lz -o fuzz_replay
 
 clean:
-	rm -f $(OBJ) $(CLI_OBJ) $(BIN)
-	rm -rf $(BIN).dSYM
+	rm -f $(OBJ) $(CLI_OBJ) $(BIN) fuzz_idat fuzz_replay
+	rm -rf $(BIN).dSYM fuzz_replay.dSYM fuzz_idat.dSYM
