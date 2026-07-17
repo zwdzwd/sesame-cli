@@ -276,22 +276,75 @@ static int sums_load(const char *path, sums_t *out, int max)
  * SHA256SUMS of a tag this build does not pin. */
 /* Download url into dest, verifying want_sha (may be NULL for the anchor-less
  * case). If dest already matches want_sha and !force, skips the network. */
-static int download_verify(const char *url, const char *want_sha,
-                           const char *dest, int force, sesame_err_t *err)
+/* Human-readable byte size: 913 -> "913 B", 156784 -> "153 KB", etc. */
+static void human_size(double b, char *out, size_t n)
 {
-    char tmp[4096], got[65];
+    static const char *u[] = { "B", "KB", "MB", "GB" };
+    int i = 0;
+    while (b >= 1024.0 && i < 3) { b /= 1024.0; i++; }
+    if (i == 0) snprintf(out, n, "%.0f %s", b, u[i]);
+    else        snprintf(out, n, "%.1f %s", b, u[i]);
+}
+
+/* Live download progress, rendered in place on a TTY only. */
+typedef struct { const char *label; int last_pct; int tty; } progress_t;
+
+static int on_xfer(void *p, curl_off_t dltotal, curl_off_t dlnow,
+                   curl_off_t ultotal, curl_off_t ulnow)
+{
+    progress_t *pr = (progress_t *)p;
+    int pct, fill, i;
+    char bar[3 * 24 + 1], cur[24], tot[24];
+    const int W = 24;
+
+    (void)ultotal; (void)ulnow;
+    if (!pr->tty || dltotal <= 0) return 0;
+    pct = (int)((dlnow * 100) / dltotal);
+    if (pct == pr->last_pct) return 0;       /* redraw only on a percent change */
+    pr->last_pct = pct;
+
+    fill = pct * W / 100;
+    bar[0] = '\0';
+    for (i = 0; i < W; i++) strcat(bar, i < fill ? "\xe2\x96\x88"   /* U+2588 */
+                                                 : "\xe2\x96\x91"); /* U+2591 */
+    human_size((double)dlnow, cur, sizeof cur);
+    human_size((double)dltotal, tot, sizeof tot);
+    fprintf(stderr, "\r  %-24s %s %3d%%  %s / %s\033[K",
+            pr->label, bar, pct, cur, tot);
+    fflush(stderr);
+    return 0;
+}
+
+/* label == NULL: fetch silently (used for the tiny SHA256SUMS). Otherwise show
+ * a progress bar on a TTY, and a one-line result either way. */
+static int download_verify(const char *url, const char *want_sha,
+                           const char *dest, const char *label,
+                           int force, sesame_err_t *err)
+{
+    char tmp[4096], got[65], sz[24];
     CURL *cu;
     FILE *f;
     CURLcode rc;
     long code = 0;
+    progress_t pr;
+    struct stat st;
 
     if (!force && want_sha && is_file(dest) &&
-        sesame__sha256_file(dest, got) == 0 && strcmp(got, want_sha) == 0)
+        sesame__sha256_file(dest, got) == 0 && strcmp(got, want_sha) == 0) {
+        if (label) {
+            if (stat(dest, &st) == 0) { human_size((double)st.st_size, sz, sizeof sz); }
+            else sz[0] = '\0';
+            fprintf(stderr, "  \xe2\x9c\x93 %-24s %s  (cached)\n", label, sz);
+        }
         return SESAME_OK;                 /* already correct; no download */
+    }
 
     snprintf(tmp, sizeof tmp, "%s.part", dest);
     if (!(f = fopen(tmp, "wb")))
         return sesame__fail(err, SESAME_ERR_IO, "cannot write %s", tmp);
+
+    pr.label = label; pr.last_pct = -1;
+    pr.tty = (label != NULL) && isatty(STDERR_FILENO);
 
     curl_global_init(CURL_GLOBAL_DEFAULT);
     if (!(cu = curl_easy_init())) {
@@ -303,12 +356,15 @@ static int download_verify(const char *url, const char *want_sha,
     curl_easy_setopt(cu, CURLOPT_WRITEDATA, f);
     curl_easy_setopt(cu, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(cu, CURLOPT_FAILONERROR, 1L);
-    curl_easy_setopt(cu, CURLOPT_NOPROGRESS, 0L);
+    curl_easy_setopt(cu, CURLOPT_NOPROGRESS, pr.tty ? 0L : 1L);
+    curl_easy_setopt(cu, CURLOPT_XFERINFOFUNCTION, on_xfer);
+    curl_easy_setopt(cu, CURLOPT_XFERINFODATA, &pr);
     curl_easy_setopt(cu, CURLOPT_USERAGENT, "sesame-cli");
     rc = curl_easy_perform(cu);
     curl_easy_getinfo(cu, CURLINFO_RESPONSE_CODE, &code);
     curl_easy_cleanup(cu);
     fclose(f);
+    if (pr.tty) fprintf(stderr, "\r\033[K");   /* clear the in-place bar */
 
     if (rc != CURLE_OK) {
         remove(tmp);
@@ -331,6 +387,11 @@ static int download_verify(const char *url, const char *want_sha,
     if (rename(tmp, dest) != 0) {
         remove(tmp);
         return sesame__fail(err, SESAME_ERR_IO, "cannot install %s", dest);
+    }
+    if (label) {
+        if (stat(dest, &st) == 0) { human_size((double)st.st_size, sz, sizeof sz); }
+        else sz[0] = '\0';
+        fprintf(stderr, "  \xe2\x9c\x93 %-24s %s\n", label, sz);
     }
     return SESAME_OK;
 }
@@ -365,7 +426,7 @@ int sesame_fetch_index(const char *platform, int force,
     snprintf(url, sizeof url, "%s/%s/%s/%s",
              SESAME_BASE_URL, tag, platform, SESAME_SUMS_FILE);
     snprintf(sums_path, sizeof sums_path, "%s/.%s.SHA256SUMS.tmp", dir, platform);
-    if (download_verify(url, reg->sums_sha256, sums_path, 1, err) != SESAME_OK)
+    if (download_verify(url, reg->sums_sha256, sums_path, NULL, 1, err) != SESAME_OK)
         return err ? err->code : SESAME_ERR_IO;
 
     nsums = sums_load(sums_path, sums, SUMS_MAX);
@@ -379,7 +440,7 @@ int sesame_fetch_index(const char *platform, int force,
         snprintf(dest, sizeof dest, "%s/%s", dir, sums[i].file);
         snprintf(url,  sizeof url,  "%s/%s/%s/%s",
                  SESAME_BASE_URL, tag, platform, sums[i].file);
-        if (download_verify(url, sums[i].sha, dest, force, err) != SESAME_OK)
+        if (download_verify(url, sums[i].sha, dest, sums[i].file, force, err) != SESAME_OK)
             return err ? err->code : SESAME_ERR_IO;
         if (strcmp(sums[i].file, reg->ordering) == 0)
             snprintf(ordering, sizeof ordering, "%s", dest);
