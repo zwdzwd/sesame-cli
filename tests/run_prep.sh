@@ -18,7 +18,7 @@ pass=0
 # platform <space> prefix <space> prep-code
 while IFS=' ' read -r plat rel code; do
     [ -n "$plat" ] || continue
-    idx="$root/data/$plat.ordering.tsv.gz"
+    idx="$root/testdata/$plat.ordering.tsv.gz"
     pfx="$idats/$rel"
     [ -f "$idx" ] || { echo "SKIP $plat: no $idx (run: make index)"; continue; }
 

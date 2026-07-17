@@ -46,11 +46,11 @@ static int usage(void)
       "      count and the index looked up in $SESAME_INDEX_DIR, ., ./data,\n"
       "      then the cache. sesame never downloads implicitly.\n"
       "\n"
-      "  sesame fetch [<tag>] [--force]\n"
-      "      Download every platform at <tag> (default: the pinned tag) and\n"
-      "      make it current. Files whose content is already present under\n"
-      "      another tag are hardlinked, not re-downloaded. The ONLY path that\n"
-      "      touches the network. Never prompts.\n"
+      "  sesame fetch [<platform>] [--force]\n"
+      "      Download <platform> (default: all published) at the pinned tag.\n"
+      "      Verifies every file against its digest; a file already present and\n"
+      "      matching is skipped. The ONLY path that touches the network.\n"
+      "      Never prompts.\n"
       "\n"
       "  sesame index-info\n"
       "      Show the store location, which tag it holds, and each platform.\n"
@@ -74,23 +74,32 @@ static int resolve_idat(const char *prefix, const char *chan,
 
 static int cmd_fetch(int argc, char **argv)
 {
-    const char *tag = NULL;
+    const char *platform = NULL;
     int force = 0, i;
-    char dir[4096];
+    char dir[4096], path[4096];
     sesame_err_t e;
 
     for (i = 0; i < argc; i++) {
         if (strcmp(argv[i], "--force") == 0) force = 1;
         else if (argv[i][0] == '-' && argv[i][1] != '\0') return usage();
-        else tag = argv[i];
+        else platform = argv[i];
     }
-    if (sesame_fetch_tag(tag, force, &e) != SESAME_OK) {
-        fprintf(stderr, "sesame: %s\n", e.msg);
-        return 1;
-    }
+
     sesame_store_dir(dir, sizeof dir);
-    fprintf(stderr, "sesame: %s is current in %s\n",
-            tag ? tag : sesame_default_tag(), dir);
+    if (platform) {
+        if (sesame_fetch_index(platform, force, path, sizeof path, &e) != SESAME_OK) {
+            fprintf(stderr, "sesame: %s\n", e.msg);
+            return 1;
+        }
+        fprintf(stderr, "sesame: %s ready at %s\n", platform, path);
+    } else {
+        if (sesame_fetch_all(force, &e) != SESAME_OK) {
+            fprintf(stderr, "sesame: %s\n", e.msg);
+            return 1;
+        }
+        fprintf(stderr, "sesame: %s (%s) ready in %s\n",
+                "all published platforms", sesame_default_tag(), dir);
+    }
     return 0;
 }
 
@@ -111,14 +120,12 @@ static int use_color(void)
 
 static int cmd_index_info(int argc, char **argv)
 {
-    char dir[4096], path[4096], exe[4096], tag[256];
+    char dir[4096], path[4096], exe[4096];
     static const char *plats[] = { "EPIC", "EPICv2", "HM450", "MSA", NULL };
     const char *e = getenv("SESAME_INDEX_DIR");
-    int have_tag;
     (void)argc; (void)argv;
 
     sesame_store_dir(dir, sizeof dir);
-    have_tag = (sesame_index_active(dir, tag, sizeof tag) == 0);
 
     printf("%sstore%s  %s%s%s\n", C_BOLD, C_RESET, C_BOLD, dir, C_RESET);
     if (e && *e)
@@ -130,12 +137,9 @@ static int cmd_index_info(int argc, char **argv)
         printf("       %sSESAME_INDEX_DIR unset - using the XDG store%s\n",
                C_DIM, C_RESET);
 
-    printf("%stag%s    %s%s%s", C_BOLD, C_RESET,
-           have_tag ? C_GRN : C_YEL,
-           have_tag ? tag : "(none - run: sesame fetch)", C_RESET);
-    if (have_tag && strcmp(tag, sesame_default_tag()) != 0)
-        printf("   %sthis build pins %s%s", C_DIM, sesame_default_tag(), C_RESET);
-    printf("\n");
+    printf("%stag%s    %s%s%s   %spinned by this build%s\n",
+           C_BOLD, C_RESET, C_GRN, sesame_default_tag(), C_RESET,
+           C_DIM, C_RESET);
 
     printf("\n%s%-9s %s%s\n", C_BOLD, "PLATFORM", "RESOLVED", C_RESET);
     for (int i = 0; plats[i]; i++) {

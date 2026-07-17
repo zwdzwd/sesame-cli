@@ -46,7 +46,7 @@ test-prep: $(BIN)
 PLATFORMS := HM450 EPIC EPICv2 MSA
 index:
 	@for p in $(PLATFORMS); do \
-	    Rscript tools/export_ordering.R $$p data/$$p.ordering.tsv.gz; \
+	    Rscript tools/export_ordering.R $$p testdata/$$p.ordering.tsv.gz; \
 	done
 
 # Real fuzzing. Needs a clang with libFuzzer (Linux CI); Apple clang has none.

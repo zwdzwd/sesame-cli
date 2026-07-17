@@ -103,28 +103,23 @@ int sesame_index_locate(const char *platform, char *out, size_t n);
 int sesame_index_activate(const char *store, const char *tag, sesame_err_t *err);
 
 /* The tag `current` points at. 0 on success. */
-int sesame_index_active(const char *store, char *tag_out, size_t n);
 
 /* Fills msg with actionable "no index found, here is how to fix it" text. */
 void sesame_index_missing_help(const char *platform, char *msg, size_t n);
 
-/* Retrieval primitive: fetch (tag, file) into <cache>/<tag>/<file>, mirroring
- * the release URL <base>/releases/download/<tag>/<file>. want_sha may be NULL
- * for an unpinned explicit fetch; when given, a mismatch is fatal.
+/* Fetch one platform at the pinned tag into the store: pull its SHA256SUMS
+ * (verified against a digest compiled into this build), then every file it
+ * lists (ordering table + the .cm mask). Files already present with the right
+ * digest are skipped. out_path receives the ordering table's path.
  *
- * This and sesame_fetch_index are the ONLY paths that touch the network --
- * nothing downloads implicitly and nothing ever prompts, so behaviour is
- * identical with or without a TTY. */
-int sesame_fetch(const char *tag, const char *file, const char *want_sha,
-                 int force, char *out_path, size_t out_n, sesame_err_t *err);
-
-/* One platform at the pinned tag. */
+ * This and sesame_fetch_all are the ONLY paths that touch the network -- nothing
+ * downloads implicitly and nothing ever prompts, so behaviour is identical with
+ * or without a TTY. */
 int sesame_fetch_index(const char *platform, int force,
                        char *out_path, size_t out_n, sesame_err_t *err);
 
-/* Every platform at `tag` (NULL = the pinned default), then make it current.
- * Content already present under another tag is hardlinked, not re-downloaded. */
-int sesame_fetch_tag(const char *tag, int force, sesame_err_t *err);
+/* Fetch every platform published at the pinned tag. */
+int sesame_fetch_all(int force, sesame_err_t *err);
 
 sesame_index_t *sesame_index_open(const char *path, sesame_err_t *err);
 void            sesame_index_close(sesame_index_t *ix);

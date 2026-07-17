@@ -4,9 +4,8 @@
  *
  *   <store>/EPIC.ordering.tsv.gz
  *   <store>/EPICv2.ordering.tsv.gz
- *   <store>/SHA256SUMS     per-file digests, with the tag in a leading
- *                          "# <tag>" comment -- so there is no separate TAG
- *                          file that could drift out of sync with them
+ * (SHA256SUMS is fetched per platform, verified, parsed, and discarded -- it is
+ * not kept in the store. The tag is fixed by this build.)
  *
  * No tag subdirectories, no `current` symlink, no local version management.
  * Most users only ever want one version; anyone who genuinely needs two can
@@ -185,34 +184,6 @@ static int mkdirs(const char *path)
     return (mkdir(tmp, 0755) == 0 || 1) ? 0 : -1;
 }
 
-/* Which tag the store holds, read from the leading "# <tag>" comment of
- * <store>/SHA256SUMS. 0 on success.
- *
- * The tag lives in that comment rather than a third column because `shasum -c`
- * parses everything after the two spaces as the filename -- a third column
- * would break hand-verification with standard tools. A comment keeps the file
- * both self-describing and checkable, and means there is no separate TAG file
- * to drift out of sync with the digests it belongs to. */
-int sesame_index_active(const char *store, char *tag_out, size_t n)
-{
-    char path[4096], buf[256];
-    FILE *f;
-    char *p;
-
-    snprintf(path, sizeof path, "%s/%s", store, SESAME_SUMS_FILE);
-    if (!(f = fopen(path, "rb"))) return -1;
-    if (!fgets(buf, sizeof buf, f)) { fclose(f); return -1; }
-    fclose(f);
-    buf[strcspn(buf, "\r\n")] = '\0';
-    p = buf;
-    while (*p == ' ' || *p == '\t') p++;
-    if (*p != '#') return -1;
-    p++;
-    while (*p == ' ' || *p == '\t') p++;
-    if (!*p) return -1;
-    snprintf(tag_out, n, "%s", p);
-    return 0;
-}
 
 int sesame_index_locate(const char *platform, char *out, size_t n)
 {
@@ -250,7 +221,7 @@ void sesame_index_missing_help(const char *platform, char *msg, size_t n)
         "    sesame betas --index <path> ...\n"
         "    export SESAME_INDEX_DIR=<dir>",
         platform,
-        dir, reg ? reg->file : "<platform>.ordering.tsv.gz",
+        dir, reg ? reg->ordering : "<platform>.ordering.tsv.gz",
         platform,
         SESAME_DEFAULT_TAG);
 }
@@ -297,45 +268,28 @@ static int sums_load(const char *path, sums_t *out, int max)
     return n;
 }
 
-static const char *sums_lookup(const sums_t *s, int n, const char *file)
-{
-    int i;
-    for (i = 0; i < n; i++)
-        if (strcmp(s[i].file, file) == 0) return s[i].sha;
-    return NULL;
-}
 
 /* Fetch <file> at <tag> into <store>/<file>.
  *
  * If it is already on disk with the right digest, nothing is downloaded. That
  * one check is the whole de-duplication story. want_sha may be NULL only for the
  * SHA256SUMS of a tag this build does not pin. */
-int sesame_fetch(const char *tag, const char *file, const char *want_sha,
-                 int force, char *out_path, size_t out_n, sesame_err_t *err)
+/* Download url into dest, verifying want_sha (may be NULL for the anchor-less
+ * case). If dest already matches want_sha and !force, skips the network. */
+static int download_verify(const char *url, const char *want_sha,
+                           const char *dest, int force, sesame_err_t *err)
 {
-    char dir[4096], dest[4096], tmp[4096], url[4096], got[65];
-    CURL *cu = NULL;
-    FILE *f = NULL;
+    char tmp[4096], got[65];
+    CURL *cu;
+    FILE *f;
     CURLcode rc;
     long code = 0;
 
-    if (err) { err->code = SESAME_OK; err->msg[0] = '\0'; }
-    if (!tag || !file)
-        return sesame__fail(err, SESAME_ERR_IO, "fetch needs a tag and a file");
-
-    sesame_store_dir(dir, sizeof dir);
-    mkdirs(dir);
-    snprintf(dest, sizeof dest, "%s/%s", dir, file);
-    snprintf(tmp,  sizeof tmp,  "%s/.%s.part", dir, file);
-    snprintf(url,  sizeof url,  "%s/%s/%s", SESAME_BASE_URL, tag, file);
-
-    /* Already correct -> the remote copy is byte-identical; skip the network. */
     if (!force && want_sha && is_file(dest) &&
-        sesame__sha256_file(dest, got) == 0 && strcmp(got, want_sha) == 0) {
-        snprintf(out_path, out_n, "%s", dest);
-        return SESAME_OK;
-    }
+        sesame__sha256_file(dest, got) == 0 && strcmp(got, want_sha) == 0)
+        return SESAME_OK;                 /* already correct; no download */
 
+    snprintf(tmp, sizeof tmp, "%s.part", dest);
     if (!(f = fopen(tmp, "wb")))
         return sesame__fail(err, SESAME_ERR_IO, "cannot write %s", tmp);
 
@@ -361,9 +315,6 @@ int sesame_fetch(const char *tag, const char *file, const char *want_sha,
         return sesame__fail(err, SESAME_ERR_IO, "download failed (%s): %s",
                             curl_easy_strerror(rc), url);
     }
-
-    /* Verify before publishing into the cache. A wrong index silently changes
-     * betas, so a digest mismatch is fatal, never a warning. */
     if (want_sha) {
         if (sesame__sha256_file(tmp, got) != 0) {
             remove(tmp);
@@ -373,101 +324,105 @@ int sesame_fetch(const char *tag, const char *file, const char *want_sha,
             remove(tmp);
             return sesame__fail(err, SESAME_ERR_FORMAT,
                 "sha256 mismatch for %s\n  expected %s\n  got      %s\n"
-                "  refusing to install an index that does not match the pinned digest",
-                file, want_sha, got);
+                "  refusing to install a file that does not match its pinned digest",
+                dest, want_sha, got);
         }
     }
     if (rename(tmp, dest) != 0) {
         remove(tmp);
         return sesame__fail(err, SESAME_ERR_IO, "cannot install %s", dest);
     }
-    snprintf(out_path, out_n, "%s", dest);
     return SESAME_OK;
 }
 
-/* Convenience: one platform at the pinned tag, digest via SHA256SUMS. */
+/* Fetch one platform at the pinned tag into the flat store.
+ *
+ * Repo layout is <base>/<tag>/<platform>/{SHA256SUMS, <files...>}. We pull the
+ * platform's SHA256SUMS first and verify it against the digest compiled into
+ * this build -- a hard trust anchor -- then fetch every file it lists (the
+ * ordering table plus, for later steps, the .cm mask). A file already on disk
+ * with the right digest is skipped, which is the whole de-duplication story. */
 int sesame_fetch_index(const char *platform, int force,
                        char *out_path, size_t out_n, sesame_err_t *err)
 {
     const sesame_reg_t *reg = sesame__reg_for_platform(platform);
-    char sums_path[4096];
+    const char *tag = SESAME_DEFAULT_TAG;
+    char dir[4096], url[4096], sums_path[4096], ordering[4096] = "";
     sums_t sums[SUMS_MAX];
-    const char *want;
-    int nsums;
+    int nsums, i;
 
+    if (err) { err->code = SESAME_OK; err->msg[0] = '\0'; }
     if (!reg)
         return sesame__fail(err, SESAME_ERR_UNSUPPORTED,
             "unknown platform '%s' (known: EPIC, EPICv2, HM450, MSA)", platform);
-    if (sesame_fetch(SESAME_DEFAULT_TAG, SESAME_SUMS_FILE, SESAME_SUMS_SHA256,
-                     force, sums_path, sizeof sums_path, err) != SESAME_OK)
-        return err ? err->code : SESAME_ERR_IO;
-    nsums = sums_load(sums_path, sums, SUMS_MAX);
-    want = (nsums > 0) ? sums_lookup(sums, nsums, reg->file) : NULL;
-    if (!want)
-        return sesame__fail(err, SESAME_ERR_FORMAT,
-                            "no digest for %s in %s", reg->file, sums_path);
-    return sesame_fetch(SESAME_DEFAULT_TAG, reg->file, want, force,
-                        out_path, out_n, err);
-}
+    if (!reg->sums_sha256)
+        return sesame__fail(err, SESAME_ERR_UNSUPPORTED,
+            "%s is not published at tag %s yet", platform, tag);
 
-/* Fetch every platform at `tag` and make it current.
- *
- * SHA256SUMS is fetched first: for the pinned tag it is verified against the
- * digest compiled into this build (a hard trust anchor); for any other tag it
- * is trusted on first use, which still gives per-file integrity within that tag
- * and still enables de-duplication. Files whose content already exists under
- * another tag are hardlinked rather than downloaded. */
-int sesame_fetch_tag(const char *tag, int force, sesame_err_t *err)
-{
-    char dir[4096], path[4096], sums_path[4096];
-    sums_t sums[SUMS_MAX];
-    const sesame_reg_t *r;
-    int pinned, nsums;
-
-    if (!tag || !*tag) tag = SESAME_DEFAULT_TAG;
-    pinned = (strcmp(tag, SESAME_DEFAULT_TAG) == 0);
     sesame_store_dir(dir, sizeof dir);
+    mkdirs(dir);
 
-    if (sesame_fetch(tag, SESAME_SUMS_FILE,
-                     pinned ? SESAME_SUMS_SHA256 : NULL,
-                     force, sums_path, sizeof sums_path, err) != SESAME_OK)
+    snprintf(url, sizeof url, "%s/%s/%s/%s",
+             SESAME_BASE_URL, tag, platform, SESAME_SUMS_FILE);
+    snprintf(sums_path, sizeof sums_path, "%s/.%s.SHA256SUMS.tmp", dir, platform);
+    if (download_verify(url, reg->sums_sha256, sums_path, 1, err) != SESAME_OK)
         return err ? err->code : SESAME_ERR_IO;
 
     nsums = sums_load(sums_path, sums, SUMS_MAX);
+    remove(sums_path);                    /* transient; not part of the store */
     if (nsums <= 0)
         return sesame__fail(err, SESAME_ERR_FORMAT,
-                            "%s has no usable digest lines", sums_path);
+                            "empty or unreadable SHA256SUMS for %s", platform);
 
-    for (r = SESAME_REGISTRY; r->platform; r++) {
-        const char *want = sums_lookup(sums, nsums, r->file);
-        if (!want)
-            return sesame__fail(err, SESAME_ERR_FORMAT,
-                "%s lists no digest for %s -- tag %s does not carry this platform",
-                SESAME_SUMS_FILE, r->file, tag);
-        if (sesame_fetch(tag, r->file, want, force,
-                         path, sizeof path, err) != SESAME_OK)
+    for (i = 0; i < nsums; i++) {
+        char dest[4096];
+        snprintf(dest, sizeof dest, "%s/%s", dir, sums[i].file);
+        snprintf(url,  sizeof url,  "%s/%s/%s/%s",
+                 SESAME_BASE_URL, tag, platform, sums[i].file);
+        if (download_verify(url, sums[i].sha, dest, force, err) != SESAME_OK)
             return err ? err->code : SESAME_ERR_IO;
+        if (strcmp(sums[i].file, reg->ordering) == 0)
+            snprintf(ordering, sizeof ordering, "%s", dest);
     }
-    return SESAME_OK;   /* the tag is recorded in SHA256SUMS itself */
+    if (out_path) snprintf(out_path, out_n, "%s", ordering);
+    return SESAME_OK;
+}
+
+/* Fetch every platform that is published at the pinned tag. */
+int sesame_fetch_all(int force, sesame_err_t *err)
+{
+    const sesame_reg_t *r;
+    char path[4096];
+    int any = 0;
+
+    if (err) { err->code = SESAME_OK; err->msg[0] = '\0'; }
+    for (r = SESAME_REGISTRY; r->platform; r++) {
+        if (!r->sums_sha256) continue;    /* not published at the pinned tag */
+        if (sesame_fetch_index(r->platform, force, path, sizeof path, err)
+                != SESAME_OK)
+            return err ? err->code : SESAME_ERR_IO;
+        any = 1;
+    }
+    if (!any)
+        return sesame__fail(err, SESAME_ERR_UNSUPPORTED,
+            "no platforms are published at tag %s", SESAME_DEFAULT_TAG);
+    return SESAME_OK;
 }
 #else
-int sesame_fetch(const char *tag, const char *file, const char *want_sha,
-                 int force, char *out_path, size_t out_n, sesame_err_t *err)
-{
-    (void)want_sha; (void)force; (void)out_path; (void)out_n;
-    return sesame__fail(err, SESAME_ERR_UNSUPPORTED,
-        "this build has no network support; download %s/%s/%s manually",
-        SESAME_BASE_URL, tag ? tag : "<tag>", file ? file : "<file>");
-}
-
 int sesame_fetch_index(const char *platform, int force,
                        char *out_path, size_t out_n, sesame_err_t *err)
 {
     const sesame_reg_t *reg = sesame__reg_for_platform(platform);
     (void)force; (void)out_path; (void)out_n;
     return sesame__fail(err, SESAME_ERR_UNSUPPORTED,
-        "this build has no network support; download %s/%s/%s manually",
-        SESAME_BASE_URL, reg ? reg->tag : "<tag>",
-        reg ? reg->file : "<platform>.ordering.tsv.gz");
+        "this build has no network support; download %s/%s/%s/ manually",
+        SESAME_BASE_URL, SESAME_DEFAULT_TAG, reg ? reg->platform : "<platform>");
+}
+
+int sesame_fetch_all(int force, sesame_err_t *err)
+{
+    (void)force;
+    return sesame__fail(err, SESAME_ERR_UNSUPPORTED,
+        "this build has no network support");
 }
 #endif

@@ -23,7 +23,7 @@ while IFS=' ' read -r plat rel prep tol; do
     [ -n "$plat" ] || continue
     [ "$prep" = "-" ] && prep=""
     tol=${tol:-0}
-    idx="$root/data/$plat.ordering.tsv.gz"
+    idx="$root/testdata/$plat.ordering.tsv.gz"
     pfx="$idats/$rel"
     if [ ! -f "$idx" ]; then
         echo "SKIP $plat: no $idx (run: sesame fetch)"
