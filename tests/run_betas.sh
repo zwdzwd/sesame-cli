@@ -26,7 +26,7 @@ while IFS=' ' read -r plat rel prep tol; do
     idx="$root/data/$plat.ordering.tsv.gz"
     pfx="$idats/$rel"
     if [ ! -f "$idx" ]; then
-        echo "SKIP $plat: no $idx (run: make index)"
+        echo "SKIP $plat: no $idx (run: sesame fetch)"
         continue
     fi
     if ! "$bin" betas --index "$idx" --prep "$prep" --f64 "$pfx" \

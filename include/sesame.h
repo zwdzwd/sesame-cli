@@ -78,6 +78,9 @@ typedef struct sesame_index_t sesame_index_t;
  * sesameData's idatSignature. */
 const char *sesame_platform_from_beads(int32_t beads);
 
+/* The annotation tag this build pins, and whose digests it can verify. */
+const char *sesame_default_tag(void);
+
 /* The index store -- where fetch writes, and where the active-version links
  * live. One variable, since the store is managed (see sesame_index_activate),
  * not a cache:
@@ -92,15 +95,12 @@ const char *sesame_store_dir(char *out, size_t n);
  * absent. Never downloads, never prompts. */
 int sesame_index_locate(const char *platform, char *out, size_t n);
 
-/* Point <store>/<file> at <tag>/<file> (relative link, atomic rename). This is
- * what makes several versions coexist while the flat lookup keeps working.
- * Refuses to clobber a hand-placed regular file. */
-int sesame_index_activate(const char *store, const char *tag, const char *file,
-                          sesame_err_t *err);
+/* Point <store>/current at <tag> (relative link, atomic rename), selecting that
+ * annotation snapshot for every platform at once. */
+int sesame_index_activate(const char *store, const char *tag, sesame_err_t *err);
 
-/* The tag the active symlink points at. 0 on success. */
-int sesame_index_active(const char *store, const char *file,
-                        char *tag_out, size_t n);
+/* The tag `current` points at. 0 on success. */
+int sesame_index_active(const char *store, char *tag_out, size_t n);
 
 /* Fills msg with actionable "no index found, here is how to fix it" text. */
 void sesame_index_missing_help(const char *platform, char *msg, size_t n);
@@ -115,10 +115,13 @@ void sesame_index_missing_help(const char *platform, char *msg, size_t n);
 int sesame_fetch(const char *tag, const char *file, const char *want_sha,
                  int force, char *out_path, size_t out_n, sesame_err_t *err);
 
-/* Convenience over sesame_fetch: uses the platform's pinned (tag, file,
- * sha256) from the registry. */
+/* One platform at the pinned tag. */
 int sesame_fetch_index(const char *platform, int force,
                        char *out_path, size_t out_n, sesame_err_t *err);
+
+/* Every platform at `tag` (NULL = the pinned default), then make it current.
+ * Content already present under another tag is hardlinked, not re-downloaded. */
+int sesame_fetch_tag(const char *tag, int force, sesame_err_t *err);
 
 sesame_index_t *sesame_index_open(const char *path, sesame_err_t *err);
 void            sesame_index_close(sesame_index_t *ix);
