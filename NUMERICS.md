@@ -95,6 +95,32 @@ in this implementation, and neither result is "more correct" than the other.
 
 ## Observations about the R implementation (not divergences)
 
+**Ordering files are sorted by Probe_ID under R's *locale* collation, not byte
+order.** All four platforms are in `order()` sequence under `en_US.UTF-8`.
+HM450/EPIC/EPICv2 happen to coincide with byte order; **MSA does not**. It is the
+only platform carrying `rs` IDs where one number prefixes another, e.g.
+
+```
+locale : rs12051_TC21 < rs12051548_TC21     <- what the files use
+radix  : rs12051548_TC21 < rs12051_TC21
+```
+
+ICU ignores the `_` and compares `rs12051TC21` vs `rs12051548TC21` (`5` < `T`);
+byte order compares `_` (0x5F) vs `5` (0x35) and flips it. Exactly 11 such pairs
+in MSA.
+
+This does not affect sesame-cli: Probe_IDs are consumed in file order and the
+only binary search is over integer addresses. Two hazards it *does* create:
+
+1. **Rebuild reproducibility.** `order()` is locale-dependent, so regenerating
+   the `.address` object under `LC_COLLATE=C` (Docker, CI, minimal images) would
+   reorder MSA, change its sha256, and change the output row order — which is
+   load-bearing (`R/sesame.R:504`). `tools/export_ordering.R` preserves the
+   object's existing order and is therefore safe; anyone rebuilding *upstream*
+   must pin the locale.
+2. **Never binary-search Probe_IDs with `strcmp`.** It would silently fail on
+   those 11 MSA probes. Use a hash if ID lookup is ever needed.
+
 **The ordering table's `mask` column is dead data.** `.address$ordering` carries
 a `mask` column built by `sesameAnno_buildAddressFile` from
 `create_default_mask()$ref_issue` (`R/sesameAnno.R:170`). Nothing ever reads it:
