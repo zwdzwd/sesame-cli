@@ -41,6 +41,9 @@ void sesame__qnorm_use_target(const double *x_sorted, int32_t n,
  * opposite and would silently disagree. */
 double sesame__pmax2(double a, double b);
 
+/* <dir of the binary>/data if it exists; 0 on success. */
+int sesame__exe_data_dir(char *out, size_t n);
+
 /* Registry lookup (registry.h must be included by the TU that uses the type). */
 struct sesame_reg_t;
 

@@ -68,8 +68,31 @@ Retrieval is `(tag, file)`, and the cache mirrors the URL so pinned versions coe
 ~/.cache/sesame/EPICv2.ordering.v2/EPICv2.ordering.tsv.gz
 ```
 
-Resolution order: `--index <path>` > `$SESAME_INDEX_DIR` > `./` > `./data` > cache
-(`$SESAME_CACHE` | `$XDG_CACHE_HOME/sesame` | `~/Library/Caches/sesame` | `~/.cache/sesame`).
+The store keeps every version side by side and marks the active one with a
+symlink, so versions coexist and switching is instant:
+
+```
+<store>/EPICv2.ordering.v1/EPICv2.ordering.tsv.gz
+<store>/EPICv2.ordering.v2/EPICv2.ordering.tsv.gz
+<store>/EPICv2.ordering.tsv.gz -> EPICv2.ordering.v2/...   # active
+```
+
+`sesame use EPICv2 EPICv2.ordering.v1` repoints it; `sesame index-info` shows
+what is active. A file you place there by hand is honoured and never clobbered.
+
+**Store location** — one variable, since the store is managed rather than a cache:
+
+| | |
+|---|---|
+| `$SESAME_INDEX_DIR` | explicit |
+| `<dir of the binary>/data` | a checkout — found from **any** working directory |
+| `$XDG_CACHE_HOME/sesame`, `~/Library/Caches/sesame`, `~/.cache/sesame` | fallback |
+
+The binary-relative default is why a source checkout needs no configuration,
+while an installed binary (no `data/` beside it) falls through to the XDG store.
+
+**Lookup order**: `--index <path>` > `<store>/<file>` (the active link) > `./` >
+`./data` > `<store>/<pinned tag>/<file>`.
 
 **sesame never downloads implicitly and never prompts** — a prompt would hang
 forever, silently, in a Nextflow job or a Docker build. `sesame fetch` is the only

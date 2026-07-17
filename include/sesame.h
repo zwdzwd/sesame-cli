@@ -78,13 +78,29 @@ typedef struct sesame_index_t sesame_index_t;
  * sesameData's idatSignature. */
 const char *sesame_platform_from_beads(int32_t beads);
 
-/* Cache directory: $SESAME_CACHE | $XDG_CACHE_HOME/sesame | ~/.cache/sesame
- * (~/Library/Caches/sesame on macOS). Returns out. */
-const char *sesame_cache_dir(char *out, size_t n);
+/* The index store -- where fetch writes, and where the active-version links
+ * live. One variable, since the store is managed (see sesame_index_activate),
+ * not a cache:
+ *   $SESAME_INDEX_DIR | <dir of the binary>/data | $XDG_CACHE_HOME/sesame
+ *                     | ~/Library/Caches/sesame (macOS) | ~/.cache/sesame
+ * The binary-relative default means a checkout is found from any cwd, while an
+ * installed binary (no data/ beside it) falls through to the XDG store.
+ * Returns out. */
+const char *sesame_store_dir(char *out, size_t n);
 
 /* Finds an existing index for platform. 0 and fills out on success, -1 if
  * absent. Never downloads, never prompts. */
 int sesame_index_locate(const char *platform, char *out, size_t n);
+
+/* Point <store>/<file> at <tag>/<file> (relative link, atomic rename). This is
+ * what makes several versions coexist while the flat lookup keeps working.
+ * Refuses to clobber a hand-placed regular file. */
+int sesame_index_activate(const char *store, const char *tag, const char *file,
+                          sesame_err_t *err);
+
+/* The tag the active symlink points at. 0 on success. */
+int sesame_index_active(const char *store, const char *file,
+                        char *tag_out, size_t n);
 
 /* Fills msg with actionable "no index found, here is how to fix it" text. */
 void sesame_index_missing_help(const char *platform, char *msg, size_t n);

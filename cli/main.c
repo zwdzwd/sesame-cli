@@ -2,11 +2,15 @@
  * SPDX-License-Identifier: MIT
  */
 #include "sesame.h"
+#include "../src/internal.h"
 
+#include <dirent.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 static int usage(void)
 {
@@ -46,8 +50,13 @@ static int usage(void)
       "      verifies sha256; the --tag form fetches any asset unpinned.\n"
       "      The ONLY path that touches the network. Never prompts.\n"
       "\n"
+      "  sesame use <platform> <tag>\n"
+      "      Switch the active version by repointing the link, e.g.\n"
+      "      sesame use EPICv2 EPICv2.ordering.v1. Must already be fetched.\n"
+      "\n"
       "  sesame index-info\n"
-      "      Show the cache location and which indexes are present.\n"
+      "      Show the store location, the active version per platform, and\n"
+      "      every version present.\n"
       "\n"
       "  sesame version\n",
       stderr);
@@ -92,23 +101,136 @@ static int cmd_fetch(int argc, char **argv)
     return 0;
 }
 
+static int cmd_use(int argc, char **argv)
+{
+    char store[4096], file[4096], dest[4096];
+    sesame_err_t e;
+
+    if (argc < 2) return usage();
+    snprintf(file, sizeof file, "%s.ordering.tsv.gz", argv[0]);
+    sesame_store_dir(store, sizeof store);
+    snprintf(dest, sizeof dest, "%s/%s/%s", store, argv[1], file);
+
+    if (access(dest, R_OK) != 0) {
+        fprintf(stderr, "sesame: %s not present\n  fetch it first: sesame fetch %s\n",
+                dest, argv[0]);
+        return 1;
+    }
+    if (sesame_index_activate(store, argv[1], file, &e) != SESAME_OK) {
+        fprintf(stderr, "sesame: %s\n", e.msg);
+        return 1;
+    }
+    fprintf(stderr, "sesame: %s -> %s\n", argv[0], argv[1]);
+    return 0;
+}
+
+/* ANSI only when stdout is a terminal, and never when NO_COLOR is set
+ * (no-color.org). Piping index-info into grep must stay plain. */
+static int use_color(void)
+{
+    const char *nc = getenv("NO_COLOR");
+    if (nc && *nc) return 0;
+    return isatty(STDOUT_FILENO);
+}
+#define C(code) (use_color() ? (code) : "")
+#define C_RESET C("\x1b[0m")
+#define C_BOLD  C("\x1b[1m")
+#define C_DIM   C("\x1b[2m")
+#define C_GRN   C("\x1b[32m")
+#define C_YEL   C("\x1b[33m")
+
+static int cmp_str(const void *a, const void *b)
+{
+    return strcmp((const char *)a, (const char *)b);
+}
+
+/* "EPICv2.ordering.v1" -> "v1"; falls back to the whole tag. */
+static const char *short_ver(const char *tag, const char *platform)
+{
+    size_t n = strlen(platform);
+    if (strncmp(tag, platform, n) == 0 && tag[n] == '.') {
+        const char *rest = tag + n + 1;
+        const char *dot = strrchr(rest, '.');
+        if (dot && dot[1]) return dot + 1;
+    }
+    return tag;
+}
+
 static int cmd_index_info(int argc, char **argv)
 {
-    char dir[4096], path[4096];
+    char dir[4096], path[4096], exe[4096];
     static const char *plats[] = { "EPIC", "EPICv2", "HM450", "MSA", NULL };
+    const char *e = getenv("SESAME_INDEX_DIR");
     (void)argc; (void)argv;
 
-    sesame_cache_dir(dir, sizeof dir);
-    printf("cache dir          %s\n", dir);
-    printf("SESAME_INDEX_DIR  %s\n",
-           getenv("SESAME_INDEX_DIR") ? getenv("SESAME_INDEX_DIR") : "(unset)");
-    printf("\n%-10s %-9s %s\n", "platform", "status", "path");
+    sesame_store_dir(dir, sizeof dir);
+
+    printf("%sstore%s  %s%s%s\n", C_BOLD, C_RESET, C_BOLD, dir, C_RESET);
+    if (e && *e)
+        printf("       %sfrom SESAME_INDEX_DIR%s\n", C_DIM, C_RESET);
+    else if (sesame__exe_data_dir(exe, sizeof exe) == 0)
+        printf("       %sSESAME_INDEX_DIR unset - using data/ beside the binary%s\n",
+               C_DIM, C_RESET);
+    else
+        printf("       %sSESAME_INDEX_DIR unset - using the XDG store%s\n",
+               C_DIM, C_RESET);
+
+    printf("\n%s%-9s %-18s %s%s\n", C_BOLD, "PLATFORM", "VERSIONS", "ACTIVE", C_RESET);
+
     for (int i = 0; plats[i]; i++) {
-        if (sesame_index_locate(plats[i], path, sizeof path) == 0)
-            printf("%-10s %-9s %s\n", plats[i], "present", path);
-        else
-            printf("%-10s %-9s %s\n", plats[i], "MISSING",
-                   "(sesame fetch ...)");
+        char file[4096], tag[512], vers[1024] = "";
+        int has, act;
+        DIR *d;
+
+        snprintf(file, sizeof file, "%s.ordering.tsv.gz", plats[i]);
+        has = (sesame_index_locate(plats[i], path, sizeof path) == 0);
+        act = (sesame_index_active(dir, file, tag, sizeof tag) == 0);
+
+        /* Every version of this platform present in the store, marking the
+         * active one. Compact: "v1* v2". Sorted, since readdir order is
+         * arbitrary and the listing should be stable between runs. */
+        if ((d = opendir(dir))) {
+            struct dirent *de;
+            size_t pn = strlen(plats[i]);
+            char found[64][256];
+            int nf = 0;
+            while ((de = readdir(d)) && nf < 64) {
+                char sub[4096];
+                struct stat st;
+                if (de->d_name[0] == '.') continue;
+                if (strncmp(de->d_name, plats[i], pn) != 0 || de->d_name[pn] != '.')
+                    continue;
+                snprintf(sub, sizeof sub, "%s/%s", dir, de->d_name);
+                if (stat(sub, &st) != 0 || !S_ISDIR(st.st_mode)) continue;
+                snprintf(found[nf++], sizeof found[0], "%s", de->d_name);
+            }
+            closedir(d);
+            qsort(found, (size_t)nf, sizeof found[0], cmp_str);
+            for (int k = 0; k < nf; k++) {
+                const char *v = short_ver(found[k], plats[i]);
+                int on = (act && strcmp(found[k], tag) == 0);
+                char one[256];
+                snprintf(one, sizeof one, "%s%s%s%s ",
+                         on ? C_GRN : C_DIM, v, on ? "*" : "", C_RESET);
+                if (strlen(vers) + strlen(one) < sizeof vers) strcat(vers, one);
+            }
+        }
+        if (!vers[0]) snprintf(vers, sizeof vers, "%s-%s", C_DIM, C_RESET);
+
+        /* Pad on visible width: ANSI escapes do not occupy columns. */
+        {
+            int visible = 0, in_esc = 0;
+            for (const char *q = vers; *q; q++) {
+                if (*q == '\x1b') in_esc = 1;
+                else if (in_esc) { if (*q == 'm') in_esc = 0; }
+                else visible++;
+            }
+            printf("%-9s %s%*s ", plats[i], vers, 18 - visible > 0 ? 18 - visible : 0, "");
+        }
+
+        if (has) printf("%s\n", path);
+        else     printf("%smissing%s  %s(sesame fetch %s)%s\n",
+                        C_YEL, C_RESET, C_DIM, plats[i], C_RESET);
     }
     return 0;
 }
@@ -312,6 +434,8 @@ int main(int argc, char **argv)
         return cmd_fetch(argc - 2, argv + 2);
     if (strcmp(argv[1], "index-info") == 0)
         return cmd_index_info(argc - 2, argv + 2);
+    if (strcmp(argv[1], "use") == 0)
+        return cmd_use(argc - 2, argv + 2);
     if (strcmp(argv[1], "version") == 0) {
         puts("sesame 0.0.1-dev");
         return 0;
