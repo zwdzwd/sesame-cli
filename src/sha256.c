@@ -7,7 +7,10 @@
  * registry -- a downloaded index silently changing would silently change
  * everyone's betas.
  *
- * SPDX-License-Identifier: MIT
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * Copyright (C) 2026-present Wanding Zhou
+ * Part of sesame-cli, licensed under AGPL-3.0-or-later; see LICENSE.
  */
 #include "internal.h"
 

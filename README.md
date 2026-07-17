@@ -139,11 +139,15 @@ is a 10-byte *unpadded* record. It is fuzzed and run under ASan/UBSan.
 
 ## License
 
-MIT, matching sesame.
+**AGPL-3.0-or-later.** See `LICENSE`. This matches the wider Zhou Lab toolchain
+(YAME is also AGPL-3.0), which is what lets sesame-cli reuse those tools — e.g.
+shelling out to `yame` to read `.cm` mask files — without a licence conflict.
 
-The quantile-normalization step is a clean-room reimplementation rather than a
-use of `preprocessCore` (`LGPL >= 2`). Not because the licences are
-incompatible — LGPL permits linking from MIT, and the R package does exactly
-that — but because copying `qnorm.c` in would mean relicensing code we do not
-own, and vendoring it as LGPL would make this project mixed-licence and burden a
-static binary with LGPL's relink obligation. See `NUMERICS.md` (D8).
+sesame (the R package) is MIT and is a *separate program*; sesame-cli linking or
+invoking it, or vice versa, is unaffected by this choice.
+
+The quantile-normalization step (`dyeBiasNL`) is a clean-room reimplementation
+rather than a use of `preprocessCore` (`LGPL >= 2`). Under AGPL we *could* now
+vendor `qnorm.c` (LGPL is upward-compatible with GPL/AGPL) for bit-exactness, but
+the clean-room already agrees to ~2 ULP and avoids the extra dependency, so it
+stays. See `NUMERICS.md` (D8).

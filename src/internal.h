@@ -1,5 +1,8 @@
 /* internal.h -- shared across libsesame TUs. Not installed, not public.
- * SPDX-License-Identifier: MIT
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * Copyright (C) 2026-present Wanding Zhou
+ * Part of sesame-cli, licensed under AGPL-3.0-or-later; see LICENSE.
  */
 #ifndef SESAME_INTERNAL_H
 #define SESAME_INTERNAL_H

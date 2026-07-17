@@ -3,7 +3,10 @@
  * Each one replicates a specific R semantic exactly; the comments say which,
  * because "close enough" here shows up as a different beta.
  *
- * SPDX-License-Identifier: MIT
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * Copyright (C) 2026-present Wanding Zhou
+ * Part of sesame-cli, licensed under AGPL-3.0-or-later; see LICENSE.
  */
 #include "internal.h"
 
@@ -95,12 +98,12 @@ double sesame__median_sorted(const double *x, int32_t n)
  *
  * CLEAN-ROOM, characterized purely by black-box probing.
  *
- * Not because LGPL and MIT cannot mix -- LGPL exists precisely to allow linking
- * from any licence, and the R package already does so. Rather: copying qnorm.c
- * into an MIT tree would mean relicensing code we do not own, and vendoring it
- * as LGPL would make the project mixed-licence and saddle a single static binary
- * with LGPL's relink obligation -- which is the opposite of why sesame-cli
- * exists. See NUMERICS.md (D8) for the trade. Observations:
+ * Now that sesame-cli is AGPL, vendoring preprocessCore's qnorm.c would be
+ * legal (LGPL is upward-compatible with GPL/AGPL) and would buy bit-exactness.
+ * It is kept clean-room for engineering reasons, not licensing ones: the
+ * clean-room already agrees to ~2 ULP, it is ~40 lines, and vendoring would pull
+ * in an LGPL dependency and preprocessCore's LinkingTo: plumbing. See NUMERICS.md
+ * (D8). Observations:
  *
  *   n==m, no ties  -> sorted(target)[rank(x)]
  *   n!=m           -> quantile(target, (rank-1)/(n-1), type=7)

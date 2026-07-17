@@ -3,7 +3,10 @@
  * A standalone C implementation of sesame's basic Infinium preprocessing.
  * See NUMERICS.md for documented divergences from the R implementation.
  *
- * SPDX-License-Identifier: MIT
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * Copyright (C) 2026-present Wanding Zhou
+ * Part of sesame-cli, licensed under AGPL-3.0-or-later; see LICENSE.
  */
 #ifndef SESAME_H
 #define SESAME_H

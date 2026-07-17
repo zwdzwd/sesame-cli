@@ -24,40 +24,28 @@ arbitrary-precision oracle showing sesame is closer to truth.
 ### D8 — the one difference I could not eliminate, and why
 
 `normalize.quantiles.use.target` is the only compiled third-party dependency in
-the QCDPB path. preprocessCore is `LGPL (>= 2)`; sesame-cli is MIT.
+the QCDPB path. preprocessCore is `LGPL (>= 2)`; sesame-cli is AGPL-3.0-or-later.
 
-**To be precise, since it is easy to get wrong:** LGPL exists specifically to
-permit linking from code under any licence, including MIT — that is what
-separates it from GPL. The R package already does exactly this (MIT, with
-`importFrom(preprocessCore, normalize.quantiles.use.target)`), and it is fine.
-What is *not* permitted is copying `qnorm.c` into an MIT source tree and
-relabelling it MIT: we do not hold the copyright, so we cannot relicense it.
+**Since sesame-cli went AGPL (2026-07-17), vendoring `qnorm.c` is now legally
+open:** LGPL is upward-compatible with GPL/AGPL (a recipient may elect LGPL-3,
+which is GPL-3 plus permissions and thus absorbable into an AGPL-3 work), and
+AGPL already requires shipping complete source, so LGPL's relink obligation is
+moot. So this entry could be *erased* by vendoring preprocessCore's `qnorm.c`
+for bit-exactness.
 
-So this is a **trade, not an impossibility**. Vendoring `qnorm.c` and keeping it
-LGPL would probably buy bit-exactness and erase this entry, at the cost of:
+**It is deliberately kept clean-room anyway**, for engineering reasons rather
+than licensing ones:
 
-- the project becoming mixed-licence (MIT + an LGPL component) rather than MIT;
-- LGPL's relink obligation on static linking — we would have to ship object
-  files or source so a user can substitute their own preprocessCore, which
-  directly undercuts the "one static binary, no strings" goal that motivates
-  sesame-cli in the first place;
-- extraction anyway: preprocessCore's `include/` + stubs are `LinkingTo:`
-  plumbing for R packages, not a system library a standalone C program can link.
+- the clean-room already agrees with R to ~2 ULP (measured below) — biologically
+  and numerically meaningless;
+- vendoring adds an LGPL component and pulls in preprocessCore's `include/` +
+  stubs, which are `LinkingTo:` plumbing for R packages, not a clean library a
+  standalone C program links against — i.e. real extraction work;
+- the clean-room is ~40 lines with no dependency.
 
-**The copyleft route was considered explicitly and declined (2026-07-16).**
-Relicensing sesame-cli as AGPL-3 or GPL-3 *would* make vendoring legitimate and
-erase this entry: preprocessCore is `LGPL (>= 2)`, so a recipient may elect
-LGPL-3, which is GPL-3 plus permissions and therefore absorbable into a GPL-3 /
-AGPL-3 work — and AGPL already requires shipping complete source, so LGPL's
-relink obligation becomes moot. It was rejected because it trades three of the
-project's four drivers (Python bindings would be largely unadoptable under
-AGPL; many pharma/biotech legal departments ban it outright; it would diverge
-from sesame's MIT) for ~2 ULP. **Do not reopen this on D8's account** — only if
-copyleft is wanted for its own sake.
-
-Given the measured cost below is ~2 ULP on a value in [0,1] — biologically and
-numerically meaningless — the clean-room is judged the better side of that
-trade. It was characterized purely by black-box probing:
+If exact reproduction of R's last bit ever matters more than that, vendoring is
+now the sanctioned route. Until then the clean-room stands. It was characterized
+purely by black-box probing:
 
 | probe | observed |
 |---|---|
