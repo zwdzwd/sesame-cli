@@ -39,7 +39,7 @@ typedef struct {
 } sesame_genome_reg_t;
 
 static const sesame_genome_reg_t SESAME_GENOME_REGISTRY[] = {
-    { "hg38", NULL },  /* not published at v1 */
+    { "hg38", "b64b320984c6d1d29dc1e15dd1a8a2ce109442eea703eba013d11ffb1eb8e975" },
     { NULL, NULL }
 };
 
