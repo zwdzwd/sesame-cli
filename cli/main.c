@@ -56,6 +56,14 @@ static int usage(void)
       "      count and the index looked up in $SESAME_INDEX_DIR, ., ./data,\n"
       "      then the cache. sesame never downloads implicitly.\n"
       "\n"
+      "  sesame intensity [--index ..] [--platform P] [--min-beads N]\n"
+      "            [--threads N] [--f64 | --cg <out.cg>] <prefix> [<prefix> ...]\n"
+      "      Total signal intensity (M+U) per probe -- the CNV signal input, and\n"
+      "      how the normal reference is generated. Same matrix output as betas\n"
+      "      (one column per sample); no preprocessing. --cg writes a YAME\n"
+      "      format-4 .cg (float per probe, + .idx of sample names) instead of\n"
+      "      the TSV.\n"
+      "\n"
       "  sesame qc [--index <ordering.tsv.gz>] [--platform P] [--min-beads N]\n"
       "            [--threads N] <prefix> [<prefix> ...]\n"
       "      Per-sample QC metrics (the sesameQC panel) as a TSV: one row per\n"
@@ -554,6 +562,176 @@ out:
     if (have_mat) betas_matrix_free(&mat);
     free(qmask);
     free(bgmask);
+    free(prefixes);
+    sesame_index_close(ix);
+    return rc;
+}
+
+/* ---------------------------------------------------------- intensity ---
+ *
+ * Total signal intensity (M+U) per probe -- the CNV signal input, and the tool
+ * that generates the normal reference from normal IDATs. Batch-parallel with the
+ * same matrix output as `betas`; no prep, no masks. */
+
+typedef struct {
+    char           **prefixes;
+    int32_t          nsamp, n;
+    const sesame_index_t *ix;
+    const char      *plat;
+    int              min_beads;
+    double          *mat;
+    pthread_mutex_t  lock;
+    int32_t          next, nfail;
+    uint32_t         status_or;
+} intens_ctx;
+
+static void *intens_worker(void *arg)
+{
+    intens_ctx *c = (intens_ctx *)arg;
+    for (;;) {
+        int32_t j, k;
+        sesame_sigdf_t *s = NULL;
+        sesame_err_t e;
+        uint32_t st = 0;
+        double *col;
+        int rc;
+
+        pthread_mutex_lock(&c->lock);
+        j = c->next < c->nsamp ? c->next++ : -1;
+        pthread_mutex_unlock(&c->lock);
+        if (j < 0) break;
+
+        col = c->mat + (size_t)j * (size_t)c->n;
+        rc = build_sigdf_for(c->prefixes[j], c->ix, c->plat, c->min_beads, &s, &e);
+        if (rc == SESAME_OK) { st = s->status; rc = sesame_total_intensities(s, col, &e); }
+        sesame_sigdf_free(s);
+        if (rc != SESAME_OK)
+            for (k = 0; k < c->n; k++) col[k] = NAN;
+
+        pthread_mutex_lock(&c->lock);
+        if (rc != SESAME_OK) {
+            c->nfail++;
+            fprintf(stderr, "sesame: %s: %s\n", path_basename(c->prefixes[j]), e.msg);
+        } else c->status_or |= st;
+        pthread_mutex_unlock(&c->lock);
+    }
+    return NULL;
+}
+
+static int cmd_intensity(int argc, char **argv)
+{
+    const char *idxpath = NULL, *platform = NULL, *plat = NULL, *cgpath = NULL;
+    int min_beads = 0, nthreads = 0, f64 = 0, i, rc = 1;
+    char **prefixes = NULL;
+    int32_t nsamp = 0, n = 0;
+    char resolved[4096];
+    sesame_index_t *ix = NULL;
+    betas_matrix mat = { NULL, 0, -1 };
+    int have_mat = 0, nfail = 0;
+    sesame_err_t e;
+
+    prefixes = (char **)malloc((size_t)(argc + 1) * sizeof(char *));
+    if (!prefixes) { fprintf(stderr, "sesame: out of memory\n"); return 1; }
+    for (i = 0; i < argc; i++) {
+        if (strcmp(argv[i], "--index") == 0 && i+1 < argc) idxpath = argv[++i];
+        else if (strcmp(argv[i], "--platform") == 0 && i+1 < argc) platform = argv[++i];
+        else if (strcmp(argv[i], "--min-beads") == 0 && i+1 < argc)
+            min_beads = (int)strtol(argv[++i], NULL, 10);
+        else if ((strcmp(argv[i], "--threads")==0||strcmp(argv[i],"-t")==0) && i+1<argc)
+            nthreads = (int)strtol(argv[++i], NULL, 10);
+        else if (strcmp(argv[i], "--f64") == 0) f64 = 1;
+        else if (strcmp(argv[i], "--cg") == 0 && i+1 < argc) cgpath = argv[++i];
+        else if (argv[i][0] == '-' && argv[i][1] != '\0') {
+            fprintf(stderr, "sesame: unknown option %s\n", argv[i]);
+            free(prefixes); return usage();
+        } else prefixes[nsamp++] = argv[i];
+    }
+    if (nsamp == 0) { free(prefixes); return usage(); }
+
+    if (!idxpath) {
+        if (!platform) {
+            char gp[4096]; sesame_idat_t *g0 = NULL; int32_t beads;
+            if (resolve_idat(prefixes[0], "Grn", gp, sizeof gp)) {
+                fprintf(stderr, "sesame: Grn IDAT does not exist for %s\n", prefixes[0]); goto out; }
+            if (sesame_idat_read(gp, &g0, &e) != SESAME_OK) {
+                fprintf(stderr, "sesame: %s\n", e.msg); goto out; }
+            beads = g0->n; platform = sesame_platform_from_beads(beads); sesame_idat_free(g0);
+            if (!platform) { fprintf(stderr,
+                "sesame: cannot identify platform from %d beads.\n"
+                "  pass --platform <P> or --index <path>.\n", beads); goto out; }
+            fprintf(stderr, "sesame: detected %s (%d beads)\n", platform, beads);
+        }
+        if (sesame_index_locate(platform, resolved, sizeof resolved) != 0) {
+            char help[1024]; sesame_index_missing_help(platform, help, sizeof help);
+            fprintf(stderr, "sesame: %s\n", help); goto out;
+        }
+        idxpath = resolved;
+    }
+    if (!(ix = sesame_index_open(idxpath, &e))) { fprintf(stderr, "sesame: %s\n", e.msg); goto out; }
+    n = sesame_index_nprobes(ix); plat = platform;
+
+    if (betas_matrix_init(&mat, n, nsamp) != 0) {
+        fprintf(stderr, "sesame: cannot allocate %d x %d matrix\n", nsamp, n); goto out; }
+    have_mat = 1;
+
+    {
+        intens_ctx ctx;
+        long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
+        int T = nthreads > 0 ? nthreads : (ncpu > 0 ? (int)ncpu : 1);
+        pthread_t *th = NULL; int spawned = 0, t;
+        if (T > nsamp) T = nsamp;
+        if (T < 1) T = 1;
+        ctx.prefixes=prefixes; ctx.nsamp=nsamp; ctx.n=n; ctx.ix=ix; ctx.plat=plat;
+        ctx.min_beads=min_beads; ctx.mat=mat.data; ctx.next=0; ctx.nfail=0; ctx.status_or=0;
+        pthread_mutex_init(&ctx.lock, NULL);
+        if (T > 1) th = (pthread_t *)malloc((size_t)(T-1)*sizeof(pthread_t));
+        if (th) for (t=0;t<T-1;t++) if (pthread_create(&th[spawned],NULL,intens_worker,&ctx)==0) spawned++;
+        intens_worker(&ctx);
+        for (t=0;t<spawned;t++) pthread_join(th[t],NULL);
+        free(th); pthread_mutex_destroy(&ctx.lock);
+        nfail = ctx.nfail;
+        if (ctx.status_or & SESAME_STAT_ADDR_MISSING)
+            fprintf(stderr, "sesame: note: some probes had addresses absent from an IDAT\n");
+    }
+
+    if (cgpath) {                                /* YAME format-4 .cg (+ .idx) */
+        char **names = (char **)malloc((size_t)nsamp * sizeof(char *));
+        int32_t j;
+        if (!names) { fprintf(stderr, "sesame: oom\n"); goto out; }
+        for (j = 0; j < nsamp; j++) names[j] = (char *)path_basename(prefixes[j]);
+        if (sesame_write_cg(cgpath, mat.data, n, nsamp, names, &e) != SESAME_OK) {
+            fprintf(stderr, "sesame: %s\n", e.msg); free(names); goto out; }
+        free(names);
+        fprintf(stderr, "sesame: wrote %s (%d sample%s, format 4) + %s.idx\n",
+                cgpath, nsamp, nsamp==1?"":"s", cgpath);
+    } else if (f64) {
+        size_t tot = (size_t)n * (size_t)nsamp;
+        if (fwrite(mat.data, sizeof(double), tot, stdout) != tot) {
+            fprintf(stderr, "sesame: short write\n"); goto out; }
+    } else if (nsamp == 1) {
+        for (int32_t k = 0; k < n; k++) {
+            const char *id = sesame_index_probe_id(ix, k);
+            if (isnan(mat.data[k])) printf("%s\tNA\n", id);
+            else                    printf("%s\t%.10g\n", id, mat.data[k]);
+        }
+    } else {
+        fputs("Probe_ID", stdout);
+        for (int32_t j = 0; j < nsamp; j++) printf("\t%s", path_basename(prefixes[j]));
+        putchar('\n');
+        for (int32_t k = 0; k < n; k++) {
+            fputs(sesame_index_probe_id(ix, k), stdout);
+            for (int32_t j = 0; j < nsamp; j++) {
+                double b = mat.data[(size_t)j*(size_t)n + (size_t)k];
+                if (isnan(b)) fputs("\tNA", stdout); else printf("\t%.10g", b);
+            }
+            putchar('\n');
+        }
+    }
+    if (nfail) fprintf(stderr, "sesame: %d of %d samples failed (NA columns)\n", nfail, nsamp);
+    rc = nfail ? 1 : 0;
+
+out:
+    if (have_mat) betas_matrix_free(&mat);
     free(prefixes);
     sesame_index_close(ix);
     return rc;
@@ -1221,6 +1399,8 @@ int main(int argc, char **argv)
         return cmd_idat_dump(argc - 2, argv + 2);
     if (strcmp(argv[1], "betas") == 0)
         return cmd_betas(argc - 2, argv + 2);
+    if (strcmp(argv[1], "intensity") == 0)
+        return cmd_intensity(argc - 2, argv + 2);
     if (strcmp(argv[1], "qc") == 0)
         return cmd_qc(argc - 2, argv + 2);
     if (strcmp(argv[1], "dml") == 0)

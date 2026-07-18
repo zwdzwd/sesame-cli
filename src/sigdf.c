@@ -206,3 +206,23 @@ int sesame_get_betas(const sesame_sigdf_t *s, int apply_mask,
     }
     return SESAME_OK;
 }
+
+/* Total intensity M+U per probe (R's totalIntensities, mask=FALSE): col G ->
+ * MG+UG, col R -> MR+UR, Inf-II -> UG+UR. NaN if either allele is NA. This is
+ * the CNV signal input and the quantity summarized by the QC intensity group. */
+int sesame_total_intensities(const sesame_sigdf_t *s, double *out, sesame_err_t *err)
+{
+    int32_t i;
+    if (err) { err->code = SESAME_OK; err->msg[0] = '\0'; }
+    if (!s || !out) return sesame__fail(err, SESAME_ERR_IO, "null argument");
+    for (i = 0; i < s->n; i++) {
+        double m, u;
+        switch (s->col[i]) {
+        case SESAME_COL_G: m = s->MG[i]; u = s->UG[i]; break;
+        case SESAME_COL_R: m = s->MR[i]; u = s->UR[i]; break;
+        default:           m = s->UG[i]; u = s->UR[i]; break;
+        }
+        out[i] = (isnan(m) || isnan(u)) ? NAN : m + u;
+    }
+    return SESAME_OK;
+}

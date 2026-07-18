@@ -104,6 +104,7 @@ resolves `<prefix>_Grn.idat[.gz]` and `<prefix>_Red.idat[.gz]`.
 
 ```
 sesame betas      [options] <prefix> [<prefix> ...]   # IDAT -> betas
+sesame intensity  [options] <prefix> [<prefix> ...]   # IDAT -> total intensity (M+U); --cg for YAME
 sesame qc         [options] <prefix> [<prefix> ...]   # IDAT -> QC metrics (TSV)
 sesame dml        --betas <matrix> (--formula .. --meta .. | --design ..)  # diff. methylation
 sesame fetch      [<platform>] [--force]              # download data into the store
@@ -131,6 +132,20 @@ table; multiple prefixes print a matrix (see [Batch mode](#batch-mode)).
 
 `Q`, `P`, and `B` need the platform's `.cm` mask in the store; run
 `sesame fetch <platform>` first.
+
+### `sesame intensity`
+
+Total signal intensity (M+U) per probe — R's `totalIntensities` — as a matrix,
+same shape as `betas` and batch-parallel. It's the **CNV signal input** (and the
+tool that generates the copy-number normal reference from normal IDATs).
+`--cg <out.cg>` writes a **YAME format-4 `.cg`** (one float32 per probe, NA as
+`-1.0`, RLE-compressed) plus `<out.cg>.idx` of sample names, so the output feeds
+straight into the `yame` toolchain instead of a TSV.
+
+```sh
+sesame intensity sample                       # Probe_ID <TAB> M+U
+sesame intensity --cg cohort.cg s1 s2 s3      # YAME .cg (+ .idx), one block per sample
+```
 
 ### `sesame qc`
 
@@ -337,6 +352,7 @@ golden ladder (`make test`):
 | 5. Batch | each column == its single-sample run; `--threads 1 == N`; bad sample → NA column | ✅ byte-identical; ThreadSanitizer-clean |
 | 6. QC panel | every `sesameQC_calcStats` metric within lineage scale | ✅ 65/65 metrics; worst 1.75e-2 (small count, `NUMERICS.md`) |
 | 7. DML | vs R `DML`/`summaryExtractTest` (no lineage) | ✅ Est/Pval/FPval/Eff/BH match to ~5e-10 |
+| 8. .cg output | `intensity --cg` round-trips through `yame unpack` | ✅ format 4, names + values match |
 
 "Lineage" means the published ordering/mask is a newer data version than the
 installed `sesameData`, so a handful of probes differ for reasons that predate any

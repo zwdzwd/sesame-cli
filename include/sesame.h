@@ -224,6 +224,17 @@ int sesame_prep_noob(sesame_sigdf_t *sdf, const uint8_t *bgmask, int32_t bn,
 int sesame_get_betas(const sesame_sigdf_t *sdf, int apply_mask,
                      double *out, sesame_err_t *err);
 
+/* Total intensity (M+U) per probe, in index order (R's totalIntensities,
+ * mask=FALSE). NaN if either allele is NA. The CNV signal input. */
+int sesame_total_intensities(const sesame_sigdf_t *sdf, double *out,
+                             sesame_err_t *err);
+
+/* Write a sample-major values matrix (sample j, probe i at mat[j*nprobe+i]) as a
+ * YAME format-4 .cg (float32 per probe, NA=-1.0) plus <path>.idx of sample
+ * names. Consumable by the `yame` toolchain. */
+int sesame_write_cg(const char *path, const double *mat, int32_t nprobe,
+                    int32_t nsamp, char *const *names, sesame_err_t *err);
+
 /* ----------------------------------------------------------------- QC ---
  *
  * The sesameQC panel (R sesameQC_calcStats), computed from a *raw* SigDF. Each

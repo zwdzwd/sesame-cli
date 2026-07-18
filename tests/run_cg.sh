@@ -1,0 +1,50 @@
+#!/bin/sh
+# .cg output: `sesame intensity --cg` must write a YAME format-4 .cg that the
+# yame toolchain reads back to the same values. Builds the yame binary from the
+# submodule for the round-trip; skips cleanly if that or the store is missing.
+set -eu
+
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+root=$(dirname "$here")
+bin="$root/sesame"
+store=${SESAME_INDEX_DIR:-$root/data}
+idats=${SESAME_TEST_IDATS:-$HOME/repo/InfiniumTestIDATs}
+yame="$root/YAME/yame"
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+
+[ -x "$bin" ] || { echo "FAIL: $bin not built"; exit 1; }
+plat=MSA; rel=MSA/207760740030_R01C03; pfx="$idats/$rel"
+[ -d "$store/$plat" ] || { echo "SKIP cg: no store $store/$plat"; exit 0; }
+if [ ! -f "$pfx"_Grn.idat ] && [ ! -f "$pfx"_Grn.idat.gz ]; then
+    echo "SKIP cg: no IDAT $pfx"; exit 0; fi
+[ -x "$yame" ] || make -C "$root/YAME" >/dev/null 2>&1 || true
+[ -x "$yame" ] || { echo "SKIP cg: could not build $yame"; exit 0; }
+
+SESAME_INDEX_DIR="$store" "$bin" intensity "$pfx"          2>/dev/null > "$work/x.tsv"
+SESAME_INDEX_DIR="$store" "$bin" intensity --cg "$work/x.cg" "$pfx" 2>/dev/null
+
+"$yame" unpack "$work/x.cg" 2>/dev/null > "$work/x.cg.txt"
+
+python3 - "$work/x.tsv" "$work/x.cg.txt" "$work/x.cg.idx" "$(basename "$pfx")" <<'PY'
+import sys, math
+tsv = [l.rstrip("\n").split("\t")[1] for l in open(sys.argv[1])]
+cg  = [l.strip() for l in open(sys.argv[2])]
+idx = open(sys.argv[3]).read().split("\t")[0]
+name = sys.argv[4]
+if len(tsv) != len(cg): print(f"FAIL: nrow tsv={len(tsv)} cg={len(cg)}"); sys.exit(1)
+if idx != name:         print(f"FAIL: idx name '{idx}' != '{name}'"); sys.exit(1)
+bad = 0
+for t, c in zip(tsv, cg):
+    tn = math.nan if t == "NA" else float(t)
+    cn = math.nan if c in ("NA","-1","-1.0","nan") else float(c)
+    if math.isnan(tn) and math.isnan(cn): continue
+    if math.isnan(tn) or math.isnan(cn) or abs(tn - cn) > 0.5: bad += 1
+if bad: print(f"FAIL: {bad} value mismatches"); sys.exit(1)
+print(f"ok   MSA/{name} .cg round-trip: {len(cg)} probes, format 4, name+values match")
+PY
+rc=$?
+
+echo
+echo "passed $([ $rc -eq 0 ] && echo 1 || echo 0), failed $([ $rc -eq 0 ] && echo 0 || echo 1)"
+[ $rc -eq 0 ]
