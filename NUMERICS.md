@@ -84,10 +84,9 @@ in this implementation, and neither result is "more correct" than the other.
 ## Mask lineage — Q is not bit-identical to R, by data version
 
 The `Q` step (qualityMask) reads the recommended mask sets from the platform's
-YAME `.cm` in the store, by shelling out to the `yame` binary (`yame unpack -l`)
-and unioning the recommended tracks. YAME is AGPL and stays a separate process;
-its format code never links into sesame-cli. A probe is masked iff it is set in
-any of `recommendedMaskNames(platform)` — `M_1baseSwitchSNPcommon_5pt`,
+YAME `.cm` in the store. sesame-cli links YAME directly (both are AGPL-3.0, same
+author) and reads the `.cm` in-process via the YAME C API -- no `yame` binary at
+runtime. A probe is masked iff it is set in any of `recommendedMaskNames(platform)` — `M_1baseSwitchSNPcommon_5pt`,
 `M_2extBase_SNPcommon_5pt`, `M_mapping`, `M_nonuniq`, `M_SNPcommon_5pt` for MSA.
 
 sesame-cli's `Q` is verified **self-consistent**: it masks exactly the yame

@@ -11,18 +11,35 @@ CFLAGS  += -DSESAME_HAVE_CURL -std=c11 -Wall -Wextra -Wpedantic -Wshadow -Wconve
            -Wstrict-prototypes -Iinclude
 LDLIBS  += -lz -lm -lcurl
 
+# --- YAME: linked directly for reading .cm masks (both AGPL). Built from the
+#     pinned submodule so the static lib never goes stale. ---
+YAME_DIR := YAME
+YAME_LIB := $(YAME_DIR)/libyame.a
+HTSLIB   := $(YAME_DIR)/htslib/libhts.a
+YAME_INC := -I$(YAME_DIR)/src -I$(YAME_DIR)/htslib
+
 SRC     := src/util.c src/sha256.c src/numerics.c src/idat.c src/index.c src/sigdf.c src/prep.c src/mask.c src/cache.c
 CLI_SRC := cli/main.c
 OBJ     := $(SRC:.c=.o)
 CLI_OBJ := $(CLI_SRC:.c=.o)
 BIN     := sesame
 
-.PHONY: all asan test test-idat test-betas test-prep test-qmask index fuzz fuzz-replay clean
+.PHONY: all asan test test-idat test-betas test-prep test-qmask index yame-lib fuzz fuzz-replay clean
 
 all: $(BIN)
 
-$(BIN): $(OBJ) $(CLI_OBJ)
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LDLIBS)
+# Incrementally (re)build libyame.a from the checked-out submodule.
+yame-lib:
+	$(MAKE) -C $(YAME_DIR) lib
+$(YAME_LIB) $(HTSLIB): yame-lib
+
+$(BIN): $(OBJ) $(CLI_OBJ) $(YAME_LIB) $(HTSLIB)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(OBJ) $(CLI_OBJ) $(YAME_LIB) $(HTSLIB) -lpthread $(LDLIBS)
+
+# mask.c includes YAME headers (C99/GNU style); relax pedantic/conversion for it
+# only, and give it the YAME include path.
+src/mask.o: src/mask.c include/sesame.h src/internal.h | $(YAME_LIB)
+	$(CC) -O2 -g -std=gnu11 -Wall -Iinclude $(YAME_INC) -c -o $@ $<
 
 %.o: %.c include/sesame.h src/internal.h src/registry.h
 	$(CC) $(CFLAGS) -c -o $@ $<

@@ -140,8 +140,9 @@ is a 10-byte *unpadded* record. It is fuzzed and run under ASan/UBSan.
 ## License
 
 **AGPL-3.0-or-later.** See `LICENSE`. This matches the wider Zhou Lab toolchain
-(YAME is also AGPL-3.0), which is what lets sesame-cli reuse those tools — e.g.
-shelling out to `yame` to read `.cm` mask files — without a licence conflict.
+(YAME is also AGPL-3.0), which is what lets sesame-cli link those tools directly — e.g.
+linking YAME (a git submodule) to read `.cm` mask files in-process — without a
+licence conflict.
 
 sesame (the R package) is MIT and is a *separate program*; sesame-cli linking or
 invoking it, or vice versa, is unaffected by this choice.

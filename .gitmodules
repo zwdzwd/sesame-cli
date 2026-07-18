@@ -1,0 +1,4 @@
+[submodule "YAME"]
+	path = YAME
+	url = git@github.com:zhou-lab/YAME.git
+	ignore = dirty
