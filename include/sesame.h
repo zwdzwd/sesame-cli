@@ -301,6 +301,13 @@ int sesame_write_cg(const char *path, const double *mat, int32_t nprobe,
 int sesame_read_cg(const char *path, double **mat_out, int32_t *nprobe_out,
                    int32_t *nsamp_out, char ***names_out, sesame_err_t *err);
 
+/* Read a .cg's per-probe TOTAL intensity, format-agnostic: format 4 -> the
+ * stored float, format 3 -> M+U. NA -> NaN. Sample-major, like sesame_read_cg.
+ * Used by CNV for both the target (total_intensity.cg) and the normal reference
+ * (cnvnormals.cg, format 3). Caller frees mat, each name, names. */
+int sesame_read_cg_total(const char *path, double **mat_out, int32_t *nprobe_out,
+                         int32_t *nsamp_out, char ***names_out, sesame_err_t *err);
+
 /* ----------------------------------------------------------------- QC ---
  *
  * The sesameQC panel (R sesameQC_calcStats), computed from a *raw* SigDF. Each
@@ -388,6 +395,47 @@ void               sesame_dml_work_free(sesame_dml_work_t *w);
 int32_t sesame_dml_fit(const sesame_dml_design_t *d, sesame_dml_work_t *w,
                        const double *y, double *est, double *pval,
                        double *fpval, double *eff);
+
+/* ---------------------------------------------------------------- CNV ---
+ *
+ * Copy-number: for one target sample, regress its per-probe total intensity on a
+ * panel of normal samples' total intensities (OLS, with intercept), then take
+ * log2(target / max(fitted, 1)) per probe -- the copy-number signal, mirroring
+ * sesame's cnSegmentation. Probes are then binned along the genome (tile,
+ * subtract assembly gaps, left/right-merge to >= min_probes) and each bin gets
+ * the median probe signal. CBS segmentation (DNAcopy) is NOT included -- the bin
+ * log2 ratios are the profile; feed them to a segmenter downstream if needed. */
+typedef struct {
+    char     *sample;          /* target sample name */
+    int32_t   n_normal;        /* normals in the panel */
+    int32_t   n_used;          /* probes used in the fit (signal + coord) */
+    /* per-probe (length n_probe) */
+    int32_t   n_probe;
+    char    **probe_id;
+    char    **chrom;
+    int32_t  *pos;
+    double   *log2ratio;
+    /* per-bin (length n_bin) */
+    int32_t   n_bin;
+    char    **bin_chrom;
+    int32_t  *bin_start;
+    int32_t  *bin_end;
+    int32_t  *bin_nprobe;
+    double   *bin_log2ratio;
+} sesame_cnv_t;
+
+/* Run CNV for every sample in target_cg against normals_cg. target_cg is a
+ * total_intensity.cg (format 4) or any .cg whose value is total intensity;
+ * normals_cg is the format-3 normal reference (M+U). Both are positional in the
+ * ordering `ix`. coords_path is the per-probe <platform>.hg38.coord.tsv.gz;
+ * seqinfo_path/gaps_path are the fetched genome tables. Returns an array of
+ * n_out results (one per target sample); free with sesame_cnv_free_array. */
+int sesame_cnv_run(const char *target_cg, const char *normals_cg,
+                   const sesame_index_t *ix, const char *coords_path,
+                   const char *seqinfo_path, const char *gaps_path,
+                   int32_t tilewidth, int32_t min_probes,
+                   sesame_cnv_t **out, int32_t *n_out, sesame_err_t *err);
+void sesame_cnv_free_array(sesame_cnv_t *a, int32_t n);
 
 #ifdef __cplusplus
 }

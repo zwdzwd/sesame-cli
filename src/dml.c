@@ -65,9 +65,9 @@ void sesame_dml_work_free(sesame_dml_work_t *w)
 /* Householder QR least squares. A is n*k row-major (destroyed), b is n
  * (destroyed, becomes Q'b). On success fills beta[k], *rss, and the k*k
  * upper-triangular R (row-major). v is scratch of length >= n. Returns 0, or -1
- * if rank-deficient (a zero pivot). */
-static int ols(double *A, int32_t n, int32_t k, double *b,
-               double *beta, double *rss, double *R, double *v)
+ * if rank-deficient (a zero pivot). Shared with cnv.c (target ~ normals fit). */
+int sesame__ols(double *A, int32_t n, int32_t k, double *b,
+                double *beta, double *rss, double *R, double *v)
 {
     int32_t i, j, c;
     for (j = 0; j < k; j++) {
@@ -142,7 +142,7 @@ int32_t sesame_dml_fit(const sesame_dml_design_t *d, sesame_dml_work_t *w,
 
     memcpy(w->qr, w->Xs, (size_t)nobs*(size_t)p*sizeof(double));
     memcpy(w->qty, w->ys, (size_t)nobs*sizeof(double));
-    if (ols(w->qr, nobs, p, w->qty, w->beta, &rss, w->R, w->v) != 0) return 0;
+    if (sesame__ols(w->qr, nobs, p, w->qty, w->beta, &rss, w->R, w->v) != 0) return 0;
 
     sigma2 = rss / (double)df;
     invert_upper(w->R, w->Rinv, p);
@@ -169,7 +169,7 @@ int32_t sesame_dml_fit(const sesame_dml_design_t *d, sesame_dml_work_t *w,
             cc++;
         }
         memcpy(w->qtyr, w->ys, (size_t)nobs*sizeof(double));
-        if (ols(w->Xred, nobs, pr, w->qtyr, w->betar, &rssr, w->Rr, w->v) != 0)
+        if (sesame__ols(w->Xred, nobs, pr, w->qtyr, w->betar, &rssr, w->Rr, w->v) != 0)
             continue;
         F = ((rssr - rss) / (double)kv) / (rss / (double)df);
         if (F < 0.0) F = 0.0;                     /* guard tiny negative from roundoff */

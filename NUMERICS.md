@@ -220,7 +220,39 @@ The design is the deliberately-simple part: a main-effects formula
 (categorical auto-dummied with treatment contrasts and alphabetical levels, to
 match `model.matrix`; continuous as-is) or an explicit numeric design matrix
 (`--design`) for anything R-formula-complex. Region calling (DMR) is separate and
-needs a per-probe genomic-coordinate annotation not yet hosted.
+needs the per-probe genomic-coordinate annotation, now published as
+`<platform>.hg38.coord.tsv.gz`.
+
+## CNV — arithmetic proven against R's lm; residual is channel-lineage leverage
+
+`sesame cnv` reproduces `cnSegmentation` up to the bin log2 ratios (CBS
+segmentation is left downstream). For a target sample it regresses per-probe total
+intensity on a panel of normals' totals (the **same Householder QR as DML**,
+`sesame__ols`), then `log2(target / max(fitted, 1))` per probe, and bins along the
+genome (tile at 50 kb, subtract assembly gaps, left/right-merge to ≥ 20 probes,
+median per bin — `getBinCoordinates` + `leftRightMerge1` + `binSignals`).
+
+**The fit + log2 is numerically exact.** Fed R and C the *identical* per-probe
+totals (extracted from C's own `.cg` with `attach-probe`, so no data-lineage or
+channel ambiguity enters), C's OLS+log2 matches R's `lm` to **max 1.0e-5, median
+5e-8** over 937k EPICv2 probes (`tests/run_cnv.sh`; the 1e-5 tail is float32 `.cg`
+storage of the totals, not the fit). An independent pure-Python normal-equations
+solve on the same inputs agrees with C to ~3e-8.
+
+**Residual vs R's `cnSegmentation` on real IDATs is a data-lineage leverage
+effect, not an arithmetic one.** Running the full R path (`readIDATpair` target,
+`EPICv2.8.SigDF` normals, its own `probeCoords`) diverges by ~2.6e-4 median.
+Traced to the root: ~25 EPICv2 Infinium-I probes carry a **different in-band
+channel (`col`) assignment** between the published ordering and the manifest
+`readIDATpair` uses (e.g. `cg19844224_TC11`: green in-band gives total 4731, red
+gives 53548). These are not a channel-inference difference — running C's `C` step
+makes it *worse* (643 probes), confirming `readIDATpair` is not inferring here.
+Because the CNV fit is **global**, those ~25 high-intensity probes act as
+regression leverage and tilt every bin's log2 by ~1e-4. Same class as the Q/P/B
+ordering-lineage divergence: pick one lineage for target, normals, and coords
+(all positional in the same ordering, as the store guarantees) and the profile is
+internally exact. Match the CNV inputs' processing state to the normal reference's
+(the store `cnvnormals.cg` is raw signal, so the target should be raw too).
 
 ## Observations about the R implementation (not divergences)
 

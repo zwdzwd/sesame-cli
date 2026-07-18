@@ -54,11 +54,12 @@ every intentional difference.
 ## Scope
 
 **In:** `readIDATpair` → `prepSesame(sdf, "QCDPB")` → `getBetas`, the `sesameQC`
-panel, and per-probe differential methylation (`DML`), for EPIC, EPICv2, HM450,
-MSA.
-**Out:** DMR (region calling — the algorithm is not built yet, though the
-per-probe genomic coordinates it needs are now published as
-`<platform>.hg38.coord.tsv.gz`), KYCG, CNV, visualization, and all inference
+panel, per-probe differential methylation (`DML`), and copy-number log2 ratios
+(`cnSegmentation` up to the bin signals), for EPIC, EPICv2, HM450, MSA.
+**Out:** CBS segmentation (the CNV bin ratios are produced; segment calling is
+left to a downstream segmenter), DMR (region calling — the algorithm is not built
+yet, though the per-probe genomic coordinates it needs are now published as
+`<platform>.hg38.coord.tsv.gz`), KYCG, visualization, and all inference
 (species/strain/age/sex/ethnicity) — those stay in R.
 
 ## Installation
@@ -104,6 +105,7 @@ A `<prefix>` resolves `<prefix>_Grn.idat[.gz]` and `<prefix>_Red.idat[.gz]`. The
 ```
 sesame preprocess   [options] <prefix> [<prefix> ...] # IDAT -> YAME .cg (+ qc.tsv)
 sesame dml          --betas <beta.cg|matrix.tsv> (--formula .. --meta .. | --design ..)
+sesame cnv          --target <total_intensity.cg> [--platform P]  # copy-number log2 ratios
 sesame attach-probe [--platform P] <file.cg|.cm|.tsv> # label a positional file with Probe_IDs
 sesame fetch        [<platform>] [--force]            # download data into the store
 sesame fetch        genome [<build>] [--force]        # download genome-level annotation
@@ -168,6 +170,32 @@ Runs in parallel (`--threads`). Because DML consumes the betas matrix, it has no
 data-lineage caveat — it matches R's `lm` to ~1e-9 (see `NUMERICS.md`). Region
 calling (DMR) is not yet included; the per-probe genomic coordinates it needs
 now ship as `<platform>.hg38.coord.tsv.gz` (see `attach-probe`).
+
+### `sesame cnv`
+
+Copy-number: for each sample in the target `total_intensity.cg`, regress its
+per-probe total intensity on a panel of normal samples (OLS, the same QR as
+`dml`), then `log2(target / max(fitted, 1))` per probe — sesame's
+`cnSegmentation`. Probes are binned along the genome (tile at `--tilewidth`,
+default 50 kb, subtract assembly gaps, merge to ≥ `--min-probes`, default 20) and
+each bin gets the median probe signal. CBS segmentation is **not** included; the
+bin log2 ratios are the profile — feed them to a segmenter downstream.
+
+```sh
+# target = raw total intensity (match the normal reference's processing state)
+sesame preprocess --prep "" --raw-signal --output total_intensity --out t/ tumor
+sesame cnv --target t/total_intensity.cg --platform EPICv2 > bins.tsv   # per-bin (default)
+sesame cnv --target t/total_intensity.cg --platform EPICv2 --probes > probes.tsv
+```
+
+`--normals`, `--coords`, and the ordering default to the fetched store for
+`--platform` (`<store>/<P>/<P>.cnvnormals.cg`, `<P>.hg38.coord.tsv.gz`); the
+genome tiling comes from `sesame fetch genome <--genome>` (default hg38). Output
+is TSV with a leading `sample` column (`--bins`: chrom/start/end/nprobes/log2ratio;
+`--probes`: Probe_ID/chrom/pos/log2ratio). The fit + log2 matches R's `lm` to
+~1e-5 on identical inputs; see `NUMERICS.md` for the channel-lineage caveat on
+real IDATs (target, normals, and coords must share one ordering — the store
+guarantees this).
 
 ### `sesame attach-probe`
 

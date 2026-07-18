@@ -48,6 +48,15 @@ static int usage(void)
       "      main effects (categorical auto-dummied); --design passes a numeric\n"
       "      design for interactions.\n"
       "\n"
+      "  sesame cnv --target <total_intensity.cg> [--normals <cnvnormals.cg>]\n"
+      "             [--platform P | --index <ordering>] [--genome hg38]\n"
+      "             [--coords <coord.tsv.gz>] [--probes|--bins] [--out <file>]\n"
+      "      Copy-number: regress the target's per-probe total intensity on a\n"
+      "      panel of normals (OLS), then log2(target/fitted) per probe, binned\n"
+      "      along the genome (median per bin, default --bins). normals/coords/\n"
+      "      genome default to the fetched store for --platform. CBS segmentation\n"
+      "      is not included. --target may hold several samples (one profile each).\n"
+      "\n"
       "  sesame attach-probe [--index <ordering.tsv.gz> | --platform P]\n"
       "                      [--all] [--beta] [--no-header] <file>\n"
       "      Prepend the ordering's Probe_ID to a positional file's rows, as TSV\n"
@@ -937,6 +946,97 @@ out:
     return rc;
 }
 
+static int cmd_cnv(int argc, char **argv)
+{
+    const char *target = NULL, *normals = NULL, *idxpath = NULL, *platform = NULL;
+    const char *coords = NULL, *genome = "hg38", *outpath = NULL;
+    int tilewidth = 50000, min_probes = 20, probes = 0, i, rc = 1;
+    char store[4096], resolved[4096], cbuf[4096], nbuf[4096], sbuf[4096], gbuf[4096];
+    sesame_index_t *ix = NULL;
+    sesame_cnv_t *res = NULL;
+    int32_t nres = 0, s, k;
+    FILE *out = stdout;
+    sesame_err_t e;
+
+    for (i = 0; i < argc; i++) {
+        if (strcmp(argv[i], "--target") == 0 && i+1 < argc) target = argv[++i];
+        else if (strcmp(argv[i], "--normals") == 0 && i+1 < argc) normals = argv[++i];
+        else if (strcmp(argv[i], "--index") == 0 && i+1 < argc) idxpath = argv[++i];
+        else if (strcmp(argv[i], "--platform") == 0 && i+1 < argc) platform = argv[++i];
+        else if (strcmp(argv[i], "--coords") == 0 && i+1 < argc) coords = argv[++i];
+        else if (strcmp(argv[i], "--genome") == 0 && i+1 < argc) genome = argv[++i];
+        else if (strcmp(argv[i], "--tilewidth") == 0 && i+1 < argc) tilewidth = (int)strtol(argv[++i], NULL, 10);
+        else if (strcmp(argv[i], "--min-probes") == 0 && i+1 < argc) min_probes = (int)strtol(argv[++i], NULL, 10);
+        else if (strcmp(argv[i], "--probes") == 0) probes = 1;
+        else if (strcmp(argv[i], "--bins") == 0) probes = 0;
+        else if (strcmp(argv[i], "--out") == 0 && i+1 < argc) outpath = argv[++i];
+        else if (argv[i][0] == '-' && argv[i][1] != '\0') { fprintf(stderr, "sesame: unknown option %s\n", argv[i]); return usage(); }
+        else if (!target) target = argv[i];
+        else { fprintf(stderr, "sesame: unexpected argument %s\n", argv[i]); return usage(); }
+    }
+    if (!target) { fprintf(stderr, "sesame: cnv needs --target <total_intensity.cg>\n"); return usage(); }
+    if (tilewidth < 1 || min_probes < 1) { fprintf(stderr, "sesame: --tilewidth and --min-probes must be positive\n"); return 1; }
+
+    /* Defaults for normals/coords/index come from the store, keyed on platform. */
+    sesame_store_dir(store, sizeof store);
+    if (!idxpath) {
+        if (!platform) { fprintf(stderr, "sesame: cnv needs --platform (or --index)\n"); return 1; }
+        if (sesame_index_locate(platform, resolved, sizeof resolved) != 0) {
+            char help[1024]; sesame_index_missing_help(platform, help, sizeof help);
+            fprintf(stderr, "sesame: %s\n", help); return 1;
+        }
+        idxpath = resolved;
+    }
+    if (!normals) {
+        if (!platform) { fprintf(stderr, "sesame: cnv needs --normals or --platform\n"); return 1; }
+        snprintf(nbuf, sizeof nbuf, "%s/%s/%s.cnvnormals.cg", store, platform, platform);
+        normals = nbuf;
+    }
+    if (!coords) {
+        if (!platform) { fprintf(stderr, "sesame: cnv needs --coords or --platform\n"); return 1; }
+        snprintf(cbuf, sizeof cbuf, "%s/%s/%s.%s.coord.tsv.gz", store, platform, platform, genome);
+        coords = cbuf;
+    }
+    if (sesame_genome_locate(genome, "seqinfo.tsv.gz", sbuf, sizeof sbuf) != 0 ||
+        sesame_genome_locate(genome, "gaps.tsv.gz", gbuf, sizeof gbuf) != 0) {
+        fprintf(stderr, "sesame: no genome info for %s in the store\n"
+            "  fix: sesame fetch genome %s\n", genome, genome);
+        return 1;
+    }
+
+    if (!(ix = sesame_index_open(idxpath, &e))) { fprintf(stderr, "sesame: %s\n", e.msg); return 1; }
+    if (sesame_cnv_run(target, normals, ix, coords, sbuf, gbuf,
+                       tilewidth, min_probes, &res, &nres, &e) != SESAME_OK) {
+        fprintf(stderr, "sesame: %s\n", e.msg); goto out;
+    }
+
+    if (outpath && !(out = fopen(outpath, "w"))) {
+        fprintf(stderr, "sesame: cannot write %s\n", outpath); goto out;
+    }
+    if (probes) {
+        fputs("sample\tProbe_ID\tchrom\tpos\tlog2ratio\n", out);
+        for (s = 0; s < nres; s++)
+            for (k = 0; k < res[s].n_probe; k++)
+                fprintf(out, "%s\t%s\t%s\t%d\t%.6g\n", res[s].sample, res[s].probe_id[k],
+                        res[s].chrom[k], res[s].pos[k], res[s].log2ratio[k]);
+    } else {
+        fputs("sample\tchrom\tstart\tend\tnprobes\tlog2ratio\n", out);
+        for (s = 0; s < nres; s++)
+            for (k = 0; k < res[s].n_bin; k++)
+                fprintf(out, "%s\t%s\t%d\t%d\t%d\t%.6g\n", res[s].sample, res[s].bin_chrom[k],
+                        res[s].bin_start[k], res[s].bin_end[k], res[s].bin_nprobe[k], res[s].bin_log2ratio[k]);
+    }
+    for (s = 0; s < nres; s++)
+        fprintf(stderr, "sesame: cnv %s -- %d probes on %d normals, %d bins\n",
+                res[s].sample, res[s].n_used, res[s].n_normal, res[s].n_bin);
+    rc = 0;
+out:
+    if (out && out != stdout) fclose(out);
+    sesame_cnv_free_array(res, nres);
+    sesame_index_close(ix);
+    return rc;
+}
+
 /* Infer a platform from a filename like "MSA.hg38.coord.tsv.gz" -> "MSA". Returns
  * a static registry string, or NULL. */
 static const char *platform_from_basename(const char *path)
@@ -1060,6 +1160,8 @@ int main(int argc, char **argv)
         return cmd_preprocess(argc - 2, argv + 2);
     if (strcmp(argv[1], "dml") == 0)
         return cmd_dml(argc - 2, argv + 2);
+    if (strcmp(argv[1], "cnv") == 0)
+        return cmd_cnv(argc - 2, argv + 2);
     if (strcmp(argv[1], "attach-probe") == 0)
         return cmd_attach_probe(argc - 2, argv + 2);
     if (strcmp(argv[1], "fetch") == 0)

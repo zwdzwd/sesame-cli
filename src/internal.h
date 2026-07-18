@@ -72,6 +72,12 @@ double sesame__betai(double a, double b, double x);
 double sesame__pt_2sided(double t, double df);       /* Pr(>|t|) */
 double sesame__pf_upper(double f, double d1, double d2);
 
+/* Householder QR least squares (dml.c). A is n*k row-major (destroyed), b is n
+ * (destroyed). Fills beta[k], *rss, upper-triangular R[k*k]; v is scratch >= n.
+ * Returns 0, or -1 if rank-deficient. Shared by dml and cnv. */
+int sesame__ols(double *A, int32_t n, int32_t k, double *b,
+                double *beta, double *rss, double *R, double *v);
+
 /* <dir of the binary>/data if it exists; 0 on success. */
 int sesame__exe_data_dir(char *out, size_t n);
 

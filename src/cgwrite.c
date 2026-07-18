@@ -92,6 +92,69 @@ int sesame_read_cg(const char *path, double **mat_out, int32_t *nprobe_out,
     return SESAME_OK;
 }
 
+/* Read a .cg's per-probe TOTAL intensity into a sample-major matrix, regardless
+ * of format: format 4 gives the stored float (a total_intensity.cg), format 3
+ * gives M+U (a cnvnormals.cg). NA (negative float, or M==U==0) -> NaN. This is
+ * what CNV consumes for both the target and the normal reference. Caller frees
+ * mat, names[i], and names. */
+int sesame_read_cg_total(const char *path, double **mat_out, int32_t *nprobe_out,
+                         int32_t *nsamp_out, char ***names_out, sesame_err_t *err)
+{
+    cfile_t cf;
+    snames_t sn;
+    double *mat = NULL;
+    char **names = NULL, pathbuf[4096];
+    int32_t np = -1, ns = 0, cap = 0, i;
+
+    if (err) { err->code = SESAME_OK; err->msg[0] = '\0'; }
+    snprintf(pathbuf, sizeof pathbuf, "%s", path);
+    cf = open_cfile(pathbuf);
+    if (!cf.fh) return sesame__fail(err, SESAME_ERR_IO, "cannot open %s", path);
+    sn = loadSampleNamesFromIndex(pathbuf);
+
+    for (;;) {
+        cdata_t c = read_cdata1(&cf), d;
+        if (c.n == 0) break;                         /* EOF */
+        d = decompress(c);
+        if (d.fmt != '3' && d.fmt != '4') {
+            free_cdata(&c); free_cdata(&d); bgzf_close(cf.fh); cleanSampleNames2(sn);
+            free(mat); free(names);
+            return sesame__fail(err, SESAME_ERR_FORMAT,
+                "%s is format %c, expected 3 or 4", path, d.fmt);
+        }
+        if (np < 0) np = (int32_t)d.n;
+        else if ((int32_t)d.n != np) {
+            free_cdata(&c); free_cdata(&d); bgzf_close(cf.fh); cleanSampleNames2(sn);
+            free(mat); free(names);
+            return sesame__fail(err, SESAME_ERR_FORMAT, "inconsistent probe count in %s", path);
+        }
+        if (ns >= cap) {
+            cap = cap ? cap * 2 : 8;
+            mat = (double *)realloc(mat, (size_t)cap * (size_t)np * sizeof(double));
+            names = (char **)realloc(names, (size_t)cap * sizeof(char *));
+        }
+        for (i = 0; i < np; i++) {
+            double v;
+            if (d.fmt == '4') {
+                float f = ((float *)d.s)[i];
+                v = f < 0.0f ? NAN : (double)f;
+            } else {
+                uint64_t mu = f3_get_mu(&d, (uint64_t)i);
+                uint64_t M = mu >> 32, U = (mu << 32) >> 32;
+                v = (M == 0 && U == 0) ? NAN : (double)(M + U);
+            }
+            mat[(size_t)ns * (size_t)np + (size_t)i] = v;
+        }
+        names[ns] = strdup(ns < sn.n ? sn.s[ns] : "");
+        ns++;
+        free_cdata(&c); free_cdata(&d);
+    }
+    bgzf_close(cf.fh);
+    cleanSampleNames2(sn);
+    *mat_out = mat; *nprobe_out = np; *nsamp_out = ns; *names_out = names;
+    return SESAME_OK;
+}
+
 /* Format 3 (M/U counts), the default. Rounds M,U to integers -- exact for raw
  * IDAT signal (uint16 means), sub-integer rounding for preprocessed floats
  * (noise). NA (either allele NaN) is stored as (0,0), which yame reads as
