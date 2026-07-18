@@ -44,6 +44,12 @@ void sesame__qnorm_use_target(const double *x_sorted, int32_t n,
  * opposite and would silently disagree. */
 double sesame__pmax2(double a, double b);
 
+/* R's pmax(a,b,na.rm=TRUE): NA dropped; both NA -> NA. */
+double sesame__pmax2_narm(double a, double b);
+
+/* # elements <= x in an ascending NaN-free array (k in ecdf F(x)=k/n). */
+int32_t sesame__count_le(const double *sorted, int32_t n, double x);
+
 /* <dir of the binary>/data if it exists; 0 on success. */
 int sesame__exe_data_dir(char *out, size_t n);
 

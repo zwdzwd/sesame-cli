@@ -34,6 +34,117 @@ int sesame_prep_quality_mask(sesame_sigdf_t *s, const uint8_t *qmask,
     return SESAME_OK;
 }
 
+/* ---------------------------------------------------------------- P ---
+ *
+ * pOOBAH (R/detection.R:141-170) -- detection-p masking from the empirical
+ * distribution of out-of-band + negative-control signal.
+ *
+ * Background per channel:
+ *   bgG = Grn signal (MG,UG) of col==R Inf-I probes NOT in the background mask
+ *         + Grn (UG) of negative-control probes;
+ *   bgR = Red signal (MR,UR) of col==G Inf-I probes not in the background mask
+ *         + Red (UR) of negative controls.
+ * If a channel has <= 100 non-NA background values, R substitutes the prior
+ * 1:1000 (R/detection.R:155-156).
+ *
+ * Per probe: redmax = pmax(MR,UR, na.rm), grnmax = pmax(MG,UG, na.rm); the
+ * detection p is the more significant of 1-F_R(redmax), 1-F_G(grnmax), where F
+ * is the ecdf of the channel background. Mask if p > pval_threshold.
+ *
+ * D2: R computes pmin() with NO na.rm, so a channel whose alleles are both NA
+ * makes p NA, and `NA > 0.05` does not mask -- the probe silently survives. The
+ * sibling ELBAR sets such p to 1.0. We do the same: pmin ignores an NA channel,
+ * and if BOTH are NA the probe is masked (p = 1).
+ */
+static int is_neg_control(const char *id)
+{
+    /* case-insensitive substring "negative" (R greps tolower(Probe_ID)) */
+    const char *n = "negative";
+    size_t li = strlen(id), ln = strlen(n), i, j;
+    if (li < ln) return 0;
+    for (i = 0; i + ln <= li; i++) {
+        for (j = 0; j < ln; j++) {
+            char c = id[i + j];
+            if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+            if (c != n[j]) break;
+        }
+        if (j == ln) return 1;
+    }
+    return 0;
+}
+
+/* 1 - F(x): detection p from a sorted, NaN-free background. R evaluates
+ * `1 - k/n` (not (n-k)/n) -- match that arithmetic bit-for-bit. */
+static double detect_p(const double *sorted, int32_t n, double x)
+{
+    int32_t k;
+    if (isnan(x)) return NAN;
+    k = sesame__count_le(sorted, n, x);
+    return 1.0 - (double)k / (double)n;
+}
+
+int sesame_prep_poobah(sesame_sigdf_t *s, const uint8_t *bgmask, int32_t bn,
+                       double pval_threshold, int combine_neg, sesame_err_t *err)
+{
+    int32_t n, i, nG = 0, nR = 0;
+    double *bgG = NULL, *bgR = NULL, *tmp = NULL;
+    int rc = SESAME_OK;
+
+    if (err) { err->code = SESAME_OK; err->msg[0] = '\0'; }
+    if (!s || !bgmask) return sesame__fail(err, SESAME_ERR_IO, "null argument");
+    n = s->n;
+    if (bn != n)
+        return sesame__fail(err, SESAME_ERR_FORMAT,
+            "background mask length %d != probe count %d", bn, n);
+
+    /* bg pools: oob (2 per Inf-I probe) + neg controls (1 per probe), so 3n is a
+     * safe upper bound for each channel. */
+    bgG = (double *)malloc((size_t)n * 3 * sizeof(double));
+    bgR = (double *)malloc((size_t)n * 3 * sizeof(double));
+    tmp = (double *)malloc((size_t)n * 3 * sizeof(double));
+    if (!bgG || !bgR || !tmp) { rc = sesame__fail(err, SESAME_ERR_NOMEM, "oom"); goto out; }
+
+    for (i = 0; i < n; i++) {
+        if (bgmask[i]) continue;                       /* excluded from bg */
+        if (s->col[i] == SESAME_COL_R) {               /* oobG */
+            bgG[nG++] = s->MG[i]; bgG[nG++] = s->UG[i];
+        } else if (s->col[i] == SESAME_COL_G) {        /* oobR */
+            bgR[nR++] = s->MR[i]; bgR[nR++] = s->UR[i];
+        }
+    }
+    if (combine_neg) {
+        for (i = 0; i < n; i++) {
+            if (is_neg_control(sesame_index_probe_id(s->ix, i))) {
+                bgG[nG++] = s->UG[i];
+                bgR[nR++] = s->UR[i];
+            }
+        }
+    }
+
+    /* drop NA (na.last=NA), then the <=100 empirical-prior fallback, then sort */
+    nG = sesame__drop_na(bgG, nG, tmp); memcpy(bgG, tmp, (size_t)nG * sizeof(double));
+    nR = sesame__drop_na(bgR, nR, tmp); memcpy(bgR, tmp, (size_t)nR * sizeof(double));
+    if (nG <= 100) { for (i = 0; i < 1000; i++) bgG[i] = i + 1; nG = 1000; }
+    if (nR <= 100) { for (i = 0; i < 1000; i++) bgR[i] = i + 1; nR = 1000; }
+    sesame__sort(bgG, nG);
+    sesame__sort(bgR, nR);
+
+    for (i = 0; i < n; i++) {
+        double pr = detect_p(bgR, nR, sesame__pmax2_narm(s->MR[i], s->UR[i]));
+        double pg = detect_p(bgG, nG, sesame__pmax2_narm(s->MG[i], s->UG[i]));
+        double p;
+        if (isnan(pr) && isnan(pg)) p = 1.0;           /* D2: both NA -> mask */
+        else if (isnan(pr)) p = pg;                    /* D2: use the other  */
+        else if (isnan(pg)) p = pr;
+        else p = pr < pg ? pr : pg;                    /* pmin */
+        if (p > pval_threshold) s->mask[i] = 1;
+    }
+
+out:
+    free(bgG); free(bgR); free(tmp);
+    return rc;
+}
+
 /* ---------------------------------------------------------------- C ---
  *
  * inferInfiniumIChannel (R/channel_inference.R:20-55).

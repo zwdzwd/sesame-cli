@@ -28,12 +28,19 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* recommendedMaskNames() (R/mask.R:197-220); NULL-terminated. */
+/* recommendedMaskNames() (R/mask.R:197-220) -- the Q set; NULL-terminated. */
 static const char *const REC_EPIC[] = {
     "mapping", "channel_switch", "snp5_GMAF1p", "extension", "sub30_copy", NULL };
 static const char *const REC_MSA[] = {   /* also EPICv2 */
     "M_1baseSwitchSNPcommon_5pt", "M_2extBase_SNPcommon_5pt",
     "M_mapping", "M_nonuniq", "M_SNPcommon_5pt", NULL };
+
+/* backgroundMask() (R/mask.R:170-185) -- the set EXCLUDED from background
+ * estimation in pOOBAH/noob. Platform-agnostic name list, intersected with the
+ * tracks the .cm actually has (a track not present simply never matches). */
+static const char *const BG_NAMES[] = {
+    "M_nonuniq", "nonunique", "sub35_copy", "multi", "design_issue",
+    "M_1baseSwitchSNPcommon_5pt", "M_1baseSwitchSNPcommon_1pt", NULL };
 
 static const char *const *recommended_names(const char *platform)
 {
@@ -75,13 +82,12 @@ static int find_cm(const char *platform, char *out, size_t n)
     return found ? 0 : -1;
 }
 
-/* Load the recommended quality mask for a platform as a 0/1 vector aligned to
- * the ordering (mask[i] == 1 -> probe i is masked). *out is malloc'd (caller
- * frees), *out_n is the probe count. */
-int sesame_quality_mask(const char *platform, uint8_t **out, int32_t *out_n,
-                        sesame_err_t *err)
+/* Read the platform's .cm and return the union of the named tracks as a 0/1
+ * vector aligned to the ordering (out[i] == 1 -> probe i is in some track).
+ * Tracks not present in the .cm simply never match. */
+static int mask_union(const char *platform, const char *const *names,
+                      uint8_t **out, int32_t *out_n, sesame_err_t *err)
 {
-    const char *const *names = recommended_names(platform);
     char cm[4096];
     cfile_t cf;
     snames_t sn;
@@ -92,14 +98,14 @@ int sesame_quality_mask(const char *platform, uint8_t **out, int32_t *out_n,
     if (err) { err->code = SESAME_OK; err->msg[0] = '\0'; }
     if (!names)
         return sesame__fail(err, SESAME_ERR_UNSUPPORTED,
-            "no recommended mask set for platform '%s'", platform);
+            "no mask set for platform '%s'", platform);
     if (find_cm(platform, cm, sizeof cm) != 0)
         return sesame__fail(err, SESAME_ERR_IO,
             "no .cm mask for %s in the store -- run: sesame fetch %s",
             platform, platform);
 
-    /* All 26 tracks come back in index order; keep the union of the recommended
-     * ones. The file is small, so reading every block is cheap. */
+    /* All tracks come back in index order; union the ones we want. The file is
+     * small, so reading every block is cheap. */
     cf = open_cfile(cm);
     sn = loadSampleNamesFromIndex(cm);
     for (;;) {
@@ -124,8 +130,22 @@ int sesame_quality_mask(const char *platform, uint8_t **out, int32_t *out_n,
 
     if (!mask)
         return sesame__fail(err, SESAME_ERR_FORMAT, "empty .cm mask for %s", platform);
-
     *out = mask;
     *out_n = n;
     return SESAME_OK;
+}
+
+/* Q: the recommended quality mask (union of recommendedMaskNames). */
+int sesame_quality_mask(const char *platform, uint8_t **out, int32_t *out_n,
+                        sesame_err_t *err)
+{
+    return mask_union(platform, recommended_names(platform), out, out_n, err);
+}
+
+/* P/B: the background mask (union of backgroundMask names), the probes EXCLUDED
+ * from background estimation. */
+int sesame_background_mask(const char *platform, uint8_t **out, int32_t *out_n,
+                           sesame_err_t *err)
+{
+    return mask_union(platform, BG_NAMES, out, out_n, err);
 }

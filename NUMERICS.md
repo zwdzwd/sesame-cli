@@ -13,7 +13,7 @@ arbitrary-precision oracle showing sesame is closer to truth.
 | id | site | R behavior | sesame behavior | status |
 |----|------|-----------|------------------|--------|
 | D1 | `R/sesame.R:293-298` `readIDAT1` | Merges Grn/Red by **positional `cbind`**, rownames taken from Grn. No join on IlluminaID. The assumption *holds for well-formed files* (verified: Grn/Red address vectors are identical, sorted and unique on every test array). It fails silently and array-wide only when mismatched IDATs are paired. | Verifies the address vectors match and errors otherwise. Confirmed: pairing an EPICv2 Grn with an HM450 Red is rejected, where R would silently emit garbage. | **done (P1)** |
-| D2 | `R/detection.R:163-165` `pOOBAH` | `pmax(..., na.rm=TRUE)` but `pmin(...)` **without** `na.rm` → an NA in one channel yields `p=NA`, and `NA > 0.05` is NA, so the probe is **not** masked. Sibling `ELBAR` at `R/detection.R:60` does `pvals[is.na(pvals)] <- 1.0`, evidence this is an oversight. | Both channels NA → `p=1` (mask). One channel NA → use the other. | planned (P4) |
+| D2 | `R/detection.R:163-165` `pOOBAH` | `pmax(..., na.rm=TRUE)` but `pmin(...)` **without** `na.rm` → an NA in one channel yields `p=NA`, and `NA > 0.05` is NA, so the probe is **not** masked. Sibling `ELBAR` at `R/detection.R:60` does `pvals[is.na(pvals)] <- 1.0`, evidence this is an oversight. | Both channels NA → `p=1` (mask). One channel NA → use the other. | **done (P)** |
 | D3 | `R/readIDAT.R:22` vs `:178` | Header parsed **twice**: `readIDAT()` reads `version` as int32 to dispatch, then `readIDAT_nonenc()` reopens the file and re-reads it as int64. Works only because the value is small and little-endian. | Parsed once, as int64. | **done (P0)** |
 | D4 | `R/readIDAT.R:44-46` `readLong` | `readBin(what="integer", size=8)` — base R does not support 8-byte integers; this works by accident. | Real `int64_t`. | **done (P0)** |
 | D5 | `R/background.R:143-167` `normExpSignal` | Computes `exp(dnorm(...,log=TRUE) - pnorm(...,lower.tail=FALSE,log.p=TRUE))`; a difference of logs, which loses precision in the left tail where the `1e-6` floor fires. | Evaluates the inverse Mills ratio `λ(t)=φ(t)/Φ(t)` directly (`erfc` for `t > -5`, Laplace continued fraction below). Mathematically identical, better conditioned, never differences logs. | planned (P4) |
@@ -110,6 +110,27 @@ mask-version bump, not an implementation error — per-track the two agree ~90%+
 (`M_mapping`: 1693 shared of 1870/1939). This converges when sesameData ships
 the same mask version. sesame-cli always applies whatever `.cm` the pinned tag
 publishes; the number above pins *which* lineage was measured.
+
+## P (pOOBAH) — algorithm exact, residual is boundary + lineage
+
+`P` reads the background mask (union of `backgroundMask` names) from the same
+`.cm`, builds the per-channel ecdf of out-of-band + negative-control signal, and
+masks probes whose detection p exceeds 0.05. The ecdf p is `1 - k/n` with
+`k = #{bg ≤ x}`, matching R's `1 - ecdf(bg)(x)` arithmetic bit-for-bit.
+
+Verified on the MSA test array: R masks 9,433, sesame-cli 9,445, **R-only 0**
+(sesame is a superset here), 12 disagreements. Every disagreement is
+*explainable* and the test (`tests/run_poobah.sh`) fails if any is not:
+
+- **all 12 are boundary flips** — R's p is `0.04999…`, i.e. within 1e-3 of the
+  0.05 cutoff, so the lineage-different background pool (`.cm` `M_nonuniq` etc.
+  are the "B1" build, ordering is 284,309 not 284,317) shifts them across;
+- **0 were D2 cases** here, but D2 is implemented: a probe whose channel is
+  all-NA gets `p = NA` in R (silently unmasked) and `p = 1` in sesame (masked),
+  matching the sibling `ELBAR`.
+
+No disagreement had R p far from 0.05 — i.e. no algorithm error. The p-value
+formula is exact; the residual is the same data lineage as Q/D.
 
 ## Observations about the R implementation (not divergences)
 

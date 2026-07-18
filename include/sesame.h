@@ -180,6 +180,18 @@ int sesame_quality_mask(const char *platform, uint8_t **out, int32_t *out_n,
 int sesame_prep_quality_mask(sesame_sigdf_t *sdf, const uint8_t *qmask,
                              int32_t qn, sesame_err_t *err);
 
+/* P -- the background mask (backgroundMask names) as a 0/1 vector aligned to the
+ * ordering (1 = excluded from background estimation). Reads the same .cm. */
+int sesame_background_mask(const char *platform, uint8_t **out, int32_t *out_n,
+                           sesame_err_t *err);
+
+/* P -- pOOBAH (R/detection.R:141-170). Masks probes whose detection p-value
+ * exceeds pval_threshold, from the ecdf of out-of-band + negative-control
+ * background (probes in bgmask excluded). combine_neg adds negative controls.
+ * Implements D2 (NA-channel probes are masked, not silently kept). */
+int sesame_prep_poobah(sesame_sigdf_t *sdf, const uint8_t *bgmask, int32_t bn,
+                       double pval_threshold, int combine_neg, sesame_err_t *err);
+
 /* C -- inferInfiniumIChannel (R/channel_inference.R:20-55). Reassigns each
  * Infinium-I probe to its brighter channel, judged against the 95th percentile
  * of the pooled out-of-band signal under the new assignment. Defaults

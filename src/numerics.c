@@ -150,3 +150,25 @@ double sesame__pmax2(double a, double b)
     if (isnan(a) || isnan(b)) return NAN;
     return a > b ? a : b;
 }
+
+/* R's pmax(a, b, na.rm=TRUE): NA is dropped; both NA -> NA (verified against R,
+ * which returns NA not -Inf). Used for the per-channel allele max in pOOBAH. */
+double sesame__pmax2_narm(double a, double b)
+{
+    if (isnan(a)) return b;      /* b may also be NaN -> NaN, matching R */
+    if (isnan(b)) return a;
+    return a > b ? a : b;
+}
+
+/* Number of elements <= x in an ascending, NaN-free array (upper_bound). This
+ * is k in R's ecdf: F(x) = k/n, so the pOOBAH detection p-value is 1 - k/n. */
+int32_t sesame__count_le(const double *sorted, int32_t n, double x)
+{
+    int32_t lo = 0, hi = n;      /* first index with sorted[idx] > x */
+    while (lo < hi) {
+        int32_t mid = lo + ((hi - lo) >> 1);
+        if (sorted[mid] <= x) lo = mid + 1;
+        else                  hi = mid;
+    }
+    return lo;
+}

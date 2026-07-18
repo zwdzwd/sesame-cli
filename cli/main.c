@@ -35,7 +35,7 @@ static int usage(void)
       "      NOTE: no preprocessing yet -- QCDPB is not implemented.\n"
       "      --min-beads N  mask probes with any bead count < N (default: off)\n"
       "      --no-mask      ignore the mask column; emit every beta\n"
-      "      --prep CODE    preprocessing steps to apply (Q, C, D so far)\n"
+      "      --prep CODE    preprocessing steps to apply (Q, C, D, P so far)\n"
       "      --dump-col     emit Probe_ID<TAB>col (G/R/2) instead of betas,\n"
       "                     for differential-testing a prep step\n"
       "      --f64          write raw little-endian float64 to stdout instead\n"
@@ -156,8 +156,8 @@ static int cmd_betas(int argc, char **argv)
     sesame_idat_t *g = NULL, *r = NULL;
     sesame_sigdf_t *s = NULL;
     double *betas = NULL;
-    uint8_t *qmask = NULL;
-    int32_t qn = 0;
+    uint8_t *qmask = NULL, *bgmask = NULL;
+    int32_t qn = 0, bgn = 0;
     sesame_err_t e;
 
     for (i = 0; i < argc; i++) {
@@ -229,10 +229,15 @@ static int cmd_betas(int argc, char **argv)
 
     /* Q needs the recommended mask for the platform; load it once (it shells
      * out to yame) and reuse across every step/sample. */
-    if (strchr(prep, 'Q')) {
+    if (strchr(prep, 'Q') || strchr(prep, 'P')) {
         const char *plat = platform ? platform
                                     : sesame_platform_from_beads(g->n);
-        if (sesame_quality_mask(plat, &qmask, &qn, &e) != SESAME_OK) {
+        if (strchr(prep, 'Q') &&
+            sesame_quality_mask(plat, &qmask, &qn, &e) != SESAME_OK) {
+            fprintf(stderr, "sesame: %s\n", e.msg); goto out;
+        }
+        if (strchr(prep, 'P') &&
+            sesame_background_mask(plat, &bgmask, &bgn, &e) != SESAME_OK) {
             fprintf(stderr, "sesame: %s\n", e.msg); goto out;
         }
     }
@@ -255,9 +260,14 @@ static int cmd_betas(int argc, char **argv)
                 fprintf(stderr, "sesame: %s\n", e.msg); goto out;
             }
             break;
+        case 'P':
+            if (sesame_prep_poobah(s, bgmask, bgn, 0.05, 1, &e) != SESAME_OK) {
+                fprintf(stderr, "sesame: %s\n", e.msg); goto out;
+            }
+            break;
         default:
             fprintf(stderr, "sesame: prep code '%c' not implemented "
-                            "(have: Q, C, D)\n", *c);
+                            "(have: Q, C, D, P)\n", *c);
             goto out;
         }
     }
@@ -296,6 +306,7 @@ static int cmd_betas(int argc, char **argv)
 
 out:
     free(qmask);
+    free(bgmask);
     free(betas);
     sesame_sigdf_free(s);
     sesame_idat_free(g);
