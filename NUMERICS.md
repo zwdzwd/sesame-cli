@@ -239,6 +239,33 @@ channel ambiguity enters), C's OLS+log2 matches R's `lm` to **max 1.0e-5, median
 storage of the totals, not the fit). An independent pure-Python normal-equations
 solve on the same inputs agrees with C to ~3e-8.
 
+**Segmentation (CBS).** The bin log2 ratios are segmented by a clean-room
+deterministic port of DNAcopy's circular binary segmentation (`src/cbs.c`), the
+routine `cnSegmentation` calls. DNAcopy assesses each split by **permutation
+against R's RNG**, which `cnSegmentation` never seeds — so its borderline splits
+are not reproducible even run-to-run. We keep the deterministic parts and replace
+the RNG with analysis:
+- the change-point **location** is the arc maximising the F-standardised CBS
+  statistic `BSS/((tss-BSS)/(n-2))`, `BSS = n(S_j-S_i)^2/(L(n-L))` — exact
+  (a naive O(m²) scan finds the same argmax as DNAcopy's block-decomposed
+  `tmaxo`, since real data has no ties);
+- **significance** is the Siegmund (1988) analytic tail probability `tailp` that
+  DNAcopy itself uses for large segments (`p.method="hybrid"`), applied over the
+  full valid arc range so it also covers the small arcs DNAcopy would permute;
+- the 1-vs-2 change-point edge test uses DNAcopy's `tpermp` two-sample statistic
+  scored against the t distribution instead of a permutation;
+- `sdundo` (merge adjacent segments whose median differs by < `undo.SD·trimmed.SD`)
+  and `trimmed.variance` (with the compiled-in `inflfact(0.025)`) are already
+  deterministic in DNAcopy and ported verbatim.
+
+On real K562 copy-number bins (`tests/run_cbs.sh`, oracle = `DNAcopy::segment` with
+sesame's parameters and a fixed seed) this recovers **97% of DNAcopy's segment
+breakpoints within one bin**, with exact locations. It calls ~30% more segments:
+those extra breakpoints have a median |Δmean| of 0.23 log2 — real local amplitude
+changes DNAcopy's conservative permutation rejects, not noise. A clean step signal
+segments exactly. Since DNAcopy is itself non-deterministic here, breakpoint recall
+(not an exact match) is the meaningful gate.
+
 **Residual vs R's `cnSegmentation` on real IDATs is a data-lineage leverage
 effect, not an arithmetic one.** Running the full R path (`readIDATpair` target,
 `EPICv2.8.SigDF` normals, its own `probeCoords`) diverges by ~2.6e-4 median.

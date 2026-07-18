@@ -6,5 +6,6 @@
 /corpus/
 compile_commands.json
 normexp_test
+cbs_test
 mu2cg
 pipeline_dump

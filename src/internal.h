@@ -78,6 +78,16 @@ double sesame__pf_upper(double f, double d1, double d2);
 int sesame__ols(double *A, int32_t n, int32_t k, double *b,
                 double *beta, double *rss, double *R, double *v);
 
+/* Circular binary segmentation (cbs.c), a deterministic port of DNAcopy's core.
+ * Segments x[0..n-1]; fills seg_end[] (cumulative 1-based segment ends, ascending)
+ * and returns the segment count. min_width/alpha/kmax/nmin/ngrid/tol mirror
+ * DNAcopy::segment; trimmed_sd>0 and undo_sd>0 enable the sdundo merge. */
+int32_t sesame__cbs(const double *x, int32_t n, int32_t min_width, double alpha,
+                    int32_t kmax, int32_t nmin, int ngrid, double tol,
+                    double trimmed_sd, double undo_sd,
+                    int32_t *seg_end, int32_t max_seg);
+double sesame__trimmed_sd(const double *x, int32_t n, double trim);
+
 /* <dir of the binary>/data if it exists; 0 on success. */
 int sesame__exe_data_dir(char *out, size_t n);
 

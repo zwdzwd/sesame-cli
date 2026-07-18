@@ -50,12 +50,13 @@ static int usage(void)
       "\n"
       "  sesame cnv --target <total_intensity.cg> [--normals <cnvnormals.cg>]\n"
       "             [--platform P | --index <ordering>] [--genome hg38]\n"
-      "             [--coords <coord.tsv.gz>] [--probes|--bins] [--out <file>]\n"
+      "             [--coords <coord.tsv.gz>] [--segments|--bins|--probes] [--out <file>]\n"
       "      Copy-number: regress the target's per-probe total intensity on a\n"
       "      panel of normals (OLS), then log2(target/fitted) per probe, binned\n"
-      "      along the genome (median per bin, default --bins). normals/coords/\n"
-      "      genome default to the fetched store for --platform. CBS segmentation\n"
-      "      is not included. --target may hold several samples (one profile each).\n"
+      "      along the genome (median per bin) and segmented by circular binary\n"
+      "      segmentation (default --segments; --bins/--probes for the finer\n"
+      "      levels). normals/coords/genome default to the fetched store for\n"
+      "      --platform. --target may hold several samples (one profile each).\n"
       "\n"
       "  sesame attach-probe [--index <ordering.tsv.gz> | --platform P]\n"
       "                      [--all] [--beta] [--no-header] <file>\n"
@@ -950,7 +951,7 @@ static int cmd_cnv(int argc, char **argv)
 {
     const char *target = NULL, *normals = NULL, *idxpath = NULL, *platform = NULL;
     const char *coords = NULL, *genome = "hg38", *outpath = NULL;
-    int tilewidth = 50000, min_probes = 20, probes = 0, i, rc = 1;
+    int tilewidth = 50000, min_probes = 20, mode = 0, i, rc = 1;   /* 0=seg 1=bin 2=probe */
     char store[4096], resolved[4096], cbuf[4096], nbuf[4096], sbuf[4096], gbuf[4096];
     sesame_index_t *ix = NULL;
     sesame_cnv_t *res = NULL;
@@ -967,8 +968,9 @@ static int cmd_cnv(int argc, char **argv)
         else if (strcmp(argv[i], "--genome") == 0 && i+1 < argc) genome = argv[++i];
         else if (strcmp(argv[i], "--tilewidth") == 0 && i+1 < argc) tilewidth = (int)strtol(argv[++i], NULL, 10);
         else if (strcmp(argv[i], "--min-probes") == 0 && i+1 < argc) min_probes = (int)strtol(argv[++i], NULL, 10);
-        else if (strcmp(argv[i], "--probes") == 0) probes = 1;
-        else if (strcmp(argv[i], "--bins") == 0) probes = 0;
+        else if (strcmp(argv[i], "--segments") == 0) mode = 0;
+        else if (strcmp(argv[i], "--bins") == 0) mode = 1;
+        else if (strcmp(argv[i], "--probes") == 0) mode = 2;
         else if (strcmp(argv[i], "--out") == 0 && i+1 < argc) outpath = argv[++i];
         else if (argv[i][0] == '-' && argv[i][1] != '\0') { fprintf(stderr, "sesame: unknown option %s\n", argv[i]); return usage(); }
         else if (!target) target = argv[i];
@@ -1013,22 +1015,28 @@ static int cmd_cnv(int argc, char **argv)
     if (outpath && !(out = fopen(outpath, "w"))) {
         fprintf(stderr, "sesame: cannot write %s\n", outpath); goto out;
     }
-    if (probes) {
+    if (mode == 2) {
         fputs("sample\tProbe_ID\tchrom\tpos\tlog2ratio\n", out);
         for (s = 0; s < nres; s++)
             for (k = 0; k < res[s].n_probe; k++)
                 fprintf(out, "%s\t%s\t%s\t%d\t%.6g\n", res[s].sample, res[s].probe_id[k],
                         res[s].chrom[k], res[s].pos[k], res[s].log2ratio[k]);
-    } else {
+    } else if (mode == 1) {
         fputs("sample\tchrom\tstart\tend\tnprobes\tlog2ratio\n", out);
         for (s = 0; s < nres; s++)
             for (k = 0; k < res[s].n_bin; k++)
                 fprintf(out, "%s\t%s\t%d\t%d\t%d\t%.6g\n", res[s].sample, res[s].bin_chrom[k],
                         res[s].bin_start[k], res[s].bin_end[k], res[s].bin_nprobe[k], res[s].bin_log2ratio[k]);
+    } else {
+        fputs("sample\tchrom\tstart\tend\tnbin\tseg.mean\n", out);
+        for (s = 0; s < nres; s++)
+            for (k = 0; k < res[s].n_seg; k++)
+                fprintf(out, "%s\t%s\t%d\t%d\t%d\t%.6g\n", res[s].sample, res[s].seg_chrom[k],
+                        res[s].seg_start[k], res[s].seg_end[k], res[s].seg_nbin[k], res[s].seg_mean[k]);
     }
     for (s = 0; s < nres; s++)
-        fprintf(stderr, "sesame: cnv %s -- %d probes on %d normals, %d bins\n",
-                res[s].sample, res[s].n_used, res[s].n_normal, res[s].n_bin);
+        fprintf(stderr, "sesame: cnv %s -- %d probes on %d normals, %d bins, %d segments\n",
+                res[s].sample, res[s].n_used, res[s].n_normal, res[s].n_bin, res[s].n_seg);
     rc = 0;
 out:
     if (out && out != stdout) fclose(out);

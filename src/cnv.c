@@ -345,6 +345,55 @@ static int cnv_one(const char *sample, const double *target, const double *norma
         }
         free(cp); free(gs); free(ge);
     }
+
+    /* CBS segmentation over the bins, per chromosome. trimmed.SD (the sdundo
+     * scale) is genome-wide over the finite bin signals, as in DNAcopy. */
+    if (r->n_bin > 0) {
+        int32_t nb = r->n_bin, na = 0, cs = 0, capseg = 0, bk;
+        double *allsig = (double *)malloc((size_t)nb * sizeof(double));
+        double tsd;
+        if (!allsig) { sesame__fail(err, SESAME_ERR_NOMEM, "oom"); goto done; }
+        for (bk = 0; bk < nb; bk++) if (!isnan(r->bin_log2ratio[bk])) allsig[na++] = r->bin_log2ratio[bk];
+        tsd = sesame__trimmed_sd(allsig, na, 0.025);
+        free(allsig);
+        while (cs < nb) {
+            int32_t ce = cs, cm, nf = 0, *bidx, *se, nseg, ns, lo;
+            double *sv;
+            while (ce < nb && !strcmp(r->bin_chrom[ce], r->bin_chrom[cs])) ce++;
+            cm = ce - cs;
+            sv = (double *)malloc((size_t)cm * sizeof(double));
+            bidx = (int32_t *)malloc((size_t)cm * sizeof(int32_t));
+            se = (int32_t *)malloc((size_t)cm * sizeof(int32_t));
+            if (!sv || !bidx || !se) { free(sv); free(bidx); free(se);
+                sesame__fail(err, SESAME_ERR_NOMEM, "oom"); goto done; }
+            for (bk = cs; bk < ce; bk++)
+                if (!isnan(r->bin_log2ratio[bk])) { sv[nf] = r->bin_log2ratio[bk]; bidx[nf] = bk; nf++; }
+            nseg = nf > 0 ? sesame__cbs(sv, nf, 5, 0.001, 25, 200, 100, 1e-6, tsd, 2.2, se, nf) : 0;
+            lo = 0;
+            for (ns = 0; ns < nseg; ns++) {
+                int32_t hi = se[ns], first = bidx[lo], last = bidx[hi-1];
+                double sm = 0.0;
+                for (bk = lo; bk < hi; bk++) sm += sv[bk];
+                if (r->n_seg >= capseg) {
+                    capseg = capseg ? capseg * 2 : 256;
+                    r->seg_chrom = realloc(r->seg_chrom, (size_t)capseg * sizeof(char*));
+                    r->seg_start = realloc(r->seg_start, (size_t)capseg * sizeof(int32_t));
+                    r->seg_end = realloc(r->seg_end, (size_t)capseg * sizeof(int32_t));
+                    r->seg_nbin = realloc(r->seg_nbin, (size_t)capseg * sizeof(int32_t));
+                    r->seg_mean = realloc(r->seg_mean, (size_t)capseg * sizeof(double));
+                }
+                r->seg_chrom[r->n_seg] = strdup(r->bin_chrom[cs]);
+                r->seg_start[r->n_seg] = r->bin_start[first];
+                r->seg_end[r->n_seg] = r->bin_end[last];
+                r->seg_nbin[r->n_seg] = hi - lo;
+                r->seg_mean[r->n_seg] = sm / (hi - lo);
+                r->n_seg++;
+                lo = hi;
+            }
+            free(sv); free(bidx); free(se);
+            cs = ce;
+        }
+    }
     rc = SESAME_OK;
 
 done:
@@ -419,6 +468,9 @@ void sesame_cnv_free_array(sesame_cnv_t *a, int32_t n)
         for (i = 0; i < r->n_bin; i++) free(r->bin_chrom[i]);
         free(r->bin_chrom); free(r->bin_start); free(r->bin_end);
         free(r->bin_nprobe); free(r->bin_log2ratio);
+        for (i = 0; i < r->n_seg; i++) free(r->seg_chrom[i]);
+        free(r->seg_chrom); free(r->seg_start); free(r->seg_end);
+        free(r->seg_nbin); free(r->seg_mean);
     }
     free(a);
 }

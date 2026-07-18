@@ -422,6 +422,13 @@ typedef struct {
     int32_t  *bin_end;
     int32_t  *bin_nprobe;
     double   *bin_log2ratio;
+    /* per-segment (length n_seg): circular binary segmentation over the bins */
+    int32_t   n_seg;
+    char    **seg_chrom;
+    int32_t  *seg_start;
+    int32_t  *seg_end;
+    int32_t  *seg_nbin;
+    double   *seg_mean;
 } sesame_cnv_t;
 
 /* Run CNV for every sample in target_cg against normals_cg. target_cg is a
