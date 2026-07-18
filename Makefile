@@ -29,7 +29,7 @@ OBJ     := $(SRC:.c=.o)
 CLI_OBJ := $(CLI_SRC:.c=.o)
 BIN     := sesame
 
-.PHONY: all asan test test-idat test-betas test-prep test-qmask test-poobah test-noob test-batch test-qc test-dml test-cg index yame-lib fuzz fuzz-replay clean
+.PHONY: all asan test test-idat test-betas test-prep test-qmask test-poobah test-noob test-batch test-qc test-dml test-cg index cnv-data yame-lib fuzz fuzz-replay clean
 
 all: $(BIN)
 
@@ -85,6 +85,11 @@ pipeline_dump: tests/pipeline_dump.c $(OBJ) $(YAME_LIB) $(HTSLIB) include/sesame
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ tests/pipeline_dump.c $(OBJ) \
 	    $(YAME_LIB) $(HTSLIB) -lpthread $(LDLIBS)
 
+# M/U TSV -> format-3 .cg, for packing the CNV normal reference (export_cnvnormals.R).
+mu2cg: tools/mu2cg.c $(OBJ) $(YAME_LIB) $(HTSLIB) include/sesame.h
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ tools/mu2cg.c $(OBJ) \
+	    $(YAME_LIB) $(HTSLIB) -lpthread $(LDLIBS)
+
 test-noob: $(BIN) normexp_test pipeline_dump
 	@tests/run_noob.sh
 
@@ -107,6 +112,18 @@ index:
 	    Rscript tools/export_ordering.R $$p testdata/$$p.ordering.tsv.gz; \
 	done
 
+# Export CNV annotation from sesameData: genome-level genomeInfo (hg38) and the
+# per-platform normal references (format-3 .cg) into the store. Needs Rscript.
+cnv-data: mu2cg
+	Rscript tools/export_genomeinfo.R hg38 data/genome
+	@for p in EPIC EPICv2; do \
+	    mkdir -p data/$$p; \
+	    Rscript tools/export_cnvnormals.R $$p testdata/$$p.ordering.tsv.gz \
+	        data/$$p/$$p.cnvnormals.mu.tsv.gz && \
+	    ./mu2cg data/$$p/$$p.cnvnormals.mu.tsv.gz data/$$p/$$p.cnvnormals.cg && \
+	    rm -f data/$$p/$$p.cnvnormals.mu.tsv.gz; \
+	done
+
 # Real fuzzing. Needs a clang with libFuzzer (Linux CI); Apple clang has none.
 fuzz:
 	$(CC) -std=c11 -g -O1 -Iinclude -fsanitize=fuzzer,address,undefined \
@@ -119,5 +136,5 @@ fuzz-replay:
 	    fuzz/fuzz_idat.c src/idat.c src/util.c -lz -o fuzz_replay
 
 clean:
-	rm -f $(OBJ) $(CLI_OBJ) $(BIN) normexp_test pipeline_dump fuzz_idat fuzz_replay
+	rm -f $(OBJ) $(CLI_OBJ) $(BIN) normexp_test pipeline_dump mu2cg fuzz_idat fuzz_replay
 	rm -rf $(BIN).dSYM normexp_test.dSYM fuzz_replay.dSYM fuzz_idat.dSYM
