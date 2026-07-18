@@ -8,7 +8,12 @@
 CC      ?= cc
 PREFIX  ?= /usr/local
 CFLAGS  ?= -O2 -g
-CFLAGS  += -DSESAME_HAVE_CURL -std=c11 -Wall -Wextra -Wpedantic -Wshadow -Wconversion \
+# _GNU_SOURCE makes POSIX/BSD functions (strdup, realpath, getline) visible under
+# -std=c11 on glibc, where <string.h> etc. otherwise hide them. Chosen over
+# _DEFAULT_SOURCE (unknown to the glibc 2.17 sysroot conda can use) and
+# _XOPEN_SOURCE (which would suppress Darwin extensions); _GNU_SOURCE is honored
+# by every glibc and is a no-op on macOS, where these are declared by default.
+CFLAGS  += -DSESAME_HAVE_CURL -D_GNU_SOURCE -std=c11 -Wall -Wextra -Wpedantic -Wshadow -Wconversion \
            -Wstrict-prototypes -Iinclude
 # EXTRA_CFLAGS is appended to every compile (incl. mask.o) and EXTRA_LDFLAGS to
 # every link, so `asan` can add sanitizers without clobbering the base flags a
