@@ -1,5 +1,10 @@
 # sesame-cli
 
+![license](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue)
+![language](https://img.shields.io/badge/C-C11-00599C)
+![arrays](https://img.shields.io/badge/arrays-EPIC%20%7C%20EPICv2%20%7C%20HM450%20%7C%20MSA-brightgreen)
+![vs R](https://img.shields.io/badge/betas%20vs%20R-bit--identical-success)
+
 A standalone C implementation of [sesame](https://github.com/zwdzwd/sesame)'s
 basic Infinium DNA methylation preprocessing: **IDAT → betas**, with no R and no
 Bioconductor. Builds one binary, `sesame`.
@@ -9,9 +14,27 @@ Bioconductor. Builds one binary, `sesame`.
 > (self-consistent vs R by mask lineage), `C` (channel-identical), `D` (within
 > ~2 ULP), `P` (detection-p exact; residual is 0.05-boundary/lineage), and `B`
 > (noob — `normExpSignal`/`huber` proven to a few ULP in isolation; residual is
-> lineage only). See the validation table and `NUMERICS.md`.
+> lineage only). Multi-sample **batch** runs are parallel and deterministic. See
+> [Fidelity and validation](#fidelity-and-validation) and `NUMERICS.md`.
 
-## Why
+## Contents
+
+- [Why sesame-cli](#why-sesame-cli)
+- [Scope](#scope)
+- [Installation](#installation)
+- [Quickstart](#quickstart)
+- [Commands](#commands)
+- [The QCDPB pipeline](#the-qcdpb-pipeline)
+- [Batch mode](#batch-mode)
+- [Output formats](#output-formats)
+- [Data files and the store](#data-files-and-the-store)
+- [Configuration](#configuration)
+- [Exit status](#exit-status)
+- [Fidelity and validation](#fidelity-and-validation)
+- [Development](#development)
+- [License](#license)
+
+## Why sesame-cli
 
 `openSesame` needs R + Bioconductor + `sesameData` (ExperimentHub) +
 `preprocessCore`/`MASS`/`BiocParallel`. That blocks:
@@ -34,7 +57,7 @@ EPICv2, HM450, MSA.
 **Out:** DML, KYCG, CNV, visualization, and all inference (species/strain/age/
 sex/ethnicity) — those stay in R.
 
-## Build
+## Installation
 
 Dependencies: a C compiler + `make`, **zlib**, **libcurl**, and the **YAME**
 submodule (bundled htslib) — linked in to read `.cm` mask files. Both sesame-cli
@@ -42,18 +65,143 @@ and YAME are AGPL-3.0, so linking is clean.
 
 ```sh
 git clone --recurse-submodules <repo>          # or: git submodule update --init --recursive
+cd sesame-cli
 make                # builds libyame.a from the submodule, then ./sesame
-make test           # golden tests vs the R oracle (needs Rscript + the sesame R package;
-                    # the Q test also needs the `yame` binary on PATH)
-                    # uses $SESAME_TEST_IDATS (default ~/repo/InfiniumTestIDATs)
-make asan           # sesame's own objects under ASan/UBSan
-make fuzz-replay    # IDAT-parser corpus replayer under ASan/UBSan
 ```
 
-At **runtime** the binary needs only zlib and libcurl (YAME/htslib are static);
-`yame` does not need to be installed.
+`make` produces a single binary, `./sesame`. Put it on your `PATH` (e.g.
+`cp sesame ~/.local/bin/`). At **runtime** it needs only zlib and libcurl
+(YAME/htslib are static); the `yame` tool does not need to be installed.
 
-## Data files
+Other build targets are covered under [Development](#development).
+
+## Quickstart
+
+```sh
+# 1. Fetch a platform's ordering table + mask into the local store (one time).
+sesame fetch MSA
+
+# 2. Raw betas (no preprocessing) — platform auto-detected from the IDAT.
+sesame betas path/to/sample > sample.betas.tsv      # reads sample_{Grn,Red}.idat[.gz]
+
+# 3. The full default pipeline, same as openSesame(prep="QCDPB").
+sesame betas --prep QCDPB path/to/sample > sample.betas.tsv
+
+# 4. A whole cohort in one parallel process -> a Probe_ID x sample matrix.
+#    A prefix is a path stem; derive them from the Grn files if needed.
+sesame betas --prep QCDPB $(ls idats/*_Grn.idat.gz | sed 's/_Grn.idat.gz//') > cohort.betas.tsv
+```
+
+Output row `Probe_ID<TAB>beta`, `NA` for missing/masked probes. A `<prefix>`
+resolves `<prefix>_Grn.idat[.gz]` and `<prefix>_Red.idat[.gz]`.
+
+## Commands
+
+```
+sesame betas      [options] <prefix> [<prefix> ...]   # IDAT -> betas
+sesame fetch      [<platform>] [--force]              # download data into the store
+sesame index-info                                     # show store + pinned tag + platforms
+sesame idat-dump  [--head N] [--tsv] <file.idat[.gz]> # inspect a raw IDAT
+sesame version
+```
+
+### `sesame betas`
+
+Compute beta values from an IDAT pair. Equivalent to
+`openSesame(prefix, prep=CODE, func=getBetas)`. One prefix prints a two-column
+table; multiple prefixes print a matrix (see [Batch mode](#batch-mode)).
+
+| flag | meaning |
+|---|---|
+| `--prep CODE` | preprocessing steps in order, e.g. `QCDPB` (default: none → raw betas) |
+| `--index <path>` | use this ordering table directly, bypassing the store |
+| `--platform P` | force the platform (`EPIC`/`EPICv2`/`HM450`/`MSA`) instead of bead-count detection |
+| `--min-beads N` | mask probes with any bead count `< N` (default: off, matching R's `NULL`) |
+| `--no-mask` | ignore the mask column; emit every beta |
+| `--threads N`, `-t N` | worker threads for a batch (default: online CPUs) |
+| `--f64` | write raw little-endian float64 instead of text (see [Output formats](#output-formats)) |
+| `--dump-col` | emit `Probe_ID<TAB>col` (G/R/2) instead of betas — single prefix, for testing `C` |
+
+`Q`, `P`, and `B` need the platform's `.cm` mask in the store; run
+`sesame fetch <platform>` first.
+
+### `sesame fetch`
+
+Download a platform's data (ordering table + `.cm` mask + `SHA256SUMS`) into the
+[store](#data-files-and-the-store), verifying every file against a digest
+compiled into the build. With no platform, fetches all published platforms.
+`--force` re-downloads even if a file is already present and matches. **This is
+the only command that touches the network**, and it never prompts.
+
+### `sesame index-info`
+
+Print the store location, which annotation tag this build pins, and which
+platforms are present locally versus still need fetching.
+
+### `sesame idat-dump`
+
+Inspect a single raw `.idat`/`.idat.gz`. Default prints a summary header; `--tsv`
+emits `addr<TAB>mean<TAB>sd<TAB>nbeads` with no header; `--head N` limits rows.
+
+## The QCDPB pipeline
+
+`--prep` applies steps in the **order given**; `QCDPB` is the `openSesame`
+default. Each is an independent, self-contained port of the R function
+(referenced in `NUMERICS.md`).
+
+| code | step | what it does |
+|---|---|---|
+| `Q` | `qualityMask` | OR the platform's recommended probe mask (from the `.cm`) into the SigDF mask |
+| `C` | `inferInfiniumIChannel` | reassign each Infinium-I probe to its brighter color channel |
+| `D` | `dyeBiasNL` | nonlinear dye-bias correction — pull the red and green Inf-I distributions to a common curve |
+| `P` | `pOOBAH` | detection-p masking from the out-of-band + negative-control background; mask probes with `p > 0.05` |
+| `B` | `noob` | normal-exponential background subtraction |
+
+Pass any subset in any order (e.g. `--prep CD` for just channel + dye bias, or
+`--prep ""`/omit for raw betas). `Q`, `P`, and `B` read the `.cm` mask, so the
+platform must be present in the store.
+
+## Batch mode
+
+Passing **multiple prefixes** runs them in one process. The index and masks are
+parsed **once** and shared read-only; the independent per-sample work runs across
+a pthread pool (`--threads`, default = online CPUs).
+
+- **All prefixes must be the same platform** (the row space of the matrix).
+- Output is a `Probe_ID` matrix, one column per sample named by basename — or a
+  sample-major stream with `--f64`.
+- **Deterministic:** a sample's column is its position on the command line, so
+  output order never depends on scheduling, and `--threads 1` is byte-identical
+  to `--threads N`.
+- **Robust:** a sample that fails (missing/corrupt IDAT, wrong platform) becomes
+  an all-`NA` column with a warning and sets [exit status](#exit-status) 1 — one
+  bad IDAT never aborts the run.
+- **Scales past RAM:** the result store is an unlinked temp file that the OS pages
+  to disk, so a matrix larger than memory still works. For whole-cohort scale,
+  shard the sample list across invocations (pipelines already do this).
+
+```sh
+sesame betas --prep QCDPB --threads 8 run/S1 run/S2 run/S3 ... > cohort.betas.tsv
+```
+
+On three EPICv2 samples this is ~3× faster than three separate invocations (index
+parsed once, work parallelized); the gap widens with cohort size and core count.
+
+## Output formats
+
+- **Single prefix, text** (default): `Probe_ID<TAB>beta` per line, `NA` for
+  missing/masked probes.
+- **Multiple prefixes, text**: a header `Probe_ID<TAB><name1><TAB>…` (names are
+  prefix basenames) followed by one row per probe.
+- **`--f64`**: raw little-endian `double` (NA as `NaN`), no IDs — one block of
+  `nprobes` values per sample, in command-line order. Probe order is the ordering
+  table; sample order is argv.
+
+Use `--f64` for lossless comparison. Do **not** diff betas via text: R's parser
+does not correctly round 17-digit decimals, which manufactures a phantom ~1e-16
+disagreement (see `NUMERICS.md`).
+
+## Data files and the store
 
 Ordering tables and masks live in the annotation repo
 [`zhou-lab/InfiniumAnnotation`](https://github.com/zhou-lab/InfiniumAnnotation),
@@ -82,7 +230,7 @@ Fetch first pulls `SHA256SUMS`, verifies it against a digest compiled into this
 build (a hard trust anchor), then verifies every file against it; a file already
 present with the right digest is skipped.
 
-**Store location** (`sesame fetch` writes here) — one variable:
+**Store location** (`sesame fetch` writes here) — resolved in this order:
 
 | | |
 |---|---|
@@ -101,50 +249,31 @@ forever, silently, in a Nextflow job or a Docker build. `sesame fetch` is the
 only path that touches the network, so behaviour is identical with or without a
 TTY. If an index is missing, you get an error naming the exact command to run.
 
-## Use
+## Configuration
 
-```sh
-sesame idat-dump sample_Grn.idat            # summary of an IDAT
-sesame idat-dump --tsv sample_Grn.idat.gz   # addr<TAB>mean<TAB>sd<TAB>nbeads
+sesame-cli is configured by flags and a few environment variables; there is no
+config file.
 
-sesame fetch MSA                            # download MSA's ordering + mask into the store
-sesame fetch                                # all published platforms
-sesame index-info                           # store location, pinned tag, which platforms present
+| variable | effect |
+|---|---|
+| `SESAME_INDEX_DIR` | the store — where `fetch` writes and where indices/masks are looked up |
+| `XDG_CACHE_HOME` | fallback store root when `SESAME_INDEX_DIR` is unset and no `data/` sits beside the binary |
+| `TMPDIR` | where a batch's temp-file-backed result matrix is created (falls back to `/tmp`) |
+| `NO_COLOR` | disables ANSI color in `index-info` (also auto-off when stdout is not a TTY) |
+| `SESAME_TEST_IDATS` | test IDAT directory for `make test` (default `~/repo/InfiniumTestIDATs`) |
 
-# Betas. Platform is auto-detected from the IDAT bead count.
-sesame betas <prefix>                       # prep="" — equivalent to openSesame(prep="")
-sesame betas --prep QCDPB <prefix>          # full pipeline: Q, C, D, P, B in order
-sesame betas --index <ordering.tsv.gz> <prefix>   # bypass the store
-sesame betas --f64 <prefix> > betas.f64     # raw float64 (lossless)
+## Exit status
 
-# Batch: many samples in one process. The index and masks are parsed once and
-# samples run in parallel; output is a matrix (Probe_ID + one column per sample).
-sesame betas --prep QCDPB s1 s2 s3 ... > betas.tsv
-sesame betas --threads 8 --prep QCDPB *_prefixes > betas.tsv
-```
+| code | meaning |
+|---|---|
+| `0` | success |
+| `1` | a runtime error, or (in a batch) at least one sample failed — the matrix still prints, with `NA` columns for the failures |
+| `2` | usage error (bad flags/arguments) |
 
-`<prefix>` resolves `<prefix>_Grn.idat[.gz]` and `<prefix>_Red.idat[.gz]`. `Q`,
-`P`, and `B` require the platform's `.cm` mask in the store
-(`sesame fetch <platform>`).
+## Fidelity and validation
 
-**Batch mode** (multiple prefixes) amortizes the one-time index/mask parse across
-the whole cohort and runs the independent per-sample work across a pthread pool
-(`--threads`, default = online CPUs). All prefixes must be the same platform; the
-result is a `Probe_ID`-keyed matrix with one column per sample (named by
-basename), or a sample-major `--f64` stream. A sample that fails becomes an NA
-column (with a warning) and the exit code is 1 — one bad IDAT never aborts the
-run. The store is an unlinked temp file paged by the OS, so a matrix larger than
-RAM still works; for whole-cohort scale, shard the sample list (pipelines already
-do). Output order is the argv order regardless of thread scheduling, and
-`--threads 1` is byte-identical to `--threads N`.
-
-Use `--f64` (raw little-endian float64) for lossless output. Do **not** compare
-betas via text: R's parser does not correctly round 17-digit decimals, which
-manufactures a phantom ~1e-16 disagreement (see `NUMERICS.md`).
-
-## Validation
-
-R is the oracle, permanently. The golden ladder (`make test`):
+R is the oracle, permanently. Betas are compared as raw float64, never text. The
+golden ladder (`make test`):
 
 | level | gate | status |
 |---|---|---|
@@ -157,9 +286,45 @@ R is the oracle, permanently. The golden ladder (`make test`):
 | 4. Betas `prep=""` | **bit-identical** | ✅ 6/6 samples, 4.4M betas |
 | 5. Batch | each column == its single-sample run; `--threads 1 == N`; bad sample → NA column | ✅ byte-identical; ThreadSanitizer-clean |
 
-The IDAT parser eats untrusted files from GEO — `nFields`, per-field
-`byteOffset`, and `nSNPsRead` are all attacker-controlled, and the field table is
-a 10-byte *unpadded* record. It is fuzzed and run under ASan/UBSan.
+"Lineage" means the published ordering/mask is a newer data version than the
+installed `sesameData`, so a handful of probes differ for reasons that predate any
+arithmetic. Every such case is quantified and explained in `NUMERICS.md`, which
+carries one row per intentional difference from R (the `D1`–`D8` register).
+
+The IDAT parser eats untrusted files from GEO — `nFields`, per-field `byteOffset`,
+and `nSNPsRead` are all attacker-controlled, and the field table is a 10-byte
+*unpadded* record. It is fuzzed and run under ASan/UBSan.
+
+## Development
+
+```sh
+make                # build ./sesame
+make test           # the full golden ladder vs the R oracle
+make asan           # rebuild sesame's own objects under ASan + UBSan
+make fuzz-replay    # replay the IDAT-parser corpus under ASan/UBSan
+make index          # regenerate testdata/*.ordering.tsv.gz from sesameData (needs R)
+make clean
+```
+
+`make test` needs `Rscript` with the sesame R package installed (the differential
+oracle) and test IDATs at `$SESAME_TEST_IDATS` (default
+`~/repo/InfiniumTestIDATs`); the `Q` sub-test also wants the `yame` binary on
+`PATH` for its oracle and skips cleanly without it. Individual levels:
+`make test-idat test-betas test-prep test-qmask test-poobah test-noob test-batch`.
+
+Sanitizers compose via additive flags, so you can target anything, e.g. a
+ThreadSanitizer build of the batch path:
+
+```sh
+make clean
+make EXTRA_CFLAGS="-fsanitize=thread -g -O1" EXTRA_LDFLAGS="-fsanitize=thread"
+```
+
+Layout: `cli/` (the `sesame` command), `src/` (the `libsesame` core — IDAT
+reader, index, SigDF, prep steps, numerics, fetch/cache), `include/sesame.h` (the
+public API), `tests/` (shell drivers + R comparison oracles), `YAME/` (submodule).
+`NUMERICS.md` documents every intentional divergence from R and is required
+reading before changing a prep step.
 
 ## License
 
