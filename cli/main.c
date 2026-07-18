@@ -1176,8 +1176,8 @@ int main(int argc, char **argv)
         return cmd_fetch(argc - 2, argv + 2);
     if (strcmp(argv[1], "index-info") == 0)
         return cmd_index_info(argc - 2, argv + 2);
-    if (strcmp(argv[1], "version") == 0) {
-        puts("sesame 0.0.1-dev");
+    if (strcmp(argv[1], "version") == 0 || strcmp(argv[1], "--version") == 0) {
+        puts("sesame " SESAME_VERSION);
         return 0;
     }
     return usage();

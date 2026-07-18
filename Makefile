@@ -6,6 +6,7 @@
 #   make clean
 
 CC      ?= cc
+PREFIX  ?= /usr/local
 CFLAGS  ?= -O2 -g
 CFLAGS  += -DSESAME_HAVE_CURL -std=c11 -Wall -Wextra -Wpedantic -Wshadow -Wconversion \
            -Wstrict-prototypes -Iinclude
@@ -29,9 +30,16 @@ OBJ     := $(SRC:.c=.o)
 CLI_OBJ := $(CLI_SRC:.c=.o)
 BIN     := sesame
 
-.PHONY: all asan test test-idat test-betas test-prep test-qmask test-poobah test-noob test-batch test-qc test-dml test-cg test-attach test-cnv test-cbs index cnv-normals yame-lib fuzz fuzz-replay clean
+.PHONY: all asan test test-idat test-betas test-prep test-qmask test-poobah test-noob test-batch test-qc test-dml test-cg test-attach test-cnv test-cbs index cnv-normals yame-lib install fuzz fuzz-replay clean
 
 all: $(BIN)
+
+# Install the binary into $(PREFIX)/bin (honours $(DESTDIR)). Used by the conda
+# recipe; `make install PREFIX=/usr/local` for a manual install.
+install: $(BIN)
+	mkdir -p $(DESTDIR)$(PREFIX)/bin
+	cp -f $(BIN) $(DESTDIR)$(PREFIX)/bin/$(BIN)
+	chmod 755 $(DESTDIR)$(PREFIX)/bin/$(BIN)
 
 # Incrementally (re)build libyame.a from the checked-out submodule.
 yame-lib:

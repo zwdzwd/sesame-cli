@@ -11,6 +11,9 @@
 #ifndef SESAME_H
 #define SESAME_H
 
+/* Keep in sync with conda-recipe/meta.yaml and the git release tag. */
+#define SESAME_VERSION "0.1.0"
+
 #include <stdint.h>
 #include <stddef.h>
 #include <stdio.h>

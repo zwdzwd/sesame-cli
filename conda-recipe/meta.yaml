@@ -1,0 +1,56 @@
+{% set name = "sesame-cli" %}
+{% set version = "0.1.0" %}
+
+package:
+  name: {{ name }}
+  version: {{ version }}
+
+source:
+  # In-repo recipe: build the checked-out tree (with its vendored YAME/htslib
+  # submodule). CI builds the pushed commit; a release build = check out the
+  # vX.Y.Z tag, then conda build.
+  path: ..
+
+build:
+  number: 0
+  skip: true  # [win]
+
+requirements:
+  build:
+    - {{ compiler('c') }}
+    - make
+  host:
+    - zlib
+    - libcurl
+  run:
+    # zlib and libcurl each carry run_exports that pin the runtime automatically;
+    # listed for clarity.
+    - zlib
+    - libcurl
+
+test:
+  commands:
+    - sesame version
+
+about:
+  home: https://github.com/zwdzwd/sesame-cli
+  license: AGPL-3.0-or-later
+  license_family: AGPL
+  license_file: LICENSE
+  summary: Standalone C reimplementation of sesame's Infinium methylation preprocessing (IDAT -> betas), with QC, DML, and CNV.
+  description: |
+    sesame-cli is a dependency-light C program that reproduces the sesame /
+    openSesame Infinium DNA-methylation workflow without R or Bioconductor:
+    read IDAT pairs, run the QCDPB preprocessing (qualityMask,
+    inferInfiniumIChannel, dyeBiasNL, pOOBAH, noob), and emit betas as YAME
+    .cg files. It also computes the sesameQC panel, per-probe differential
+    methylation (DML), and copy-number segmentation (log2 ratios, genome bins,
+    and circular binary segmentation). The IDAT reader and un-preprocessed betas
+    are bit-identical to the R package; other steps match to documented
+    tolerances (see NUMERICS.md). Platform annotations are fetched on demand.
+    The only runtime dependencies are zlib and libcurl.
+  dev_url: https://github.com/zwdzwd/sesame-cli
+
+extra:
+  recipe-maintainers:
+    - zwdzwd
