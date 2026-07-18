@@ -1,21 +1,20 @@
 # sesame-cli
 
-`sesame` — a standalone C implementation of Infinium preprocessing.
-
 A standalone C implementation of [sesame](https://github.com/zwdzwd/sesame)'s
 basic Infinium DNA methylation preprocessing: **IDAT → betas**, with no R and no
 Bioconductor. Builds one binary, `sesame`.
 
-> Status: **P0 done, P1 partial.** `sesame betas` produces beta values that are
-> **bit-identical to R** with `prep=""`. Preprocessing (QCDPB) is NOT yet
-> implemented -- that is P2-P4.
+> **Status.** The IDAT reader and `betas` with no preprocessing are
+> **bit-identical to R**. Of the `QCDPB` prep steps, **Q, C, D** are implemented
+> (`Q` self-consistent vs R by mask lineage; `C` channel-identical; `D` within
+> ~2 ULP); **P and B** are next. See the validation table and `NUMERICS.md`.
 
 ## Why
 
 `openSesame` needs R + Bioconductor + `sesameData` (ExperimentHub) +
 `preprocessCore`/`MASS`/`BiocParallel`. That blocks:
 
-- **Pipeline deployment** — a static binary for Nextflow/Snakemake/cloud.
+- **Pipeline deployment** — a mostly-static binary for Nextflow/Snakemake/cloud.
 - **Scale** — 10k–100k+ samples. The math is already compiled; the glue is not
   (data.frame copies per prep step, `match()` on ~937k *strings*).
 - **Release cadence** — Bioconductor ships only release+devel, so patches never
@@ -35,52 +34,53 @@ sex/ethnicity) — those stay in R.
 
 ## Build
 
-Only dependency is zlib.
+Dependencies: a C compiler + `make`, **zlib**, **libcurl**, and the **YAME**
+submodule (bundled htslib) — linked in to read `.cm` mask files. Both sesame-cli
+and YAME are AGPL-3.0, so linking is clean.
 
 ```sh
-make            # build ./sesame
-make test       # golden tests vs the R oracle (needs Rscript + sesame)
-                # uses $SESAME_TEST_IDATS (default ~/repo/InfiniumTestIDATs)
-                # for real full-size arrays, in addition to sesameData extdata
-make asan       # build with ASan/UBSan
-make fuzz       # libFuzzer target (Linux/clang; Apple clang has no libFuzzer)
-make fuzz-replay  # corpus replayer under ASan/UBSan (works everywhere)
+git clone --recurse-submodules <repo>          # or: git submodule update --init --recursive
+make                # builds libyame.a from the submodule, then ./sesame
+make test           # golden tests vs the R oracle (needs Rscript + the sesame R package;
+                    # the Q test also needs the `yame` binary on PATH)
+                    # uses $SESAME_TEST_IDATS (default ~/repo/InfiniumTestIDATs)
+make asan           # sesame's own objects under ASan/UBSan
+make fuzz-replay    # IDAT-parser corpus replayer under ASan/UBSan
 ```
 
-## Index files
+At **runtime** the binary needs only zlib and libcurl (YAME/htslib are static);
+`yame` does not need to be installed.
 
-Ordering tables are published as **per-platform release assets**:
+## Data files
 
-```
-https://github.com/zwdzwd/sesame-cli/releases/download/EPICv2.ordering.v1/EPICv2.ordering.tsv.gz
-                                                       ^^^^^^^^^^^^^^^ tag carries the version
-```
-
-The filename is stable across versions — the tag is the version, so updating one
-platform means one new tag and one registry row; the others are untouched and are
-not re-downloaded. Assets are immutable: new data always means a new tag, never a
-re-upload under an existing one.
-
-Retrieval is `(tag, file)`, and the cache mirrors the URL so pinned versions coexist:
+Ordering tables and masks live in the annotation repo
+[`zhou-lab/InfiniumAnnotation`](https://github.com/zhou-lab/InfiniumAnnotation),
+one subfolder per platform, versioned by **git tag**:
 
 ```
-~/.cache/sesame/EPICv2.ordering.v1/EPICv2.ordering.tsv.gz
-~/.cache/sesame/EPICv2.ordering.v2/EPICv2.ordering.tsv.gz
+https://github.com/zhou-lab/InfiniumAnnotation/raw/<tag>/<platform>/<file>
+                                                   ^^^^^ the version    e.g. v1/MSA/MSA.ordering.tsv.gz
 ```
 
-The store keeps every version side by side and marks the active one with a
-symlink, so versions coexist and switching is instant:
+Each platform folder holds its ordering table, its `.cm` mask (+ `.idx`), and a
+`SHA256SUMS`. This build pins tag **v1**. *(Only MSA is published at v1 so far;
+the others error cleanly until published, and still auto-detect by bead count.)*
+
+`sesame fetch <platform>` downloads that platform's whole folder into the local
+**store**, mirroring the remote exactly:
 
 ```
-<store>/EPICv2.ordering.v1/EPICv2.ordering.tsv.gz
-<store>/EPICv2.ordering.v2/EPICv2.ordering.tsv.gz
-<store>/EPICv2.ordering.tsv.gz -> EPICv2.ordering.v2/...   # active
+<store>/MSA/SHA256SUMS            byte-identical copy of the remote
+<store>/MSA/MSA.ordering.tsv.gz
+<store>/MSA/MSA.hg38.mask.cm(.idx)
 ```
 
-`sesame use EPICv2 EPICv2.ordering.v1` repoints it; `sesame index-info` shows
-what is active. A file you place there by hand is honoured and never clobbered.
+so `cd <store>/MSA && shasum -a 256 -c SHA256SUMS` verifies the store by hand.
+Fetch first pulls `SHA256SUMS`, verifies it against a digest compiled into this
+build (a hard trust anchor), then verifies every file against it; a file already
+present with the right digest is skipped.
 
-**Store location** — one variable, since the store is managed rather than a cache:
+**Store location** (`sesame fetch` writes here) — one variable:
 
 | | |
 |---|---|
@@ -88,61 +88,64 @@ what is active. A file you place there by hand is honoured and never clobbered.
 | `<dir of the binary>/data` | a checkout — found from **any** working directory |
 | `$XDG_CACHE_HOME/sesame`, `~/Library/Caches/sesame`, `~/.cache/sesame` | fallback |
 
-The binary-relative default is why a source checkout needs no configuration,
+The binary-relative default is why a source checkout finds `data/` from any cwd,
 while an installed binary (no `data/` beside it) falls through to the XDG store.
 
-**Lookup order**: `--index <path>` > `<store>/<file>` (the active link) > `./` >
-`./data` > `<store>/<pinned tag>/<file>`.
+**Lookup order for an ordering table**: `--index <path>` >
+`<store>/<platform>/<platform>.ordering.tsv.gz` > `./<platform>.ordering.tsv.gz`.
 
 **sesame never downloads implicitly and never prompts** — a prompt would hang
-forever, silently, in a Nextflow job or a Docker build. `sesame fetch` is the only
-path that touches the network, so behaviour is identical with or without a TTY.
-Downloads are verified against a pinned sha256; a mismatch is fatal.
+forever, silently, in a Nextflow job or a Docker build. `sesame fetch` is the
+only path that touches the network, so behaviour is identical with or without a
+TTY. If an index is missing, you get an error naming the exact command to run.
 
 ## Use
 
 ```sh
-sesame idat-dump sample_Grn.idat            # summary
+sesame idat-dump sample_Grn.idat            # summary of an IDAT
 sesame idat-dump --tsv sample_Grn.idat.gz   # addr<TAB>mean<TAB>sd<TAB>nbeads
 
-sesame index-info                           # cache dir + which platforms are present
-sesame fetch EPICv2                         # download the pinned index
-sesame fetch --tag EPICv2.ordering.v2 EPICv2.ordering.tsv.gz   # explicit (tag, file)
+sesame fetch MSA                            # download MSA's ordering + mask into the store
+sesame fetch                                # all published platforms
+sesame index-info                           # store location, pinned tag, which platforms present
 
-# Betas (no preprocessing yet -- equivalent to openSesame(prefix, prep=""))
-sesame betas <prefix>                       # platform auto-detected from bead count
-sesame betas --index data/EPICv2.ordering.tsv.gz <prefix>
-sesame betas --f64 <prefix> > betas.f64     # lossless
+# Betas. Platform is auto-detected from the IDAT bead count.
+sesame betas <prefix>                       # prep="" — equivalent to openSesame(prep="")
+sesame betas --prep QCD <prefix>            # apply Q, C, D in order
+sesame betas --index <ordering.tsv.gz> <prefix>   # bypass the store
+sesame betas --f64 <prefix> > betas.f64     # raw float64 (lossless)
 ```
 
-Both plain `.idat` and gzipped `.idat.gz` are read through the same path.
+`<prefix>` resolves `<prefix>_Grn.idat[.gz]` and `<prefix>_Red.idat[.gz]`. `Q`
+requires the platform's `.cm` mask in the store (`sesame fetch <platform>`).
 
-Use `--f64` (raw little-endian float64) for lossless output. Do not compare
+Use `--f64` (raw little-endian float64) for lossless output. Do **not** compare
 betas via text: R's parser does not correctly round 17-digit decimals, which
-manufactures a phantom ~1e-16 disagreement. See `NUMERICS.md`.
+manufactures a phantom ~1e-16 disagreement (see `NUMERICS.md`).
 
 ## Validation
 
-R is the oracle forever, not for one release. The golden ladder:
+R is the oracle, permanently. The golden ladder (`make test`):
 
-| level | gate |
-|---|---|
-| 1. IDAT reader | `IlluminaID`/`Mean`/`SD`/`NBeads` **bit-identical**. No tolerance. ✅ passing — 33/33 files, ~20.4M bead records, 9 platforms (EPIC, EPIC+, EPICv2, HM27, HM450, Mammal40, MM285, MSA), plain and gzipped |
-| 2. Index | exact set + order equality vs `sesameAnno_buildAddressFile()` / `getMask()` / `backgroundMask()` — ✅ ordering table exported from R and verified via the beta gate below |
-| 3. Per-step `Q C D P B` | applied independently against a fixed SigDF |
-| 4. End-to-end betas (`prep=""`) | ✅ passing — **bit-identical**, 6/6 samples, 4.4M betas across HM450/EPIC/EPICv2/MSA |
-| 4b. End-to-end betas (`QCDPB`) | blocked on P2-P4 |
+| level | gate | status |
+|---|---|---|
+| 1. IDAT reader | `IlluminaID`/`Mean`/`SD`/`NBeads` **bit-identical**, no tolerance | ✅ 33/33 files, ~20.4M records, 9 platforms, plain + gz |
+| 3. Per-step `C` | channel calls identical | ✅ 5/5 samples |
+| 3. Per-step `D` | max relative Δ ≤ 1e-12 (D8 clean-room qnorm) | ✅ ~2 ULP |
+| 3. Per-step `Q` | masks exactly the recommended-track union of the `.cm` | ✅ self-consistent (0.982 Jaccard vs R — mask lineage, `NUMERICS.md`) |
+| 4. Betas `prep=""` | **bit-identical** | ✅ 6/6 samples, 4.4M betas |
+| `P`, `B` | — | ⬜ not yet implemented |
 
 The IDAT parser eats untrusted files from GEO — `nFields`, per-field
-`byteOffset`, and `nSNPsRead` are all attacker-controlled, and the field table
-is a 10-byte *unpadded* record. It is fuzzed and run under ASan/UBSan.
+`byteOffset`, and `nSNPsRead` are all attacker-controlled, and the field table is
+a 10-byte *unpadded* record. It is fuzzed and run under ASan/UBSan.
 
 ## License
 
 **AGPL-3.0-or-later.** See `LICENSE`. This matches the wider Zhou Lab toolchain
-(YAME is also AGPL-3.0), which is what lets sesame-cli link those tools directly — e.g.
-linking YAME (a git submodule) to read `.cm` mask files in-process — without a
-licence conflict.
+(YAME is also AGPL-3.0), which is what lets sesame-cli link those tools directly —
+e.g. linking YAME (a git submodule) to read `.cm` mask files in-process — without
+a licence conflict.
 
 sesame (the R package) is MIT and is a *separate program*; sesame-cli linking or
 invoking it, or vice versa, is unaffected by this choice.
