@@ -90,6 +90,9 @@ sesame betas --prep QCDPB path/to/sample > sample.betas.tsv
 # 4. A whole cohort in one parallel process -> a Probe_ID x sample matrix.
 #    A prefix is a path stem; derive them from the Grn files if needed.
 sesame betas --prep QCDPB $(ls idats/*_Grn.idat.gz | sed 's/_Grn.idat.gz//') > cohort.betas.tsv
+
+# 5. Per-sample QC metrics (detection success rate + the sesameQC panel).
+sesame qc path/to/sample                            # one sample -> one TSV row
 ```
 
 Output row `Probe_ID<TAB>beta`, `NA` for missing/masked probes. A `<prefix>`
@@ -99,6 +102,7 @@ resolves `<prefix>_Grn.idat[.gz]` and `<prefix>_Red.idat[.gz]`.
 
 ```
 sesame betas      [options] <prefix> [<prefix> ...]   # IDAT -> betas
+sesame qc         [options] <prefix> [<prefix> ...]   # IDAT -> QC metrics (TSV)
 sesame fetch      [<platform>] [--force]              # download data into the store
 sesame index-info                                     # show store + pinned tag + platforms
 sesame idat-dump  [--head N] [--tsv] <file.idat[.gz]> # inspect a raw IDAT
@@ -124,6 +128,25 @@ table; multiple prefixes print a matrix (see [Batch mode](#batch-mode)).
 
 `Q`, `P`, and `B` need the platform's `.cm` mask in the store; run
 `sesame fetch <platform>` first.
+
+### `sesame qc`
+
+Per-sample QC metrics — the `sesameQC_calcStats` panel — as a TSV: one row per
+sample, one column per metric, headline being **detection success rate**
+(`frac_dt`, the fraction of probes with pOOBAH detection p ≤ 0.05). Computed from
+the raw signal; the detection and beta groups run pOOBAH internally, so the
+platform's `.cm` mask must be in the store. Batch-parallel like `betas`; a failed
+sample becomes an all-`NA` row. Flags: `--index`, `--platform`, `--min-beads`,
+`--threads`.
+
+```sh
+sesame qc --threads 8 $(ls idats/*_Grn.idat.gz | sed 's/_Grn.idat.gz//') > cohort.qc.tsv
+```
+
+The panel covers detection, probe counts, signal intensity (in/out-of-band),
+Infinium-I channel switches, dye bias (`RGdistort`), and the beta distribution —
+mirroring R's `sesameQC_calcStats`. See `NUMERICS.md` for the two noted behaviors
+(`num_dtna` under the D2 fix; the beta group computed after `D→B→P`).
 
 ### `sesame fetch`
 
@@ -285,6 +308,7 @@ golden ladder (`make test`):
 | 3. Per-step `B` | `normExpSignal`/`huber` vs R on identical inputs; betas on raw-identical probes | ✅ arithmetic ≤ few ULP; betas median 6.5e-6, max 1.6e-3 (lineage) |
 | 4. Betas `prep=""` | **bit-identical** | ✅ 6/6 samples, 4.4M betas |
 | 5. Batch | each column == its single-sample run; `--threads 1 == N`; bad sample → NA column | ✅ byte-identical; ThreadSanitizer-clean |
+| 6. QC panel | every `sesameQC_calcStats` metric within lineage scale | ✅ 65/65 metrics; worst 1.75e-2 (small count, `NUMERICS.md`) |
 
 "Lineage" means the published ordering/mask is a newer data version than the
 installed `sesameData`, so a handful of probes differ for reasons that predate any

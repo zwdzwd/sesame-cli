@@ -169,6 +169,36 @@ control (lowest signal, most sensitive). An earlier real bug — applying the wr
 channel's fit — moved these same betas by 0.4–0.7, so the gate cleanly separates
 lineage from error.
 
+## QC panel — matches sesameQC to lineage scale; two noted behaviors
+
+`sesame qc` computes the `sesameQC_calcStats` panel (detection, numProbes,
+intensity, channel, dyeBias, betas) from a raw SigDF. It is not bit-identical to
+R for the same reason `P`/`B` are not — the published ordering/mask is a newer
+lineage than sesameData (fewer probes, different background mask), so probe
+counts, detection, and beta stats all shift by a handful of probes. The test
+(`tests/run_qc.sh`) pins every metric to within that scale: on MSA all 65 metrics
+agree, worst gated relative error `1.75e-2` on the small `G->R` channel-switch
+category (an absolute difference of 4 probes); intensity means, probe counts, and
+detection fractions match to `< 1e-3`. A formula bug would be far off, not off by
+a dozen probes.
+
+Two behaviors are faithful to R but worth stating:
+
+- **`num_dtna` and the D2 fix.** `sesameQC_calcStats_detection` derives
+  "N. Probes w/ Missing Raw Intensity" from `sum(is.na(pOOBAH(sdf, return.pval)))`.
+  Our own D2 fix to R (`R/detection.R`) makes pOOBAH set those `NA`s to `1`, so in
+  the current R package `num_dtna` is **0**. sesame-cli instead reports the metric
+  as intended — probes with no usable signal in *either* channel — computed
+  directly, independent of pOOBAH's NA convention. The QC test reports these two
+  fields (`num_dtna`, `frac_dtna`) but does not gate them.
+
+- **The beta group runs `D->B->P`.** `sesameQC_calcStats_betas` computes
+  `getBetas(pOOBAH(noob(dyeBiasNL(sdf))))` — i.e. the beta-distribution stats are
+  taken after dye-bias, noob, and detection masking, not on the raw signal like
+  the other groups. sesame-cli reproduces that per-sample on a copy, so `num_na`
+  equals the `P`-step mask count (9433 R / 9445 C on MSA — the same lineage split
+  the `P` test reports).
+
 ## Observations about the R implementation (not divergences)
 
 **Ordering files are sorted by Probe_ID under R's *locale* collation, not byte

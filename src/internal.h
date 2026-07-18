@@ -64,6 +64,9 @@ void sesame__huber(double *y, int32_t n, double *scratch,
                    double k, double tol, double *mu_out, double *s_out,
                    int *mad0);
 
+/* Case-insensitive: does Probe_ID contain "negative" (R's neg-control grep)? */
+int sesame__is_neg_control(const char *id);
+
 /* <dir of the binary>/data if it exists; 0 on success. */
 int sesame__exe_data_dir(char *out, size_t n);
 

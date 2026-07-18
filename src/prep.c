@@ -56,7 +56,7 @@ int sesame_prep_quality_mask(sesame_sigdf_t *s, const uint8_t *qmask,
  * sibling ELBAR sets such p to 1.0. We do the same: pmin ignores an NA channel,
  * and if BOTH are NA the probe is masked (p = 1).
  */
-static int is_neg_control(const char *id)
+int sesame__is_neg_control(const char *id)
 {
     /* case-insensitive substring "negative" (R greps tolower(Probe_ID)) */
     const char *n = "negative";
@@ -114,7 +114,7 @@ int sesame_prep_poobah(sesame_sigdf_t *s, const uint8_t *bgmask, int32_t bn,
     }
     if (combine_neg) {
         for (i = 0; i < n; i++) {
-            if (is_neg_control(sesame_index_probe_id(s->ix, i))) {
+            if (sesame__is_neg_control(sesame_index_probe_id(s->ix, i))) {
                 bgG[nG++] = s->UG[i];
                 bgR[nR++] = s->UR[i];
             }
@@ -583,7 +583,7 @@ int sesame_prep_noob(sesame_sigdf_t *s, const uint8_t *bgmask, int32_t bn,
     }
     if (combine_neg) {
         for (i = 0; i < n; i++)
-            if (is_neg_control(sesame_index_probe_id(s->ix, i))) {
+            if (sesame__is_neg_control(sesame_index_probe_id(s->ix, i))) {
                 bgG[nbG++] = s->UG[i]; bgR[nbR++] = s->UR[i];
             }
     }

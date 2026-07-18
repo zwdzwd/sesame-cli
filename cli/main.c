@@ -56,6 +56,14 @@ static int usage(void)
       "      count and the index looked up in $SESAME_INDEX_DIR, ., ./data,\n"
       "      then the cache. sesame never downloads implicitly.\n"
       "\n"
+      "  sesame qc [--index <ordering.tsv.gz>] [--platform P] [--min-beads N]\n"
+      "            [--threads N] <prefix> [<prefix> ...]\n"
+      "      Per-sample QC metrics (the sesameQC panel) as a TSV: one row per\n"
+      "      sample, one column per metric, headline being detection success\n"
+      "      rate (%% Detection Success). Computed from the raw signal; runs\n"
+      "      pOOBAH internally, so it needs the platform's .cm mask in the store.\n"
+      "      Batch-parallel like betas.\n"
+      "\n"
       "  sesame fetch [<platform>] [--force]\n"
       "      Download <platform> (default: all published) at the pinned tag.\n"
       "      Verifies every file against its digest; a file already present and\n"
@@ -541,6 +549,180 @@ out:
     return rc;
 }
 
+/* ------------------------------------------------------------------ qc ---
+ *
+ * The sesameQC panel per sample, as a TSV (one row per sample). Batch-parallel
+ * like `betas`; the per-sample result is a small struct, so no matrix store. */
+
+typedef struct {
+    char           **prefixes;
+    int32_t          nsamp;
+    const sesame_index_t *ix;
+    const char      *plat;
+    const uint8_t   *bgmask;
+    int32_t          bgn;
+    int              min_beads;
+    sesame_qc_t     *res;
+    pthread_mutex_t  lock;
+    int32_t          next, nfail;
+} qc_ctx;
+
+static void *qc_worker(void *arg)
+{
+    qc_ctx *c = (qc_ctx *)arg;
+    for (;;) {
+        int32_t j;
+        sesame_sigdf_t *s = NULL;
+        sesame_err_t e;
+        int rc;
+
+        pthread_mutex_lock(&c->lock);
+        j = c->next < c->nsamp ? c->next++ : -1;
+        pthread_mutex_unlock(&c->lock);
+        if (j < 0) break;
+
+        rc = build_sigdf_for(c->prefixes[j], c->ix, c->plat, c->min_beads, &s, &e);
+        if (rc == SESAME_OK)
+            rc = sesame_qc_calc(s, c->bgmask, c->bgn, &c->res[j], &e);
+        sesame_sigdf_free(s);
+
+        if (rc != SESAME_OK) {                 /* leave the row as pre-filled NaN */
+            pthread_mutex_lock(&c->lock);
+            c->nfail++;
+            fprintf(stderr, "sesame: %s: %s\n", path_basename(c->prefixes[j]), e.msg);
+            pthread_mutex_unlock(&c->lock);
+        }
+    }
+    return NULL;
+}
+
+static int cmd_qc(int argc, char **argv)
+{
+    const char *idxpath = NULL, *platform = NULL, *plat = NULL;
+    int min_beads = 0, nthreads = 0, i, rc = 1;
+    char **prefixes = NULL;
+    int32_t nsamp = 0, bgn = 0;
+    char resolved[4096];
+    sesame_index_t *ix = NULL;
+    uint8_t *bgmask = NULL;
+    sesame_qc_t *res = NULL;
+    sesame_err_t e;
+
+    prefixes = (char **)malloc((size_t)(argc + 1) * sizeof(char *));
+    if (!prefixes) { fprintf(stderr, "sesame: out of memory\n"); return 1; }
+
+    for (i = 0; i < argc; i++) {
+        if (strcmp(argv[i], "--index") == 0 && i + 1 < argc) idxpath = argv[++i];
+        else if (strcmp(argv[i], "--platform") == 0 && i + 1 < argc) platform = argv[++i];
+        else if (strcmp(argv[i], "--min-beads") == 0 && i + 1 < argc)
+            min_beads = (int)strtol(argv[++i], NULL, 10);
+        else if ((strcmp(argv[i], "--threads") == 0 || strcmp(argv[i], "-t") == 0)
+                 && i + 1 < argc)
+            nthreads = (int)strtol(argv[++i], NULL, 10);
+        else if (argv[i][0] == '-' && argv[i][1] != '\0') {
+            fprintf(stderr, "sesame: unknown option %s\n", argv[i]);
+            free(prefixes); return usage();
+        } else prefixes[nsamp++] = argv[i];
+    }
+    if (nsamp == 0) { free(prefixes); return usage(); }
+
+    if (!idxpath) {
+        if (!platform) {
+            char gp[4096]; sesame_idat_t *g0 = NULL; int32_t beads;
+            if (resolve_idat(prefixes[0], "Grn", gp, sizeof gp)) {
+                fprintf(stderr, "sesame: Grn IDAT does not exist for %s\n", prefixes[0]);
+                goto out;
+            }
+            if (sesame_idat_read(gp, &g0, &e) != SESAME_OK) {
+                fprintf(stderr, "sesame: %s\n", e.msg); goto out;
+            }
+            beads = g0->n;
+            platform = sesame_platform_from_beads(beads);
+            sesame_idat_free(g0);
+            if (!platform) {
+                fprintf(stderr, "sesame: cannot identify platform from %d beads.\n"
+                    "  pass --platform <P> or --index <path>.\n", beads);
+                goto out;
+            }
+            fprintf(stderr, "sesame: detected %s (%d beads)\n", platform, beads);
+        }
+        if (sesame_index_locate(platform, resolved, sizeof resolved) != 0) {
+            char help[1024];
+            sesame_index_missing_help(platform, help, sizeof help);
+            fprintf(stderr, "sesame: %s\n", help); goto out;
+        }
+        idxpath = resolved;
+    }
+
+    if (!(ix = sesame_index_open(idxpath, &e))) {
+        fprintf(stderr, "sesame: %s\n", e.msg); goto out;
+    }
+    plat = platform;
+
+    /* QC's detection and beta groups run pOOBAH internally, so the mask is
+     * mandatory (unlike `betas` with prep=""). */
+    if (!plat) {
+        fprintf(stderr, "sesame: qc needs a known platform for the mask; "
+                        "pass --platform with --index.\n");
+        goto out;
+    }
+    if (sesame_background_mask(plat, &bgmask, &bgn, &e) != SESAME_OK) {
+        fprintf(stderr, "sesame: %s\n", e.msg); goto out;
+    }
+
+    res = (sesame_qc_t *)malloc((size_t)nsamp * sizeof(sesame_qc_t));
+    if (!res) { fprintf(stderr, "sesame: out of memory\n"); goto out; }
+    /* pre-fill every field NaN so a failed sample prints an all-NA row */
+    {
+        size_t k, nd = sizeof(sesame_qc_t) / sizeof(double);
+        double *p = (double *)res;
+        for (k = 0; k < (size_t)nsamp * nd; k++) p[k] = NAN;
+    }
+
+    {
+        qc_ctx ctx;
+        long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
+        int T = nthreads > 0 ? nthreads : (ncpu > 0 ? (int)ncpu : 1);
+        pthread_t *th = NULL;
+        int spawned = 0, t;
+
+        if (T > nsamp) T = nsamp;
+        if (T < 1) T = 1;
+
+        ctx.prefixes = prefixes; ctx.nsamp = nsamp; ctx.ix = ix; ctx.plat = plat;
+        ctx.bgmask = bgmask; ctx.bgn = bgn; ctx.min_beads = min_beads;
+        ctx.res = res; ctx.next = 0; ctx.nfail = 0;
+        pthread_mutex_init(&ctx.lock, NULL);
+
+        if (T > 1) th = (pthread_t *)malloc((size_t)(T - 1) * sizeof(pthread_t));
+        if (th)
+            for (t = 0; t < T - 1; t++)
+                if (pthread_create(&th[spawned], NULL, qc_worker, &ctx) == 0) spawned++;
+        qc_worker(&ctx);
+        for (t = 0; t < spawned; t++) pthread_join(th[t], NULL);
+        free(th);
+        pthread_mutex_destroy(&ctx.lock);
+
+        printf("sample\t%s\n", sesame_qc_header());
+        for (i = 0; i < nsamp; i++) {
+            char row[8192];
+            if (sesame_qc_format_row(&res[i], row, sizeof row) < 0)
+                { fprintf(stderr, "sesame: qc row too long\n"); goto out; }
+            printf("%s\t%s\n", path_basename(prefixes[i]), row);
+        }
+        if (ctx.nfail)
+            fprintf(stderr, "sesame: %d of %d samples failed (NA rows)\n", ctx.nfail, nsamp);
+        rc = ctx.nfail ? 1 : 0;
+    }
+
+out:
+    free(res);
+    free(bgmask);
+    free(prefixes);
+    sesame_index_close(ix);
+    return rc;
+}
+
 static int cmd_idat_dump(int argc, char **argv)
 {
     const char *path = NULL;
@@ -597,6 +779,8 @@ int main(int argc, char **argv)
         return cmd_idat_dump(argc - 2, argv + 2);
     if (strcmp(argv[1], "betas") == 0)
         return cmd_betas(argc - 2, argv + 2);
+    if (strcmp(argv[1], "qc") == 0)
+        return cmd_qc(argc - 2, argv + 2);
     if (strcmp(argv[1], "fetch") == 0)
         return cmd_fetch(argc - 2, argv + 2);
     if (strcmp(argv[1], "index-info") == 0)

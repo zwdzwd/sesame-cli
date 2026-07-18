@@ -224,6 +224,61 @@ int sesame_prep_noob(sesame_sigdf_t *sdf, const uint8_t *bgmask, int32_t bn,
 int sesame_get_betas(const sesame_sigdf_t *sdf, int apply_mask,
                      double *out, sesame_err_t *err);
 
+/* ----------------------------------------------------------------- QC ---
+ *
+ * The sesameQC panel (R sesameQC_calcStats), computed from a *raw* SigDF. Each
+ * metric is one field, tagged I (integer count) or D (real) for formatting. The
+ * groups mirror R/QC.R: detection, numProbes, intensity, channel, dyeBias, betas.
+ *
+ * Two faithful-but-noted differences (see NUMERICS.md):
+ *  - the detection group runs pOOBAH internally, so it carries the same mask
+ *    lineage as `P`, and `num_dtna` counts probes with no signal in *either*
+ *    channel (the D2 fix makes R's pOOBAH no longer return NA there);
+ *  - the betas group is computed on a D->B->P-processed copy, exactly as
+ *    sesameQC_calcStats_betas does (getBetas(pOOBAH(noob(dyeBiasNL(sdf))))).
+ */
+#define SESAME_QC_FIELDS(_) \
+    _(I, num_dtna)      _(D, frac_dtna) \
+    _(I, num_dt)        _(D, frac_dt) \
+    _(I, num_dt_mk)     _(D, frac_dt_mk) \
+    _(I, num_dt_cg)     _(D, frac_dt_cg) \
+    _(I, num_dt_ch)     _(D, frac_dt_ch) \
+    _(I, num_dt_rs)     _(D, frac_dt_rs) \
+    _(I, num_probes)    _(I, num_probes_II) _(I, num_probes_IR) _(I, num_probes_IG) \
+    _(I, num_probes_cg) _(I, num_probes_ch) _(I, num_probes_rs) \
+    _(D, mean_intensity)   _(D, mean_intensity_MU) _(D, mean_ii) \
+    _(D, mean_inb_grn)     _(D, mean_inb_red) \
+    _(D, mean_oob_grn)     _(D, mean_oob_red) \
+    _(I, na_intensity_M)   _(I, na_intensity_U) \
+    _(I, na_intensity_ig)  _(I, na_intensity_ir)  _(I, na_intensity_ii) \
+    _(I, InfI_switch_R2R)  _(I, InfI_switch_G2G) \
+    _(I, InfI_switch_R2G)  _(I, InfI_switch_G2R) \
+    _(D, medR) _(D, medG) _(D, topR) _(D, topG) _(D, RGratio) _(D, RGdistort) \
+    _(D, mean_beta)    _(D, median_beta)    _(D, frac_unmeth)    _(D, frac_meth)    _(I, num_na)    _(D, frac_na) \
+    _(D, mean_beta_cg) _(D, median_beta_cg) _(D, frac_unmeth_cg) _(D, frac_meth_cg) _(I, num_na_cg) _(D, frac_na_cg) \
+    _(D, mean_beta_ch) _(D, median_beta_ch) _(D, frac_unmeth_ch) _(D, frac_meth_ch) _(I, num_na_ch) _(D, frac_na_ch) \
+    _(D, mean_beta_rs) _(D, median_beta_rs) _(D, frac_unmeth_rs) _(D, frac_meth_rs) _(I, num_na_rs) _(D, frac_na_rs)
+
+typedef struct {
+#define SESAME_QC_DECL(t, nm) double nm;
+    SESAME_QC_FIELDS(SESAME_QC_DECL)
+#undef SESAME_QC_DECL
+} sesame_qc_t;
+
+/* Compute the panel from a raw SigDF. bgmask is the background mask (as for P/B);
+ * required, since the detection and beta groups run pOOBAH internally. Does not
+ * modify sdf. */
+int sesame_qc_calc(const sesame_sigdf_t *sdf, const uint8_t *bgmask, int32_t bn,
+                   sesame_qc_t *out, sesame_err_t *err);
+
+/* Tab-separated metric-name header, no leading sample column and no trailing
+ * tab. */
+const char *sesame_qc_header(void);
+
+/* Format the metric values tab-separated into buf (integer metrics as integers,
+ * reals as %.10g, NaN as "NA"). Returns the length written, or -1 if truncated. */
+int sesame_qc_format_row(const sesame_qc_t *q, char *buf, size_t n);
+
 #ifdef __cplusplus
 }
 #endif
