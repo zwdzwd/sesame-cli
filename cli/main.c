@@ -64,6 +64,16 @@ static int usage(void)
       "      pOOBAH internally, so it needs the platform's .cm mask in the store.\n"
       "      Batch-parallel like betas.\n"
       "\n"
+      "  sesame dml --betas <matrix.tsv> (--formula '~a+b' --meta <s.tsv>\n"
+      "             | --design <X.tsv>) [--threads N]\n"
+      "      Per-probe differential methylation: OLS of each probe's betas on the\n"
+      "      design, with per-coefficient t-tests, a holdout F-test per\n"
+      "      categorical variable, effect sizes, and BH-adjusted p-values. The\n"
+      "      betas matrix is `sesame betas` batch output (Probe_ID + one column\n"
+      "      per sample); --meta is a TSV whose first column matches those sample\n"
+      "      names. --formula takes main effects only (categorical auto-dummied);\n"
+      "      use --design to pass a pre-built numeric design for interactions.\n"
+      "\n"
       "  sesame fetch [<platform>] [--force]\n"
       "      Download <platform> (default: all published) at the pinned tag.\n"
       "      Verifies every file against its digest; a file already present and\n"
@@ -723,6 +733,438 @@ out:
     return rc;
 }
 
+/* ----------------------------------------------------------------- dml ---
+ *
+ * Per-probe differential methylation from a betas matrix + sample metadata. The
+ * heavy per-probe OLS lives in src/dml.c; here we parse the inputs, build the
+ * design (a simple main-effects formula, or an explicit matrix), fit in
+ * parallel, BH-adjust, and emit a TSV. */
+
+/* Read one \n-terminated line (newline stripped) into *buf (grown as needed).
+ * Returns length, or -1 at EOF. Portable substitute for getline. */
+static long read_line(FILE *f, char **buf, size_t *cap)
+{
+    size_t len = 0;
+    if (!*buf) { *cap = 65536; *buf = (char *)malloc(*cap); if (!*buf) return -1; }
+    for (;;) {
+        if (len + 1 >= *cap) {
+            char *nb = (char *)realloc(*buf, *cap * 2); if (!nb) return -1;
+            *buf = nb; *cap *= 2;
+        }
+        if (!fgets(*buf + len, (int)(*cap - len), f)) break;
+        len += strlen(*buf + len);
+        if (len && (*buf)[len-1] == '\n') { (*buf)[--len] = '\0'; return (long)len; }
+        if (feof(f)) break;
+    }
+    return len ? (long)len : -1;
+}
+
+/* Split s in place on tabs; store up to max field pointers in tok. Returns the
+ * field count (may exceed max, but only max are stored). */
+static int split_tabs(char *s, char **tok, int max)
+{
+    int n = 0;
+    for (;;) {
+        char *t = strchr(s, '\t');
+        if (n < max) tok[n] = s;
+        n++;
+        if (!t) break;
+        *t = '\0'; s = t + 1;
+    }
+    return n;
+}
+
+static double parse_num(const char *s)
+{
+    char *end;
+    double v;
+    if (!s || !*s) return NAN;
+    if (strcmp(s, "NA") == 0 || strcmp(s, "NaN") == 0) return NAN;
+    v = strtod(s, &end);
+    return end == s ? NAN : v;
+}
+
+/* Load a betas matrix (Probe_ID + one column per sample). Fills probe ids, an
+ * nprobe*nsamp row-major matrix, and the sample names. 0 on success. */
+static int load_betas(const char *path, char ***ids_out, double **mat_out,
+                      int32_t *nprobe_out, int32_t *nsamp_out, char ***samp_out)
+{
+    FILE *f = fopen(path, "rb");
+    char *line = NULL, **tok = NULL;
+    size_t cap = 0, cap_rows = 0;
+    int32_t nsamp = 0, np = 0, i;
+    char **ids = NULL, **samp = NULL;
+    double *mat = NULL;
+    int maxtok;
+
+    if (!f) return -1;
+    if (read_line(f, &line, &cap) < 0) { fclose(f); free(line); return -1; }
+    maxtok = (int)(cap);                            /* generous upper bound */
+    tok = (char **)malloc((size_t)maxtok * sizeof(char *));
+    if (!tok) { fclose(f); free(line); return -1; }
+    nsamp = (int32_t)split_tabs(line, tok, maxtok) - 1;   /* minus Probe_ID col */
+    if (nsamp < 1) { fclose(f); free(line); free(tok); return -1; }
+    samp = (char **)malloc((size_t)nsamp * sizeof(char *));
+    for (i = 0; i < nsamp; i++) samp[i] = strdup(tok[i+1]);
+
+    while (read_line(f, &line, &cap) >= 0) {
+        int nf = split_tabs(line, tok, maxtok);
+        if (nf < 1 || tok[0][0] == '\0') continue;
+        if ((size_t)np >= cap_rows) {
+            size_t nc = cap_rows ? cap_rows * 2 : 8192;
+            char **ni = (char **)realloc(ids, nc * sizeof(char *));
+            double *nm = (double *)realloc(mat, nc * (size_t)nsamp * sizeof(double));
+            if (!ni || !nm) { free(ni?ni:ids); free(nm?nm:mat); fclose(f);
+                              free(line); free(tok); free(samp); return -1; }
+            ids = ni; mat = nm; cap_rows = nc;
+        }
+        ids[np] = strdup(tok[0]);
+        for (i = 0; i < nsamp; i++)
+            mat[(size_t)np*(size_t)nsamp + (size_t)i] = (i+1 < nf) ? parse_num(tok[i+1]) : NAN;
+        np++;
+    }
+    fclose(f); free(line); free(tok);
+    *ids_out = ids; *mat_out = mat; *nprobe_out = np; *nsamp_out = nsamp;
+    *samp_out = samp;
+    return 0;
+}
+
+/* Benjamini-Hochberg adjust p[0..n-1] (NaN preserved) into out; scratch holds n
+ * pairs. */
+typedef struct { double p; int32_t i; } bh_pair;
+static int bh_cmp(const void *a, const void *b)
+{
+    double x = ((const bh_pair *)a)->p, y = ((const bh_pair *)b)->p;
+    return x < y ? -1 : x > y ? 1 : 0;
+}
+static void bh_adjust(const double *p, int32_t n, double *out, bh_pair *pr)
+{
+    int32_t cnt = 0, r;
+    double prev = INFINITY;
+    for (r = 0; r < n; r++) { out[r] = NAN; if (!isnan(p[r])) { pr[cnt].p = p[r]; pr[cnt].i = r; cnt++; } }
+    if (cnt == 0) return;
+    qsort(pr, (size_t)cnt, sizeof(bh_pair), bh_cmp);
+    for (r = cnt; r >= 1; r--) {                     /* from largest p down: cummin */
+        double a = pr[r-1].p * (double)cnt / (double)r;
+        if (a < prev) prev = a;
+        out[pr[r-1].i] = prev > 1.0 ? 1.0 : prev;
+    }
+}
+
+/* The built design plus the labels needed to write the header. */
+typedef struct {
+    double  *X;                     /* nsamp * p, row-major */
+    int32_t  p, nvar;
+    char   **coef;                  /* p coefficient names */
+    char   **vname;                 /* nvar categorical-variable names */
+    int32_t *var_off, *var_col;     /* grouping for F-tests / effect size */
+} design_t;
+
+static void design_free(design_t *d)
+{
+    int32_t j;
+    if (d->coef) { for (j = 0; j < d->p; j++) free(d->coef[j]); free(d->coef); }
+    if (d->vname) { for (j = 0; j < d->nvar; j++) free(d->vname[j]); free(d->vname); }
+    free(d->X); free(d->var_off); free(d->var_col);
+    memset(d, 0, sizeof *d);
+}
+
+static char *join2(const char *a, const char *b)
+{
+    size_t la = strlen(a), lb = strlen(b);
+    char *s = (char *)malloc(la + lb + 1);
+    if (s) { memcpy(s, a, la); memcpy(s + la, b, lb + 1); }
+    return s;
+}
+
+static int cmp_str(const void *a, const void *b)
+{ return strcmp(*(const char *const *)a, *(const char *const *)b); }
+
+/* One static partition of probes for a fitting thread. */
+typedef struct {
+    const sesame_dml_design_t *d;
+    const double *betas;
+    int32_t lo, hi;
+    double *est, *pval, *fpval, *eff;
+    int32_t *nobs;
+} dml_part_t;
+
+static void *dml_worker(void *arg)
+{
+    dml_part_t *P = (dml_part_t *)arg;
+    sesame_dml_work_t *w = sesame_dml_work_new(P->d->m, P->d->p);
+    int32_t i, nv = P->d->nvar ? P->d->nvar : 1, p = P->d->p, m = P->d->m;
+    if (!w) return NULL;
+    for (i = P->lo; i < P->hi; i++)
+        P->nobs[i] = sesame_dml_fit(P->d, w, P->betas + (size_t)i*(size_t)m,
+            P->est + (size_t)i*(size_t)p, P->pval + (size_t)i*(size_t)p,
+            P->fpval + (size_t)i*(size_t)nv, P->eff + (size_t)i*(size_t)nv);
+    sesame_dml_work_free(w);
+    return NULL;
+}
+
+static int cmd_dml(int argc, char **argv)
+{
+    const char *betapath = NULL, *metapath = NULL, *formula = NULL, *designpath = NULL;
+    int nthreads = 0, i, j, rc = 1;
+    char **ids = NULL, **samp = NULL;
+    double *betas = NULL;
+    int32_t nprobe = 0, nsamp = 0;
+    design_t D; memset(&D, 0, sizeof D);
+    double *est = NULL, *pval = NULL, *fpval = NULL, *eff = NULL, *padj = NULL, *fpadj = NULL;
+    int32_t *nobs = NULL;
+
+    for (i = 0; i < argc; i++) {
+        if (strcmp(argv[i], "--betas") == 0 && i+1 < argc) betapath = argv[++i];
+        else if (strcmp(argv[i], "--meta") == 0 && i+1 < argc) metapath = argv[++i];
+        else if (strcmp(argv[i], "--formula") == 0 && i+1 < argc) formula = argv[++i];
+        else if (strcmp(argv[i], "--design") == 0 && i+1 < argc) designpath = argv[++i];
+        else if ((strcmp(argv[i], "--threads")==0||strcmp(argv[i],"-t")==0) && i+1<argc)
+            nthreads = (int)strtol(argv[++i], NULL, 10);
+        else { fprintf(stderr, "sesame: unknown/incomplete option %s\n", argv[i]); return usage(); }
+    }
+    if (!betapath || (!formula && !designpath)) {
+        fprintf(stderr, "sesame: dml needs --betas and either --formula (with --meta) or --design\n");
+        return usage();
+    }
+    if (load_betas(betapath, &ids, &betas, &nprobe, &nsamp, &samp) != 0) {
+        fprintf(stderr, "sesame: cannot read betas matrix %s\n", betapath); return 1;
+    }
+
+    /* ---- build the design (samples aligned to the betas columns) ---- */
+    {
+        FILE *mf = NULL; char *line = NULL, **tok = NULL; size_t cap = 0;
+        char **mid = NULL, ***mcell = NULL, **mhdr = NULL;
+        int32_t mrows = 0, mcols = 0, *smap = NULL, s;
+        const char *srcpath = designpath ? designpath : metapath;
+        int maxtok, ok = 1;
+
+        if (!srcpath) { fprintf(stderr, "sesame: --formula needs --meta\n"); goto dclean; }
+        mf = fopen(srcpath, "rb");
+        if (!mf) { fprintf(stderr, "sesame: cannot open %s\n", srcpath); goto dclean; }
+        if (read_line(mf, &line, &cap) < 0) { fprintf(stderr,"sesame: empty %s\n",srcpath); goto dclean; }
+        maxtok = (int)cap;
+        tok = (char **)malloc((size_t)maxtok * sizeof *tok);
+        mcols = (int32_t)split_tabs(line, tok, maxtok);          /* col0 = sample id */
+        mhdr = (char **)malloc((size_t)mcols * sizeof *mhdr);
+        for (j = 0; j < mcols; j++) mhdr[j] = strdup(tok[j]);
+        { size_t crow = 0;
+          while (read_line(mf, &line, &cap) >= 0) {
+            int nf = split_tabs(line, tok, maxtok);
+            if (nf < 1 || tok[0][0]=='\0') continue;
+            if ((size_t)mrows >= crow) {
+                size_t nc = crow ? crow*2 : 256;
+                mid = realloc(mid, nc*sizeof *mid); mcell = realloc(mcell, nc*sizeof *mcell);
+                crow = nc;
+            }
+            mid[mrows] = strdup(tok[0]);
+            mcell[mrows] = (char **)malloc((size_t)mcols * sizeof(char *));
+            for (j = 0; j < mcols; j++) mcell[mrows][j] = strdup(j < nf ? tok[j] : "");
+            mrows++;
+          } }
+        fclose(mf); mf = NULL;
+
+        /* map each betas sample to its metadata row */
+        smap = (int32_t *)malloc((size_t)nsamp * sizeof(int32_t));
+        for (s = 0; s < nsamp; s++) {
+            int32_t r, found = -1;
+            for (r = 0; r < mrows; r++) if (strcmp(mid[r], samp[s]) == 0) { found = r; break; }
+            if (found < 0) { fprintf(stderr, "sesame: sample %s not in %s\n", samp[s], srcpath); ok = 0; break; }
+            smap[s] = found;
+        }
+        if (!ok) goto dclean;
+
+        if (designpath) {                          /* explicit numeric design */
+            D.p = mcols - 1; D.nvar = 0;
+            D.X = (double *)malloc((size_t)nsamp * (size_t)D.p * sizeof(double));
+            D.coef = (char **)malloc((size_t)D.p * sizeof(char *));
+            for (j = 0; j < D.p; j++) D.coef[j] = strdup(mhdr[j+1]);
+            for (s = 0; s < nsamp; s++)
+                for (j = 0; j < D.p; j++)
+                    D.X[(size_t)s*(size_t)D.p + (size_t)j] = parse_num(mcell[smap[s]][j+1]);
+        } else {                                   /* main-effects formula */
+            char fbuf[1024]; char *terms[64]; int nterm = 0, ok2 = 1;
+            const char *fp = formula;
+            while (*fp == ' ' || *fp == '~') fp++;
+            if (strpbrk(fp, "*:^(|")) {
+                fprintf(stderr, "sesame: --formula supports main effects only "
+                    "(no * : ^ () ). Use --design for interactions/splines.\n");
+                goto dclean;
+            }
+            snprintf(fbuf, sizeof fbuf, "%s", fp);
+            { char *t = strtok(fbuf, "+");
+              while (t && nterm < 64) {
+                while (*t==' ') t++;
+                { char *e = t + strlen(t); while (e>t && e[-1]==' ') *--e = '\0'; }
+                if (*t && strcmp(t,"1")!=0) terms[nterm++] = t;
+                t = strtok(NULL, "+");
+              } }
+            /* pass 1: classify each term, collect levels; count columns */
+            {
+                int *is_cat = (int *)calloc((size_t)nterm, sizeof(int));
+                int *mcol   = (int *)malloc((size_t)nterm * sizeof(int));
+                char ***levs = (char ***)calloc((size_t)nterm, sizeof(char **));
+                int *nlev = (int *)calloc((size_t)nterm, sizeof(int));
+                int32_t p = 1, nvar = 0, k;
+                for (k = 0; k < nterm; k++) {
+                    int c = -1; int cat = 0;
+                    for (j = 1; j < mcols; j++) if (strcmp(mhdr[j], terms[k])==0) { c = j; break; }
+                    if (c < 0) { fprintf(stderr,"sesame: no metadata column '%s'\n",terms[k]); ok2=0; break; }
+                    mcol[k] = c;
+                    for (s = 0; s < nsamp; s++) {
+                        const char *v = mcell[smap[s]][c];
+                        if (*v && isnan(parse_num(v))) { cat = 1; break; }
+                    }
+                    is_cat[k] = cat;
+                    if (cat) {                     /* collect sorted unique levels */
+                        char **lv = (char **)malloc((size_t)nsamp * sizeof(char *));
+                        int nl = 0, u;
+                        for (s = 0; s < nsamp; s++) {
+                            const char *v = mcell[smap[s]][c]; int seen = 0;
+                            for (u = 0; u < nl; u++) if (strcmp(lv[u],v)==0){seen=1;break;}
+                            if (!seen) lv[nl++] = (char *)v;
+                        }
+                        qsort(lv, (size_t)nl, sizeof(char *), cmp_str);
+                        levs[k] = lv; nlev[k] = nl;
+                        p += nl - 1; nvar++;
+                    } else p += 1;
+                }
+                if (!ok2) { free(is_cat);free(mcol);free(nlev);
+                            for(k=0;k<nterm;k++) free(levs[k]); free(levs); goto dclean; }
+                /* pass 2: fill X, coef names, variable groupings */
+                D.p = p; D.nvar = nvar;
+                D.X = (double *)calloc((size_t)nsamp * (size_t)p, sizeof(double));
+                D.coef = (char **)malloc((size_t)p * sizeof(char *));
+                D.vname = nvar ? (char **)malloc((size_t)nvar*sizeof(char*)) : NULL;
+                D.var_off = (int32_t *)malloc((size_t)(nvar+1)*sizeof(int32_t));
+                D.var_col = (int32_t *)malloc((size_t)(p)*sizeof(int32_t));
+                { int32_t col = 0, vv = 0, vc = 0, lvl;
+                  for (s = 0; s < nsamp; s++) D.X[(size_t)s*(size_t)p + 0] = 1.0;   /* intercept */
+                  D.coef[0] = strdup("(Intercept)");
+                  D.var_off[0] = 0;
+                  col = 1;
+                  for (k = 0; k < nterm; k++) {
+                    int c = mcol[k];
+                    if (!is_cat[k]) {
+                        for (s = 0; s < nsamp; s++)
+                            D.X[(size_t)s*(size_t)p + (size_t)col] = parse_num(mcell[smap[s]][c]);
+                        D.coef[col] = strdup(terms[k]);
+                        col++;
+                    } else {
+                        D.vname[vv] = strdup(terms[k]);
+                        for (lvl = 1; lvl < nlev[k]; lvl++) {
+                            for (s = 0; s < nsamp; s++) {
+                                const char *v = mcell[smap[s]][c];
+                                D.X[(size_t)s*(size_t)p + (size_t)col] = (strcmp(v, levs[k][lvl])==0) ? 1.0 : 0.0;
+                            }
+                            D.coef[col] = join2(terms[k], levs[k][lvl]);
+                            D.var_col[vc++] = col;
+                            col++;
+                        }
+                        vv++; D.var_off[vv] = vc;
+                    }
+                  }
+                }
+                free(is_cat); free(mcol); free(nlev);
+                for (k = 0; k < nterm; k++) free(levs[k]);
+                free(levs);
+            }
+            if (!ok2) goto dclean;
+        }
+    dclean:
+        if (mf) fclose(mf);
+        free(line); free(tok);
+        if (mid) { for (j=0;j<mrows;j++) free(mid[j]); free(mid); }
+        if (mcell) { int32_t r; for (r=0;r<mrows;r++){ if(mcell[r]){int q;for(q=0;q<mcols;q++)free(mcell[r][q]);free(mcell[r]);} } free(mcell); }
+        if (mhdr) { for (j=0;j<mcols;j++) free(mhdr[j]); free(mhdr); }
+        free(smap);
+        if (!D.X) goto out;
+    }
+
+    /* ---- fit every probe in parallel ---- */
+    est   = (double *)malloc((size_t)nprobe * (size_t)D.p * sizeof(double));
+    pval  = (double *)malloc((size_t)nprobe * (size_t)D.p * sizeof(double));
+    fpval = (double *)malloc((size_t)nprobe * (size_t)(D.nvar?D.nvar:1) * sizeof(double));
+    eff   = (double *)malloc((size_t)nprobe * (size_t)(D.nvar?D.nvar:1) * sizeof(double));
+    nobs  = (int32_t *)malloc((size_t)nprobe * sizeof(int32_t));
+    if (!est || !pval || !fpval || !eff || !nobs) { fprintf(stderr,"sesame: oom\n"); goto out; }
+
+    {
+        sesame_dml_design_t dz = { nsamp, D.p, D.nvar, D.X, D.var_off, D.var_col };
+        long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
+        int T = nthreads > 0 ? nthreads : (ncpu > 0 ? (int)ncpu : 1);
+        dml_part_t *parts; pthread_t *th; int t;
+        if (T > nprobe) T = nprobe;
+        if (T < 1) T = 1;
+        parts = (dml_part_t *)malloc((size_t)T * sizeof *parts);
+        th = (pthread_t *)malloc((size_t)T * sizeof *th);
+        if (!parts || !th) { free(parts); free(th); fprintf(stderr,"sesame: oom\n"); goto out; }
+        for (t = 0; t < T; t++) {
+            parts[t].d = &dz; parts[t].betas = betas;
+            parts[t].lo = (int32_t)((long)nprobe*t/T);
+            parts[t].hi = (int32_t)((long)nprobe*(t+1)/T);
+            parts[t].est=est; parts[t].pval=pval; parts[t].fpval=fpval;
+            parts[t].eff=eff; parts[t].nobs=nobs;
+        }
+        for (t = 1; t < T; t++) pthread_create(&th[t], NULL, dml_worker, &parts[t]);
+        dml_worker(&parts[0]);
+        for (t = 1; t < T; t++) pthread_join(th[t], NULL);
+        free(parts); free(th);
+    }
+
+    /* ---- BH-adjust each p-value column across probes ---- */
+    padj  = (double *)malloc((size_t)nprobe * (size_t)D.p * sizeof(double));
+    fpadj = (double *)malloc((size_t)nprobe * (size_t)(D.nvar?D.nvar:1) * sizeof(double));
+    {
+        bh_pair *pr = (bh_pair *)malloc((size_t)nprobe * sizeof(bh_pair));
+        double *colb = (double *)malloc((size_t)nprobe * sizeof(double));
+        double *cola = (double *)malloc((size_t)nprobe * sizeof(double));
+        int32_t k;
+        if (pr && colb && cola) {
+            for (j = 0; j < D.p; j++) {
+                for (k = 0; k < nprobe; k++) colb[k] = pval[(size_t)k*(size_t)D.p+(size_t)j];
+                bh_adjust(colb, nprobe, cola, pr);
+                for (k = 0; k < nprobe; k++) padj[(size_t)k*(size_t)D.p+(size_t)j] = cola[k];
+            }
+            for (j = 0; j < D.nvar; j++) {
+                for (k = 0; k < nprobe; k++) colb[k] = fpval[(size_t)k*(size_t)D.nvar+(size_t)j];
+                bh_adjust(colb, nprobe, cola, pr);
+                for (k = 0; k < nprobe; k++) fpadj[(size_t)k*(size_t)D.nvar+(size_t)j] = cola[k];
+            }
+        }
+        free(pr); free(colb); free(cola);
+    }
+
+    /* ---- emit TSV ---- */
+    fputs("Probe_ID\tN", stdout);
+    for (j = 0; j < D.p; j++) printf("\tEst_%s", D.coef[j]);
+    for (j = 0; j < D.p; j++) printf("\tPval_%s", D.coef[j]);
+    for (j = 0; j < D.nvar; j++) printf("\tFPval_%s", D.vname[j]);
+    for (j = 0; j < D.nvar; j++) printf("\tEff_%s", D.vname[j]);
+    for (j = 0; j < D.p; j++) printf("\tPadj_%s", D.coef[j]);
+    for (j = 0; j < D.nvar; j++) printf("\tFPadj_%s", D.vname[j]);
+    putchar('\n');
+    for (i = 0; i < nprobe; i++) {
+        printf("%s\t%d", ids[i], nobs[i]);
+        for (j = 0; j < D.p; j++) { double x=est[(size_t)i*(size_t)D.p+(size_t)j];   if(isnan(x))fputs("\tNA",stdout);else printf("\t%.10g",x); }
+        for (j = 0; j < D.p; j++) { double x=pval[(size_t)i*(size_t)D.p+(size_t)j];  if(isnan(x))fputs("\tNA",stdout);else printf("\t%.10g",x); }
+        for (j = 0; j < D.nvar; j++){ double x=fpval[(size_t)i*(size_t)D.nvar+(size_t)j];if(isnan(x))fputs("\tNA",stdout);else printf("\t%.10g",x);}
+        for (j = 0; j < D.nvar; j++){ double x=eff[(size_t)i*(size_t)D.nvar+(size_t)j]; if(isnan(x))fputs("\tNA",stdout);else printf("\t%.10g",x);}
+        for (j = 0; j < D.p; j++) { double x=padj[(size_t)i*(size_t)D.p+(size_t)j];  if(isnan(x))fputs("\tNA",stdout);else printf("\t%.10g",x); }
+        for (j = 0; j < D.nvar; j++){ double x=fpadj[(size_t)i*(size_t)D.nvar+(size_t)j];if(isnan(x))fputs("\tNA",stdout);else printf("\t%.10g",x);}
+        putchar('\n');
+    }
+    rc = 0;
+
+out:
+    free(est); free(pval); free(fpval); free(eff); free(padj); free(fpadj); free(nobs);
+    design_free(&D);
+    if (ids) { for (i=0;i<nprobe;i++) free(ids[i]); free(ids); }
+    if (samp) { for (i=0;i<nsamp;i++) free(samp[i]); free(samp); }
+    free(betas);
+    return rc;
+}
+
 static int cmd_idat_dump(int argc, char **argv)
 {
     const char *path = NULL;
@@ -781,6 +1223,8 @@ int main(int argc, char **argv)
         return cmd_betas(argc - 2, argv + 2);
     if (strcmp(argv[1], "qc") == 0)
         return cmd_qc(argc - 2, argv + 2);
+    if (strcmp(argv[1], "dml") == 0)
+        return cmd_dml(argc - 2, argv + 2);
     if (strcmp(argv[1], "fetch") == 0)
         return cmd_fetch(argc - 2, argv + 2);
     if (strcmp(argv[1], "index-info") == 0)

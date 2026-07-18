@@ -199,6 +199,29 @@ Two behaviors are faithful to R but worth stating:
   equals the `P`-step mask count (9433 R / 9445 C on MSA — the same lineage split
   the `P` test reports).
 
+## DML — the one step with no lineage caveat
+
+Unlike everything above, differential methylation consumes a **betas matrix**, not
+IDATs, so there is no ordering/mask lineage in play: the same matrix and metadata
+give the same result as R. `sesame dml` fits each probe's betas across samples by
+Householder QR least squares (R's `lm` uses LINPACK QR), takes per-coefficient
+t-tests and a holdout F-test per categorical variable, and the p-values come from
+the regularized incomplete beta `I_x(a,b)` (Lentz continued fraction) via the t
+and F tail CDFs.
+
+The test (`tests/run_dml.sh`) generates a small dataset and fits it both ways with
+`~ group + age` (including a few NA betas to exercise per-probe dropping). It
+matches R's `DML` / `summaryExtractTest` to **~5e-10** on estimates, t and F
+p-values, effect sizes, and the BH adjustment — i.e. exact up to QR-vs-LINPACK
+rounding. `sesame__betai`/`pt`/`pf` agree with R's `pbeta`/`pt`/`pf` to ~1e-14
+across the usual range.
+
+The design is the deliberately-simple part: a main-effects formula
+(categorical auto-dummied with treatment contrasts and alphabetical levels, to
+match `model.matrix`; continuous as-is) or an explicit numeric design matrix
+(`--design`) for anything R-formula-complex. Region calling (DMR) is separate and
+needs a per-probe genomic-coordinate annotation not yet hosted.
+
 ## Observations about the R implementation (not divergences)
 
 **Ordering files are sorted by Probe_ID under R's *locale* collation, not byte

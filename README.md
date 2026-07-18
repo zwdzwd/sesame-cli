@@ -52,10 +52,12 @@ every intentional difference.
 
 ## Scope
 
-**In:** `readIDATpair` → `prepSesame(sdf, "QCDPB")` → `getBetas`, for EPIC,
-EPICv2, HM450, MSA.
-**Out:** DML, KYCG, CNV, visualization, and all inference (species/strain/age/
-sex/ethnicity) — those stay in R.
+**In:** `readIDATpair` → `prepSesame(sdf, "QCDPB")` → `getBetas`, the `sesameQC`
+panel, and per-probe differential methylation (`DML`), for EPIC, EPICv2, HM450,
+MSA.
+**Out:** DMR (region calling — needs a genomic-coordinate annotation not yet
+hosted), KYCG, CNV, visualization, and all inference (species/strain/age/sex/
+ethnicity) — those stay in R.
 
 ## Installation
 
@@ -103,6 +105,7 @@ resolves `<prefix>_Grn.idat[.gz]` and `<prefix>_Red.idat[.gz]`.
 ```
 sesame betas      [options] <prefix> [<prefix> ...]   # IDAT -> betas
 sesame qc         [options] <prefix> [<prefix> ...]   # IDAT -> QC metrics (TSV)
+sesame dml        --betas <matrix> (--formula .. --meta .. | --design ..)  # diff. methylation
 sesame fetch      [<platform>] [--force]              # download data into the store
 sesame index-info                                     # show store + pinned tag + platforms
 sesame idat-dump  [--head N] [--tsv] <file.idat[.gz]> # inspect a raw IDAT
@@ -147,6 +150,30 @@ The panel covers detection, probe counts, signal intensity (in/out-of-band),
 Infinium-I channel switches, dye bias (`RGdistort`), and the beta distribution —
 mirroring R's `sesameQC_calcStats`. See `NUMERICS.md` for the two noted behaviors
 (`num_dtna` under the D2 fix; the beta group computed after `D→B→P`).
+
+### `sesame dml`
+
+Per-probe **differential methylation**: for each probe, an OLS of its betas
+across samples on a design, giving per-coefficient estimates and t-tests, a
+holdout F-test per categorical variable, effect sizes, and BH-adjusted p-values —
+sesame's `DML` / `summaryExtractTest`, as a TSV (one row per probe). The betas
+matrix is `sesame betas` batch output; `--meta` is a TSV whose first column
+matches the sample names.
+
+```sh
+# betas matrix from a cohort, then test each CpG against a group (+ covariate)
+sesame betas --prep QCDPB $(ls idats/*_Grn.idat.gz|sed 's/_Grn.idat.gz//') > betas.tsv
+sesame dml --betas betas.tsv --meta samples.tsv --formula '~ group + age' > dml.tsv
+```
+
+`--formula` takes **main effects** only (a `~` and metadata column names joined by
+`+`): categorical columns are auto-dummied to match R's `model.matrix` (treatment
+contrasts, alphabetical levels), continuous columns enter as-is, with an
+intercept. For interactions/splines, build the design elsewhere and pass it with
+`--design <numeric.tsv>` (first column = sample id, remaining columns = terms).
+Runs in parallel (`--threads`). Because DML consumes the betas matrix, it has no
+data-lineage caveat — it matches R's `lm` to ~1e-9 (see `NUMERICS.md`). Region
+calling (DMR) is not yet included: it needs per-probe genomic coordinates.
 
 ### `sesame fetch`
 
@@ -309,6 +336,7 @@ golden ladder (`make test`):
 | 4. Betas `prep=""` | **bit-identical** | ✅ 6/6 samples, 4.4M betas |
 | 5. Batch | each column == its single-sample run; `--threads 1 == N`; bad sample → NA column | ✅ byte-identical; ThreadSanitizer-clean |
 | 6. QC panel | every `sesameQC_calcStats` metric within lineage scale | ✅ 65/65 metrics; worst 1.75e-2 (small count, `NUMERICS.md`) |
+| 7. DML | vs R `DML`/`summaryExtractTest` (no lineage) | ✅ Est/Pval/FPval/Eff/BH match to ~5e-10 |
 
 "Lineage" means the published ordering/mask is a newer data version than the
 installed `sesameData`, so a handful of probes differ for reasons that predate any

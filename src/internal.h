@@ -67,6 +67,11 @@ void sesame__huber(double *y, int32_t n, double *scratch,
 /* Case-insensitive: does Probe_ID contain "negative" (R's neg-control grep)? */
 int sesame__is_neg_control(const char *id);
 
+/* Regularized incomplete beta I_x(a,b) and the t/F tail CDFs built on it (DML). */
+double sesame__betai(double a, double b, double x);
+double sesame__pt_2sided(double t, double df);       /* Pr(>|t|) */
+double sesame__pf_upper(double f, double d1, double d2);
+
 /* <dir of the binary>/data if it exists; 0 on success. */
 int sesame__exe_data_dir(char *out, size_t n);
 

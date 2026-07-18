@@ -279,6 +279,39 @@ const char *sesame_qc_header(void);
  * reals as %.10g, NaN as "NA"). Returns the length written, or -1 if truncated. */
 int sesame_qc_format_row(const sesame_qc_t *q, char *buf, size_t n);
 
+/* ---------------------------------------------------------------- DML ---
+ *
+ * Per-probe differential methylation: OLS of a probe's betas across samples on a
+ * design matrix, with per-coefficient t-tests and a holdout F-test per
+ * categorical variable (sesame's DML). No genomic coordinates needed; region
+ * calling (DMR) is separate.
+ */
+
+/* The design. X is m*p, row-major (sample i, coef j at X[i*p+j]); the caller
+ * builds it from a formula or supplies it directly. Each of the nvar categorical
+ * variables owns the coefficient columns var_col[var_off[v] .. var_off[v+1]) --
+ * used for the holdout F-test and effect size; continuous terms and the
+ * intercept belong to no variable. */
+typedef struct {
+    int32_t         m, p, nvar;
+    const double   *X;
+    const int32_t  *var_off;   /* length nvar+1 */
+    const int32_t  *var_col;   /* length var_off[nvar] */
+} sesame_dml_design_t;
+
+/* Per-thread scratch, sized for one design. */
+typedef struct sesame_dml_work_t sesame_dml_work_t;
+sesame_dml_work_t *sesame_dml_work_new(int32_t m, int32_t p);
+void               sesame_dml_work_free(sesame_dml_work_t *w);
+
+/* Fit one probe. y[m] is the probe's betas across samples; NaN samples are
+ * dropped. Fills est[p], pval[p] (per coefficient) and fpval[nvar], eff[nvar]
+ * (per categorical variable) -- NaN where not estimable. Returns the number of
+ * samples used, or 0 if unfittable (too few observations, or rank-deficient). */
+int32_t sesame_dml_fit(const sesame_dml_design_t *d, sesame_dml_work_t *w,
+                       const double *y, double *est, double *pval,
+                       double *fpval, double *eff);
+
 #ifdef __cplusplus
 }
 #endif

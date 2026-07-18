@@ -221,6 +221,62 @@ double sesame__norm_exp_signal(double mu, double sigma, double alpha, double x)
     return signal;
 }
 
+/* Regularized incomplete beta I_x(a,b) -- the CDF workhorse for the t and F
+ * distributions in DML. Lentz continued fraction (Numerical Recipes betacf) with
+ * a lgamma prefactor; agrees with R's pbeta to ~1e-12 across the usual range.
+ * Returns NaN for x outside [0,1]. */
+static double betacf(double a, double b, double x)
+{
+    const int MAXIT = 300;
+    const double EPS = 3e-16, FPMIN = 1e-300;
+    double qab = a + b, qap = a + 1.0, qam = a - 1.0;
+    double c = 1.0, d = 1.0 - qab * x / qap, aa, del;
+    int m;
+    if (fabs(d) < FPMIN) d = FPMIN;
+    d = 1.0 / d;
+    del = d;
+    for (m = 1; m <= MAXIT; m++) {
+        double m2 = 2.0 * m;
+        aa = m * (b - m) * x / ((qam + m2) * (a + m2));
+        d = 1.0 + aa * d; if (fabs(d) < FPMIN) d = FPMIN;
+        c = 1.0 + aa / c; if (fabs(c) < FPMIN) c = FPMIN;
+        d = 1.0 / d; del *= d * c;
+        aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2));
+        d = 1.0 + aa * d; if (fabs(d) < FPMIN) d = FPMIN;
+        c = 1.0 + aa / c; if (fabs(c) < FPMIN) c = FPMIN;
+        d = 1.0 / d; del *= (d * c);
+        if (fabs(d * c - 1.0) <= EPS) break;
+    }
+    return del;
+}
+
+double sesame__betai(double a, double b, double x)
+{
+    double bt;
+    if (isnan(x)) return NAN;
+    if (x <= 0.0) return 0.0;
+    if (x >= 1.0) return 1.0;
+    bt = exp(lgamma(a + b) - lgamma(a) - lgamma(b)
+             + a * log(x) + b * log1p(-x));
+    if (x < (a + 1.0) / (a + b + 2.0))
+        return bt * betacf(a, b, x) / a;
+    return 1.0 - bt * betacf(b, a, 1.0 - x) / b;
+}
+
+/* Two-sided Student-t tail Pr(>|t|) = I_{df/(df+t^2)}(df/2, 1/2). */
+double sesame__pt_2sided(double t, double df)
+{
+    if (isnan(t) || df <= 0.0) return NAN;
+    return sesame__betai(0.5 * df, 0.5, df / (df + t * t));
+}
+
+/* Upper-tail F: P(F_{d1,d2} > f) = I_{d2/(d2+d1 f)}(d2/2, d1/2). */
+double sesame__pf_upper(double f, double d1, double d2)
+{
+    if (isnan(f) || f < 0.0 || d1 <= 0.0 || d2 <= 0.0) return NAN;
+    return sesame__betai(0.5 * d2, 0.5 * d1, d2 / (d2 + d1 * f));
+}
+
 /* MASS::huber(y, k, tol): the fixed-scale Huber M-estimator of location.
  *
  * mu starts at median(y); the scale s = mad(y) = 1.4826*median(|y-median(y)|) is
