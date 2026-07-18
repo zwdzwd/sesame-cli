@@ -16,9 +16,9 @@ arbitrary-precision oracle showing sesame is closer to truth.
 | D2 | `R/detection.R:163-165` `pOOBAH` | `pmax(..., na.rm=TRUE)` but `pmin(...)` **without** `na.rm` → an NA in one channel yields `p=NA`, and `NA > 0.05` is NA, so the probe is **not** masked. Sibling `ELBAR` at `R/detection.R:60` does `pvals[is.na(pvals)] <- 1.0`, evidence this is an oversight. | Both channels NA → `p=1` (mask). One channel NA → use the other. | **done (P)** |
 | D3 | `R/readIDAT.R:22` vs `:178` | Header parsed **twice**: `readIDAT()` reads `version` as int32 to dispatch, then `readIDAT_nonenc()` reopens the file and re-reads it as int64. Works only because the value is small and little-endian. | Parsed once, as int64. | **done (P0)** |
 | D4 | `R/readIDAT.R:44-46` `readLong` | `readBin(what="integer", size=8)` — base R does not support 8-byte integers; this works by accident. | Real `int64_t`. | **done (P0)** |
-| D5 | `R/background.R:143-167` `normExpSignal` | Computes `exp(dnorm(...,log=TRUE) - pnorm(...,lower.tail=FALSE,log.p=TRUE))`; a difference of logs, which loses precision in the left tail where the `1e-6` floor fires. | Evaluates the inverse Mills ratio `λ(t)=φ(t)/Φ(t)` directly (`erfc` for `t > -5`, Laplace continued fraction below). Mathematically identical, better conditioned, never differences logs. | planned (P4) |
-| D6 | `MASS::huber` via `R/background.R:132,135` | **Errors** when `MAD == 0`. | Falls back to `s = max(mad, IQR/1.349, 1e-8)` and sets a status bit — a single degenerate array must not abort a 100k-sample run. | planned (P3) |
-| D7 | `R/dye_bias.R:122`, `R/background.R:98`, `R/detection.R:155`, `R/mask.R:173` | Escape hatches are **silent**: `dyeBiasNL`→`maskIG` when RGdistort is NA or >10; `noob` returns unchanged if background <100; `pOOBAH` substitutes a `1:1000` prior; `backgroundMask` returns NULL for unknown platforms (silently changing both `noob` and `pOOBAH` background composition). | Each sets a bit in a per-sample status word exposed by the API, so pipelines can count fallbacks instead of discovering them in the betas. Done for `dyeBiasNL` (`SESAME_STAT_DYEBIAS_FAILED`); rest planned. | partial |
+| D5 | `R/background.R:143-167` `normExpSignal` | Computes `exp(dnorm(...,log=TRUE) - pnorm(...,lower.tail=FALSE,log.p=TRUE))`; a difference of logs, which loses precision in the left tail where the `1e-6` floor fires. | Evaluates the inverse Mills ratio `λ(t)=φ(t)/Φ(t)` directly (`erfc` for `t > -5`, Laplace continued fraction below). Mathematically identical, better conditioned, never differences logs. | **done (B)** |
+| D6 | `MASS::huber` via `R/background.R:132,135` | **Errors** when `MAD == 0`. | Falls back to `s = max(IQR/1.349, 1e-8)` and sets `SESAME_STAT_NOOB_MAD0` — a single degenerate array must not abort a 100k-sample run. | **done (B)** |
+| D7 | `R/dye_bias.R:122`, `R/background.R:98`, `R/detection.R:155`, `R/mask.R:173` | Escape hatches are **silent**: `dyeBiasNL`→`maskIG` when RGdistort is NA or >10; `noob` returns unchanged if background <100; `pOOBAH` substitutes a `1:1000` prior; `backgroundMask` returns NULL for unknown platforms (silently changing both `noob` and `pOOBAH` background composition). | Each sets a bit in a per-sample status word exposed by the API, so pipelines can count fallbacks instead of discovering them in the betas. Done for `dyeBiasNL` (`SESAME_STAT_DYEBIAS_FAILED`) and `noob` (`SESAME_STAT_NOOB_SKIPPED`); `pOOBAH` prior + unknown-platform mask still planned. | partial |
 | D8 | `preprocessCore::normalize.quantiles.use.target` via `R/dye_bias.R:135,150` | preprocessCore's own compiled C (`qnorm.c`). | Clean-room reimplementation — see below. Algebraically identical; **not bit-identical**. | **done (D)** |
 
 ### D8 — the one difference I could not eliminate, and why
@@ -131,6 +131,43 @@ Verified on the MSA test array: R masks 9,433, sesame-cli 9,445, **R-only 0**
 
 No disagreement had R p far from 0.05 — i.e. no algorithm error. The p-value
 formula is exact; the residual is the same data lineage as Q/D.
+
+## B (noob) — arithmetic proven in isolation; residual is lineage only
+
+`B` parameterizes a Normal background and Exponential foreground per channel
+(from the same non-`backgroundMask` out-of-band + negative-control pools as `P`)
+and deconvolves every signal via the inverse Mills ratio (D5), with the fixed-
+scale Huber location (`MASS::huber`) for `mu`/`sigma`/`alpha` and the D6 fallback
+for a zero MAD. Because the fit pools are lineage-different, `B` cannot be
+bit-identical to R — so the test (`tests/run_noob.sh`) separates the two things
+that could move a beta:
+
+**(1) the arithmetic, isolated.** `normExpSignal` and `MASS::huber` are compared
+to the C primitives on *identical* inputs via the `normexp_test` harness:
+
+- `normExpSignal` over a 480-point grid: max **absolute** error `3.8e-9`, bulk
+  (p90) **relative** error `1.8e-11`. The single worst relative point is a deep-
+  tail near-cancellation (`signal = mu.sf + sigma·λ` with `sigma·λ ≈ -mu.sf`),
+  i.e. exactly where R's difference-of-logs loses precision and the Mills form
+  does not — there **C is the more accurate of the two**, so R is not a valid
+  oracle for that bit. The gate is therefore absolute (`< 1e-6`).
+- `MASS::huber` on four vectors incl. a 568k real signal column: `|Δmu| ≤ 1.1e-8`
+  (long-double accumulation matches R's `sum()`), `|Δs| ≤ 1.1e-13`. Note MASS
+  returns the *pre-update* `mu` on convergence (the break precedes the
+  assignment) — replicated exactly. D6 confirmed: a zero-MAD vector, which R
+  **errors** on, yields `s = 1e-8` and the status bit in C.
+
+**(2) the integration, on raw-identical probes.** The published ordering assigns
+different M/U addresses than sesameData's manifest to **182** replicate probes
+(e.g. `cg…_TO12`, `cg…_BC11`), so *their raw betas already differ by up to 0.48
+before any prep* — a pre-`B` lineage artifact. Restricting to the 284,127 probes
+whose raw betas agree (identical input to noob), betas after `B` match R with
+**median `6.5e-6`, p99 `1.0e-3`, max `1.6e-3`**, NA agreement exact. That residual
+is the lineage-level fit shift (`muG` 1592.75 vs 1592.72, `sigma` differing by
+~1.5) propagating through `normExp`; the worst probe is invariably a negative
+control (lowest signal, most sensitive). An earlier real bug — applying the wrong
+channel's fit — moved these same betas by 0.4–0.7, so the gate cleanly separates
+lineage from error.
 
 ## Observations about the R implementation (not divergences)
 

@@ -9,6 +9,11 @@ CC      ?= cc
 CFLAGS  ?= -O2 -g
 CFLAGS  += -DSESAME_HAVE_CURL -std=c11 -Wall -Wextra -Wpedantic -Wshadow -Wconversion \
            -Wstrict-prototypes -Iinclude
+# EXTRA_CFLAGS is appended to every compile (incl. mask.o) and EXTRA_LDFLAGS to
+# every link, so `asan` can add sanitizers without clobbering the base flags a
+# command-line CFLAGS= override would drop.
+CFLAGS  += $(EXTRA_CFLAGS)
+LDFLAGS += $(EXTRA_LDFLAGS)
 LDLIBS  += -lz -lm -lcurl
 
 # --- YAME: linked directly for reading .cm masks (both AGPL). Built from the
@@ -24,7 +29,7 @@ OBJ     := $(SRC:.c=.o)
 CLI_OBJ := $(CLI_SRC:.c=.o)
 BIN     := sesame
 
-.PHONY: all asan test test-idat test-betas test-prep test-qmask test-poobah index yame-lib fuzz fuzz-replay clean
+.PHONY: all asan test test-idat test-betas test-prep test-qmask test-poobah test-noob index yame-lib fuzz fuzz-replay clean
 
 all: $(BIN)
 
@@ -39,16 +44,16 @@ $(BIN): $(OBJ) $(CLI_OBJ) $(YAME_LIB) $(HTSLIB)
 # mask.c includes YAME headers (C99/GNU style); relax pedantic/conversion for it
 # only, and give it the YAME include path.
 src/mask.o: src/mask.c include/sesame.h src/internal.h | $(YAME_LIB)
-	$(CC) -O2 -g -std=gnu11 -Wall -Iinclude $(YAME_INC) -c -o $@ $<
+	$(CC) -O2 -g -std=gnu11 -Wall -Iinclude $(YAME_INC) $(EXTRA_CFLAGS) -c -o $@ $<
 
 %.o: %.c include/sesame.h src/internal.h src/registry.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 asan: clean
-	$(MAKE) CFLAGS="-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer" \
-	        LDFLAGS="-fsanitize=address,undefined"
+	$(MAKE) EXTRA_CFLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
+	        EXTRA_LDFLAGS="-fsanitize=address,undefined"
 
-test: test-idat test-betas test-prep test-qmask test-poobah
+test: test-idat test-betas test-prep test-qmask test-poobah test-noob
 
 test-idat: $(BIN)
 	@tests/run_golden.sh
@@ -64,6 +69,13 @@ test-qmask: $(BIN)
 
 test-poobah: $(BIN)
 	@tests/run_poobah.sh
+
+# The B unit harness links only numerics.o (no other deps).
+normexp_test: tests/normexp_test.c src/numerics.o include/sesame.h src/internal.h
+	$(CC) $(CFLAGS) -Isrc -o $@ tests/normexp_test.c src/numerics.o -lm
+
+test-noob: $(BIN) normexp_test
+	@tests/run_noob.sh
 
 # Export ordering tables from sesameData (bootstrap; needs Rscript + sesame).
 PLATFORMS := HM450 EPIC EPICv2 MSA
@@ -84,5 +96,5 @@ fuzz-replay:
 	    fuzz/fuzz_idat.c src/idat.c src/util.c -lz -o fuzz_replay
 
 clean:
-	rm -f $(OBJ) $(CLI_OBJ) $(BIN) fuzz_idat fuzz_replay
-	rm -rf $(BIN).dSYM fuzz_replay.dSYM fuzz_idat.dSYM
+	rm -f $(OBJ) $(CLI_OBJ) $(BIN) normexp_test fuzz_idat fuzz_replay
+	rm -rf $(BIN).dSYM normexp_test.dSYM fuzz_replay.dSYM fuzz_idat.dSYM

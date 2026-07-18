@@ -136,6 +136,8 @@ const char     *sesame_index_probe_id(const sesame_index_t *ix, int32_t i);
 #define SESAME_STAT_ADDR_MISSING   (1u << 0) /* manifest address absent from IDAT */
 #define SESAME_STAT_PAIR_MISMATCH  (1u << 1) /* Grn/Red address vectors disagree  */
 #define SESAME_STAT_DYEBIAS_FAILED (1u << 2) /* D gave up: green channel failed   */
+#define SESAME_STAT_NOOB_SKIPPED   (1u << 3) /* B skipped: <100 background probes  */
+#define SESAME_STAT_NOOB_MAD0      (1u << 4) /* B: huber MAD==0 fallback (D6)       */
 
 typedef struct {
     const sesame_index_t *ix;
@@ -205,6 +207,17 @@ int sesame_prep_infer_channel(sesame_sigdf_t *sdf, int switch_failed,
  * (RGdistort NA or > 10) it masks all Inf-I green probes, sets
  * SESAME_STAT_DYEBIAS_FAILED and returns -- R does this silently. */
 int sesame_prep_dye_bias_nl(sesame_sigdf_t *sdf, sesame_err_t *err);
+
+/* B -- noob (R/background.R:85-123). Normal-exponential background subtraction:
+ * background (out-of-band + negative controls, probes in bgmask excluded) is
+ * modelled Normal, true signal Exponential, and each channel's signal is
+ * deconvolved via the inverse Mills ratio (D5), then shifted by offset (R's
+ * default 15). combine_neg adds negative controls to the background, as in P.
+ * If either channel has <100 positive background values, R returns the SigDF
+ * unchanged; we do the same and set SESAME_STAT_NOOB_SKIPPED. D6: a huber MAD of
+ * 0 sets SESAME_STAT_NOOB_MAD0 instead of aborting. */
+int sesame_prep_noob(sesame_sigdf_t *sdf, const uint8_t *bgmask, int32_t bn,
+                     int combine_neg, double offset, sesame_err_t *err);
 
 /* Beta values, one per probe, in index order. NaN for NA and for masked probes
  * when apply_mask is non-zero. out must hold sesame_index_nprobes() doubles. */

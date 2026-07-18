@@ -5,9 +5,11 @@ basic Infinium DNA methylation preprocessing: **IDAT → betas**, with no R and 
 Bioconductor. Builds one binary, `sesame`.
 
 > **Status.** The IDAT reader and `betas` with no preprocessing are
-> **bit-identical to R**. Of the `QCDPB` prep steps, **Q, C, D** are implemented
-> (`Q` self-consistent vs R by mask lineage; `C` channel-identical; `D` within
-> ~2 ULP); **P and B** are next. See the validation table and `NUMERICS.md`.
+> **bit-identical to R**, and the full **`QCDPB`** pipeline is implemented: `Q`
+> (self-consistent vs R by mask lineage), `C` (channel-identical), `D` (within
+> ~2 ULP), `P` (detection-p exact; residual is 0.05-boundary/lineage), and `B`
+> (noob — `normExpSignal`/`huber` proven to a few ULP in isolation; residual is
+> lineage only). See the validation table and `NUMERICS.md`.
 
 ## Why
 
@@ -111,13 +113,14 @@ sesame index-info                           # store location, pinned tag, which 
 
 # Betas. Platform is auto-detected from the IDAT bead count.
 sesame betas <prefix>                       # prep="" — equivalent to openSesame(prep="")
-sesame betas --prep QCD <prefix>            # apply Q, C, D in order
+sesame betas --prep QCDPB <prefix>          # full pipeline: Q, C, D, P, B in order
 sesame betas --index <ordering.tsv.gz> <prefix>   # bypass the store
 sesame betas --f64 <prefix> > betas.f64     # raw float64 (lossless)
 ```
 
-`<prefix>` resolves `<prefix>_Grn.idat[.gz]` and `<prefix>_Red.idat[.gz]`. `Q`
-requires the platform's `.cm` mask in the store (`sesame fetch <platform>`).
+`<prefix>` resolves `<prefix>_Grn.idat[.gz]` and `<prefix>_Red.idat[.gz]`. `Q`,
+`P`, and `B` require the platform's `.cm` mask in the store
+(`sesame fetch <platform>`).
 
 Use `--f64` (raw little-endian float64) for lossless output. Do **not** compare
 betas via text: R's parser does not correctly round 17-digit decimals, which
@@ -133,8 +136,9 @@ R is the oracle, permanently. The golden ladder (`make test`):
 | 3. Per-step `C` | channel calls identical | ✅ 5/5 samples |
 | 3. Per-step `D` | max relative Δ ≤ 1e-12 (D8 clean-room qnorm) | ✅ ~2 ULP |
 | 3. Per-step `Q` | masks exactly the recommended-track union of the `.cm` | ✅ self-consistent (0.982 Jaccard vs R — mask lineage, `NUMERICS.md`) |
+| 3. Per-step `P` | every C-vs-R disagreement is 0.05-boundary or D2 | ✅ R-only 0; all 12 flips at the cutoff (`NUMERICS.md`) |
+| 3. Per-step `B` | `normExpSignal`/`huber` vs R on identical inputs; betas on raw-identical probes | ✅ arithmetic ≤ few ULP; betas median 6.5e-6, max 1.6e-3 (lineage) |
 | 4. Betas `prep=""` | **bit-identical** | ✅ 6/6 samples, 4.4M betas |
-| `P`, `B` | — | ⬜ not yet implemented |
 
 The IDAT parser eats untrusted files from GEO — `nFields`, per-field
 `byteOffset`, and `nSNPsRead` are all attacker-controlled, and the field table is

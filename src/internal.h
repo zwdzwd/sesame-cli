@@ -50,6 +50,20 @@ double sesame__pmax2_narm(double a, double b);
 /* # elements <= x in an ascending NaN-free array (k in ecdf F(x)=k/n). */
 int32_t sesame__count_le(const double *sorted, int32_t n, double x);
 
+/* Inverse Mills ratio phi(t)/Phi(t) (D5): erfc for t>-5, Laplace continued
+ * fraction below. Better conditioned than R's difference-of-logs. */
+double sesame__inv_mills(double t);
+
+/* R's normExpSignal via the inverse Mills ratio; floors negatives at 1e-6. Does
+ * NOT add the noob offset. NaN x -> NaN. */
+double sesame__norm_exp_signal(double mu, double sigma, double alpha, double x);
+
+/* MASS::huber fixed-scale location. y sorted in place & must be NaN-free;
+ * scratch >= n. D6: mad==0 falls back to max(IQR/1.349, 1e-8), *mad0 set. */
+void sesame__huber(double *y, int32_t n, double *scratch,
+                   double k, double tol, double *mu_out, double *s_out,
+                   int *mad0);
+
 /* <dir of the binary>/data if it exists; 0 on success. */
 int sesame__exe_data_dir(char *out, size_t n);
 

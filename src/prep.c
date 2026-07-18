@@ -1,7 +1,6 @@
 /* prep.c -- preprocessing steps (the prepSesame codes).
  *
- * Implemented so far: C (inferInfiniumIChannel).
- * Outstanding: Q, D, P, B.
+ * Implemented: Q, C, D, P, B (the full QCDPB pipeline).
  *
  * SPDX-License-Identifier: AGPL-3.0-or-later
  *
@@ -12,6 +11,7 @@
 #include "internal.h"
 
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -504,5 +504,149 @@ out:
     free(IG0); free(IR0); free(IG1); free(IR1); free(IG2); free(IR2);
     free(IGmid); free(IRmid); free(tbuf);
     free(kR.x); free(kR.y); free(kG.x); free(kG.y);
+    return rc;
+}
+
+/* ---------------------------------------------------------------- B ---
+ *
+ * noob (R/background.R:85-123) -- normal-exponential background subtraction.
+ *
+ * Background (Normal) and foreground (Exponential) are parameterized per channel
+ * from probes NOT in the background mask, then every signal is deconvolved via
+ * the inverse Mills ratio (D5) and shifted by offset.
+ *
+ * Background pool (same construction as pOOBAH):
+ *   bgG = oob Grn (MG,UG of col==R) + neg-control UG;
+ *   bgR = oob Red (MR,UR of col==G) + neg-control UR.
+ * Foreground pool (in-band signal):
+ *   ibG = MG,UG of col==G + UG of col==II;
+ *   ibR = MR,UR of col==R + UR of col==II.
+ * R's SigDF carries control rows as col=="2" (chipAddressToSignal), so controls
+ * legitimately enter the col==II foreground in both R and here.
+ *
+ * Fit: mu,sigma = huber(bg_capped); alpha = max(huber(ib).mu - mu, 10). Applied
+ * to the FULL columns (all probes, masked or not), NaN passing through.
+ */
+
+/* Keep the non-NA background values strictly below median + 10*IQR (both na.rm),
+ * R's cap against multi-mapping probes (R/background.R:103-104). R leaves the NA
+ * elements in place but huber drops them, so we just drop them here. Survivors
+ * are written back to v (sorted); returns the count. */
+static int32_t bg_cap(double *v, int32_t n, double *scr)
+{
+    int32_t m = sesame__drop_na(v, n, scr), i, k = 0;
+    double med, iqr, thr;
+    if (m == 0) return 0;
+    sesame__sort(scr, m);
+    med = sesame__median_sorted(scr, m);
+    iqr = sesame__quantile7_sorted(scr, m, 0.75) -
+          sesame__quantile7_sorted(scr, m, 0.25);
+    thr = med + 10.0 * iqr;
+    for (i = 0; i < m; i++) if (scr[i] < thr) v[k++] = scr[i];
+    return k;
+}
+
+int sesame_prep_noob(sesame_sigdf_t *s, const uint8_t *bgmask, int32_t bn,
+                     int combine_neg, double offset, sesame_err_t *err)
+{
+    int32_t n, i, nbG = 0, nbR = 0, niG = 0, niR = 0, pG = 0, pR = 0, m;
+    double *bgG = NULL, *bgR = NULL, *ibG = NULL, *ibR = NULL;
+    double *scr = NULL, *scr2 = NULL;
+    double muG, sgG, alG, muR, sgR, alR, mIbG, mIbR, dummy;
+    int mad0, rc = SESAME_OK;
+
+    if (err) { err->code = SESAME_OK; err->msg[0] = '\0'; }
+    if (!s || !bgmask) return sesame__fail(err, SESAME_ERR_IO, "null argument");
+    n = s->n;
+    if (bn != n)
+        return sesame__fail(err, SESAME_ERR_FORMAT,
+            "background mask length %d != probe count %d", bn, n);
+
+    bgG  = (double *)malloc((size_t)n * 3 * sizeof(double));
+    bgR  = (double *)malloc((size_t)n * 3 * sizeof(double));
+    ibG  = (double *)malloc((size_t)n * 2 * sizeof(double));
+    ibR  = (double *)malloc((size_t)n * 2 * sizeof(double));
+    scr  = (double *)malloc((size_t)n * 3 * sizeof(double));
+    scr2 = (double *)malloc((size_t)n * 2 * sizeof(double));
+    if (!bgG || !bgR || !ibG || !ibR || !scr || !scr2) {
+        rc = sesame__fail(err, SESAME_ERR_NOMEM, "oom"); goto out;
+    }
+
+    /* background: out-of-band of non-bgmask Inf-I probes */
+    for (i = 0; i < n; i++) {
+        if (bgmask[i]) continue;
+        if (s->col[i] == SESAME_COL_R) {
+            bgG[nbG++] = s->MG[i]; bgG[nbG++] = s->UG[i];
+        } else if (s->col[i] == SESAME_COL_G) {
+            bgR[nbR++] = s->MR[i]; bgR[nbR++] = s->UR[i];
+        }
+    }
+    if (combine_neg) {
+        for (i = 0; i < n; i++)
+            if (is_neg_control(sesame_index_probe_id(s->ix, i))) {
+                bgG[nbG++] = s->UG[i]; bgR[nbR++] = s->UR[i];
+            }
+    }
+
+    /* foreground: in-band signal of non-bgmask probes (II incl. controls) */
+    for (i = 0; i < n; i++) {
+        if (bgmask[i]) continue;
+        if (s->col[i] == SESAME_COL_G) {
+            ibG[niG++] = s->MG[i]; ibG[niG++] = s->UG[i];
+        } else if (s->col[i] == SESAME_COL_R) {
+            ibR[niR++] = s->MR[i]; ibR[niR++] = s->UR[i];
+        } else {                                   /* Inf-II */
+            ibG[niG++] = s->UG[i]; ibR[niR++] = s->UR[i];
+        }
+    }
+
+    /* R/background.R:98 -- need enough positive background (strict >0, NA out) */
+    for (i = 0; i < nbG; i++) if (!isnan(bgG[i]) && bgG[i] > 0.0) pG++;
+    for (i = 0; i < nbR; i++) if (!isnan(bgR[i]) && bgR[i] > 0.0) pR++;
+    if (pG < 100 || pR < 100) {                    /* D7: flag, don't fail */
+        s->status |= SESAME_STAT_NOOB_SKIPPED;
+        goto out;
+    }
+
+    /* zeros -> 1 (R/background.R:101), then cap background at median+10*IQR */
+    for (i = 0; i < nbG; i++) if (bgG[i] == 0.0) bgG[i] = 1.0;
+    for (i = 0; i < nbR; i++) if (bgR[i] == 0.0) bgR[i] = 1.0;
+    nbG = bg_cap(bgG, nbG, scr);
+    nbR = bg_cap(bgR, nbR, scr);
+
+    /* foreground zeros -> 1 (R/background.R:109-110) */
+    for (i = 0; i < niG; i++) if (ibG[i] == 0.0) ibG[i] = 1.0;
+    for (i = 0; i < niR; i++) if (ibR[i] == 0.0) ibR[i] = 1.0;
+
+    /* fits: mu,sigma from background; alpha from foreground location */
+    sesame__huber(bgG, nbG, scr, 1.5, 1e-6, &muG, &sgG, &mad0);
+    if (mad0) s->status |= SESAME_STAT_NOOB_MAD0;
+    m = sesame__drop_na(ibG, niG, scr);
+    sesame__huber(scr, m, scr2, 1.5, 1e-6, &mIbG, &dummy, &mad0);
+    if (mad0) s->status |= SESAME_STAT_NOOB_MAD0;
+    alG = mIbG - muG; if (alG < 10.0) alG = 10.0;
+
+    sesame__huber(bgR, nbR, scr, 1.5, 1e-6, &muR, &sgR, &mad0);
+    if (mad0) s->status |= SESAME_STAT_NOOB_MAD0;
+    m = sesame__drop_na(ibR, niR, scr);
+    sesame__huber(scr, m, scr2, 1.5, 1e-6, &mIbR, &dummy, &mad0);
+    if (mad0) s->status |= SESAME_STAT_NOOB_MAD0;
+    alR = mIbR - muR; if (alR < 10.0) alR = 10.0;
+
+    if (getenv("SESAME_DEBUG_NOOB"))
+        fprintf(stderr, "NOOB fitG mu=%.10g s=%.10g a=%.10g | fitR mu=%.10g s=%.10g a=%.10g"
+                " | nbG=%d nbR=%d niG=%d niR=%d\n",
+                muG, sgG, alG, muR, sgR, alR, nbG, nbR, niG, niR);
+
+    /* apply to every probe; NaN (Inf-II M, missing addresses) passes through */
+    for (i = 0; i < n; i++) {
+        s->MG[i] = sesame__norm_exp_signal(muG, sgG, alG, s->MG[i]) + offset;
+        s->UG[i] = sesame__norm_exp_signal(muG, sgG, alG, s->UG[i]) + offset;
+        s->MR[i] = sesame__norm_exp_signal(muR, sgR, alR, s->MR[i]) + offset;
+        s->UR[i] = sesame__norm_exp_signal(muR, sgR, alR, s->UR[i]) + offset;
+    }
+
+out:
+    free(bgG); free(bgR); free(ibG); free(ibR); free(scr); free(scr2);
     return rc;
 }

@@ -172,3 +172,101 @@ int32_t sesame__count_le(const double *sorted, int32_t n, double x)
     }
     return lo;
 }
+
+/* Inverse Mills ratio lambda(t) = phi(t)/Phi(t) -- the conditional-expectation
+ * factor in normal-exponential deconvolution (D5).
+ *
+ * R's normExpSignal forms this as exp(dnorm(...,log) - pnorm(...,log)), a
+ * difference of logs that loses precision in the left tail (where the 1e-6 floor
+ * then fires). We evaluate lambda directly:
+ *
+ *   - t > -5:  Phi(t) = 0.5*erfc(-t/sqrt2) is far above underflow, so
+ *              phi(t)/Phi(t) is computed as written.
+ *   - t <= -5: phi and Phi both underflow but lambda(t) -> -t. Use the Laplace
+ *              continued fraction for the upper-tail Mills ratio
+ *              m(s) = (1-Phi(s))/phi(s) = 1/(s + 1/(s + 2/(s + ...))), s = -t;
+ *              then lambda = 1/m(s) = s + f, where f is the fraction after the
+ *              leading s. Converges in a handful of terms for s >= 5.
+ *
+ * NaN in -> NaN out (the CF branch is unreachable for NaN since NaN <= -5 is
+ * false, so NaN flows through the erfc branch). */
+double sesame__inv_mills(double t)
+{
+    static const double INV_SQRT_2PI = 0.3989422804014326779399460599343819;
+    static const double INV_SQRT_2   = 0.7071067811865475244008443621048490;
+
+    if (t > -5.0) {
+        double phi = INV_SQRT_2PI * exp(-0.5 * t * t);
+        double Phi = 0.5 * erfc(-t * INV_SQRT_2);
+        return phi / Phi;
+    } else {
+        double s = -t, f = 0.0;
+        int j;
+        for (j = 60; j >= 1; j--) f = (double)j / (s + f);
+        return s + f;
+    }
+}
+
+/* R's normExpSignal (R/background.R:143-167) written via the inverse Mills ratio:
+ *   sigma2 = sigma^2;  mu.sf = x - mu - sigma2/alpha
+ *   signal = mu.sf + sigma * lambda(mu.sf / sigma)
+ * A non-NA signal that comes out negative is floored at 1e-6, exactly as R does.
+ * The offset is NOT added here -- noob's caller adds it. NaN x -> NaN. */
+double sesame__norm_exp_signal(double mu, double sigma, double alpha, double x)
+{
+    double sigma2 = sigma * sigma;
+    double mu_sf  = x - mu - sigma2 / alpha;
+    double signal = mu_sf + sigma * sesame__inv_mills(mu_sf / sigma);
+    if (!isnan(signal) && signal < 0.0) signal = 1e-6;
+    return signal;
+}
+
+/* MASS::huber(y, k, tol): the fixed-scale Huber M-estimator of location.
+ *
+ * mu starts at median(y); the scale s = mad(y) = 1.4826*median(|y-median(y)|) is
+ * computed once and held fixed; the winsorized mean is then iterated until it
+ * moves by less than tol*s. Note MASS returns the mu whose *successor* first fell
+ * within tolerance -- i.e. the pre-update value -- so the break precedes the
+ * assignment here too. R's sum() accumulates in long double, matched below.
+ *
+ * D6: MASS errors when mad == 0; we instead fall back to
+ * s = max(IQR/1.349, 1e-8) and set *mad0, so a single degenerate array cannot
+ * abort a whole-cohort run.
+ *
+ * y is sorted in place and must be NaN-free (caller drops NA); scratch holds >= n
+ * doubles. */
+void sesame__huber(double *y, int32_t n, double *scratch,
+                   double k, double tol, double *mu_out, double *s_out,
+                   int *mad0)
+{
+    double mu, s;
+    int32_t i, iter;
+
+    if (mad0) *mad0 = 0;
+    sesame__sort(y, n);
+    mu = sesame__median_sorted(y, n);
+    for (i = 0; i < n; i++) scratch[i] = fabs(y[i] - mu);
+    sesame__sort(scratch, n);
+    s = 1.4826 * sesame__median_sorted(scratch, n);
+    if (s == 0.0) {                                 /* D6 */
+        double iqr = sesame__quantile7_sorted(y, n, 0.75)
+                   - sesame__quantile7_sorted(y, n, 0.25);
+        double alt = iqr / 1.349;
+        s = alt > 1e-8 ? alt : 1e-8;
+        if (mad0) *mad0 = 1;
+    }
+    for (iter = 0; iter < 1000; iter++) {           /* cap is a safety backstop */
+        long double sum = 0.0L;
+        double lo = mu - k * s, hi = mu + k * s, mu1;
+        for (i = 0; i < n; i++) {
+            double v = y[i];
+            if (v < lo) v = lo; else if (v > hi) v = hi;
+            sum += (long double)v;
+        }
+        mu1 = (double)(sum / (long double)n);
+        if (fabs(mu - mu1) < tol * s) break;        /* return current mu, not mu1 */
+        mu = mu1;
+    }
+    *mu_out = mu;
+    *s_out  = s;
+}
