@@ -30,6 +30,10 @@ writegz <- function(df, name) {
 }
 
 sl <- gi$seqLength
+if (is.null(names(sl))) {          # some builds (e.g. mm39) leave seqLength unnamed;
+    si <- GenomicRanges::seqinfo(gi$gapInfo)   # recover chrom names from the gap GRanges
+    sl <- stats::setNames(si@seqlengths, si@seqnames)
+}
 writegz(data.frame(chrom = names(sl), length = as.integer(sl)), "seqinfo.tsv.gz")
 
 gap <- gi$gapInfo

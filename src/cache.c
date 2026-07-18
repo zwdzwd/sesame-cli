@@ -526,7 +526,7 @@ int sesame_fetch_genome(const char *genome, int force, sesame_err_t *err)
     if (err) { err->code = SESAME_OK; err->msg[0] = '\0'; }
     if (!g)
         return sesame__fail(err, SESAME_ERR_UNSUPPORTED,
-            "unknown genome '%s' (known: hg38)", genome);
+            "unknown genome '%s' (known: hg38, mm10, mm39)", genome);
     if (!g->sums_sha256)
         return sesame__fail(err, SESAME_ERR_UNSUPPORTED,
             "genome %s is not published at tag %s yet", genome, SESAME_GENOME_TAG);

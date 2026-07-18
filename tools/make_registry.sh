@@ -70,7 +70,7 @@ cat <<'EOF'
 EOF
 
 gbase=${SESAME_GENOME_BASE_URL:-https://github.com/zhou-lab/genomes/raw}
-gtag=${SESAME_GENOME_TAG:-v1}
+gtag=${SESAME_GENOME_TAG:-v2}
 
 cat <<EOF
 #define SESAME_GENOME_BASE_URL  "$gbase"
@@ -84,7 +84,7 @@ typedef struct {
 static const sesame_genome_reg_t SESAME_GENOME_REGISTRY[] = {
 EOF
 
-for genome in hg38; do
+for genome in hg38 mm10 mm39; do
     url="$gbase/$gtag/$genome/SHA256SUMS"
     sha=$(curl -sfL "$url" 2>/dev/null | shasum -a 256 | cut -d' ' -f1 || true)
     if curl -sfIL "$url" >/dev/null 2>&1 && [ -n "$sha" ]; then
