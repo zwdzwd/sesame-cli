@@ -15,6 +15,25 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* ---------------------------------------------------------------- Q ---
+ *
+ * qualityMask (R/mask.R:286-297): OR a precomputed recommended-mask vector into
+ * the SigDF mask. The vector is loaded once per platform via sesame_quality_mask
+ * (which shells out to yame); here we just apply it. It is aligned to the
+ * ordering, so mask[i] corresponds to probe i. */
+int sesame_prep_quality_mask(sesame_sigdf_t *s, const uint8_t *qmask,
+                             int32_t qn, sesame_err_t *err)
+{
+    int32_t i;
+    if (err) { err->code = SESAME_OK; err->msg[0] = '\0'; }
+    if (!s || !qmask) return sesame__fail(err, SESAME_ERR_IO, "null argument");
+    if (qn != s->n)
+        return sesame__fail(err, SESAME_ERR_FORMAT,
+            "mask length %d != probe count %d (ordering/mask mismatch)", qn, s->n);
+    for (i = 0; i < s->n; i++) if (qmask[i]) s->mask[i] = 1;
+    return SESAME_OK;
+}
+
 /* ---------------------------------------------------------------- C ---
  *
  * inferInfiniumIChannel (R/channel_inference.R:20-55).

@@ -168,6 +168,18 @@ void sesame_sigdf_free(sesame_sigdf_t *sdf);
  * prepSesame steps. Order matters (R/open.R:30-35). Only C is implemented.
  */
 
+/* Q -- load the recommended quality mask for a platform as a 0/1 vector aligned
+ * to the ordering (1 = masked). Shells out to the `yame` binary to read the .cm
+ * mask in the store; *out is malloc'd (caller frees), *out_n is the probe count.
+ * yame is invoked as a separate process, so its AGPL code never links here. */
+int sesame_quality_mask(const char *platform, uint8_t **out, int32_t *out_n,
+                        sesame_err_t *err);
+
+/* Q -- apply a mask vector from sesame_quality_mask to a SigDF (mask |= qmask).
+ * qn must equal the probe count. */
+int sesame_prep_quality_mask(sesame_sigdf_t *sdf, const uint8_t *qmask,
+                             int32_t qn, sesame_err_t *err);
+
 /* C -- inferInfiniumIChannel (R/channel_inference.R:20-55). Reassigns each
  * Infinium-I probe to its brighter channel, judged against the 95th percentile
  * of the pooled out-of-band signal under the new assignment. Defaults

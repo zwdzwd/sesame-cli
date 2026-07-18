@@ -11,13 +11,13 @@ CFLAGS  += -DSESAME_HAVE_CURL -std=c11 -Wall -Wextra -Wpedantic -Wshadow -Wconve
            -Wstrict-prototypes -Iinclude
 LDLIBS  += -lz -lm -lcurl
 
-SRC     := src/util.c src/sha256.c src/numerics.c src/idat.c src/index.c src/sigdf.c src/prep.c src/cache.c
+SRC     := src/util.c src/sha256.c src/numerics.c src/idat.c src/index.c src/sigdf.c src/prep.c src/mask.c src/cache.c
 CLI_SRC := cli/main.c
 OBJ     := $(SRC:.c=.o)
 CLI_OBJ := $(CLI_SRC:.c=.o)
 BIN     := sesame
 
-.PHONY: all asan test test-idat test-betas test-prep index fuzz fuzz-replay clean
+.PHONY: all asan test test-idat test-betas test-prep test-qmask index fuzz fuzz-replay clean
 
 all: $(BIN)
 
@@ -31,7 +31,7 @@ asan: clean
 	$(MAKE) CFLAGS="-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer" \
 	        LDFLAGS="-fsanitize=address,undefined"
 
-test: test-idat test-betas test-prep
+test: test-idat test-betas test-prep test-qmask
 
 test-idat: $(BIN)
 	@tests/run_golden.sh
@@ -41,6 +41,9 @@ test-betas: $(BIN)
 
 test-prep: $(BIN)
 	@tests/run_prep.sh
+
+test-qmask: $(BIN)
+	@tests/run_qmask.sh
 
 # Export ordering tables from sesameData (bootstrap; needs Rscript + sesame).
 PLATFORMS := HM450 EPIC EPICv2 MSA

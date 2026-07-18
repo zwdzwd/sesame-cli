@@ -81,6 +81,37 @@ project's own stated gate was 1e-8. This is accepted as last-bit arithmetic
 ordering, not an algorithmic difference: it is not attributable to any decision
 in this implementation, and neither result is "more correct" than the other.
 
+## Mask lineage — Q is not bit-identical to R, by data version
+
+The `Q` step (qualityMask) reads the recommended mask sets from the platform's
+YAME `.cm` in the store, by shelling out to the `yame` binary (`yame unpack -l`)
+and unioning the recommended tracks. YAME is AGPL and stays a separate process;
+its format code never links into sesame-cli. A probe is masked iff it is set in
+any of `recommendedMaskNames(platform)` — `M_1baseSwitchSNPcommon_5pt`,
+`M_2extBase_SNPcommon_5pt`, `M_mapping`, `M_nonuniq`, `M_SNPcommon_5pt` for MSA.
+
+sesame-cli's `Q` is verified **self-consistent**: it masks exactly the yame
+union applied to the ordering (14,494 probes on the MSA test array — an exact
+gate, `tests/run_qmask.sh`).
+
+It is **not** bit-identical to R's `qualityMask`, and cannot be, because the
+published `.cm` is a *newer mask lineage* than the KYCG object sesameData
+currently ships — the same situation as the ordering table (284,309 vs 284,317
+probes). Measured against R (`KYCG.MSA.Mask.20260122`) on the MSA test array:
+
+| | count |
+|---|---|
+| R qualityMask | 14,249 |
+| sesame-cli Q (repo `.cm`, "B1 coherent") | 14,494 |
+| shared | 14,240 |
+| **Jaccard** | **0.982** |
+
+The residual (9 R-only, incl. the 8 deleted probes; 254 C-only) is the
+mask-version bump, not an implementation error — per-track the two agree ~90%+
+(`M_mapping`: 1693 shared of 1870/1939). This converges when sesameData ships
+the same mask version. sesame-cli always applies whatever `.cm` the pinned tag
+publishes; the number above pins *which* lineage was measured.
+
 ## Observations about the R implementation (not divergences)
 
 **Ordering files are sorted by Probe_ID under R's *locale* collation, not byte
