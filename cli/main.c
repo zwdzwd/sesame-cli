@@ -8,10 +8,13 @@
 #include "../src/internal.h"
 
 #include <dirent.h>
+#include <fcntl.h>
 #include <math.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -27,20 +30,28 @@ static int usage(void)
       "      --head N limits to the first N records (default: all for --tsv,\n"
       "      5 for summary).\n"
       "\n"
-      "  sesame betas [--index <ordering.tsv.gz>] [--platform P]\n"
-      "                [--min-beads N] [--no-mask] [--f64] <prefix>\n"
+      "  sesame betas [--index <ordering.tsv.gz>] [--platform P] [--prep CODE]\n"
+      "                [--min-beads N] [--no-mask] [--threads N] [--f64]\n"
+      "                <prefix> [<prefix> ...]\n"
       "      Compute beta values from <prefix>_Grn.idat[.gz] and\n"
-      "      <prefix>_Red.idat[.gz]. Emits Probe_ID<TAB>beta (NA for missing).\n"
-      "      Equivalent to openSesame(prefix, prep=CODE, func=getBetas).\n"
+      "      <prefix>_Red.idat[.gz]. Equivalent to\n"
+      "      openSesame(prefix, prep=CODE, func=getBetas).\n"
+      "      One prefix  -> Probe_ID<TAB>beta (NA for missing).\n"
+      "      Many        -> a matrix: header Probe_ID + one column per sample\n"
+      "                     (named by basename); the index and masks are parsed\n"
+      "                     once and samples run in parallel. All prefixes must\n"
+      "                     be the same platform. A sample that fails becomes an\n"
+      "                     NA column (with a warning) and the exit code is 1.\n"
+      "      --prep CODE    preprocessing steps to apply (QCDPB; e.g. \"QCDPB\")\n"
       "      --min-beads N  mask probes with any bead count < N (default: off)\n"
       "      --no-mask      ignore the mask column; emit every beta\n"
-      "      --prep CODE    preprocessing steps to apply (QCDPB; e.g. \"QCDPB\")\n"
-      "      --dump-col     emit Probe_ID<TAB>col (G/R/2) instead of betas,\n"
-      "                     for differential-testing a prep step\n"
+      "      --threads N    worker threads (default: online CPUs)\n"
+      "      --dump-col     emit Probe_ID<TAB>col (G/R/2) instead of betas\n"
+      "                     (single prefix; for differential-testing a prep step)\n"
       "      --f64          write raw little-endian float64 to stdout instead\n"
-      "                     of text (NA as NaN). For lossless comparison: R's\n"
-      "                     text parser does not correctly round 17-digit\n"
-      "                     decimals, so text round-trips lose up to 1 ULP.\n"
+      "                     of text (NA as NaN), sample-major for a batch. For\n"
+      "                     lossless comparison: R's text parser does not\n"
+      "                     correctly round 17-digit decimals, losing up to 1 ULP.\n"
       "      If --index is omitted the platform is detected from the IDAT bead\n"
       "      count and the index looked up in $SESAME_INDEX_DIR, ., ./data,\n"
       "      then the cache. sesame never downloads implicitly.\n"
@@ -146,75 +157,262 @@ static int cmd_index_info(int argc, char **argv)
     return 0;
 }
 
-static int cmd_betas(int argc, char **argv)
+/* --------------------------------------------------------------- betas ---
+ *
+ * Batch-capable: many <prefix> in one process share the opened index and the
+ * loaded masks, and independent per-sample work runs across a pthread pool. */
+
+/* Basename of a path, without modifying it (basename(3) may). */
+static const char *path_basename(const char *p)
 {
-    const char *idxpath = NULL, *prefix = NULL, *platform = NULL, *prep = "";
-    int min_beads = 0, apply_mask = 1, f64 = 0, dump_col = 0, i, rc = 1;
-    char gpath[4096], rpath[4096], resolved[4096];
-    sesame_index_t *ix = NULL;
+    const char *s = strrchr(p, '/');
+    return s ? s + 1 : p;
+}
+
+/* Apply the prep code string to a SigDF; masks are preloaded by the caller. */
+static int apply_prep(sesame_sigdf_t *s, const char *prep,
+                      const uint8_t *qmask, int32_t qn,
+                      const uint8_t *bgmask, int32_t bgn, sesame_err_t *err)
+{
+    for (const char *c = prep; *c; c++) {
+        int rc;
+        switch (*c) {
+        case 'Q': rc = sesame_prep_quality_mask(s, qmask, qn, err); break;
+        case 'C': rc = sesame_prep_infer_channel(s, 0, 0, err); break;
+        case 'D': rc = sesame_prep_dye_bias_nl(s, err); break;
+        case 'P': rc = sesame_prep_poobah(s, bgmask, bgn, 0.05, 1, err); break;
+        case 'B': rc = sesame_prep_noob(s, bgmask, bgn, 1, 15.0, err); break;
+        default:
+            return sesame__fail(err, SESAME_ERR_UNSUPPORTED,
+                "prep code '%c' not implemented (have: Q, C, D, P, B)", *c);
+        }
+        if (rc != SESAME_OK) return rc;
+    }
+    return SESAME_OK;
+}
+
+/* Read one prefix's IDAT pair and build its SigDF against the shared index. If
+ * expect_plat is non-NULL the sample's detected platform must match it -- this
+ * guards a mixed-platform batch from silently producing a misaligned column. */
+static int build_sigdf_for(const char *prefix, const sesame_index_t *ix,
+                           const char *expect_plat, int min_beads,
+                           sesame_sigdf_t **out, sesame_err_t *err)
+{
+    char gpath[4096], rpath[4096];
     sesame_idat_t *g = NULL, *r = NULL;
     sesame_sigdf_t *s = NULL;
-    double *betas = NULL;
-    uint8_t *qmask = NULL, *bgmask = NULL;
-    int32_t qn = 0, bgn = 0;
-    sesame_err_t e;
+    int rc;
 
-    for (i = 0; i < argc; i++) {
-        if (strcmp(argv[i], "--index") == 0 && i + 1 < argc) {
-            idxpath = argv[++i];
-        } else if (strcmp(argv[i], "--platform") == 0 && i + 1 < argc) {
-            platform = argv[++i];
-        } else if (strcmp(argv[i], "--min-beads") == 0 && i + 1 < argc) {
-            min_beads = (int)strtol(argv[++i], NULL, 10);
-        } else if (strcmp(argv[i], "--no-mask") == 0) {
-            apply_mask = 0;
-        } else if (strcmp(argv[i], "--prep") == 0 && i + 1 < argc) {
-            prep = argv[++i];
-        } else if (strcmp(argv[i], "--dump-col") == 0) {
-            dump_col = 1;
-        } else if (strcmp(argv[i], "--f64") == 0) {
-            f64 = 1;
-        } else if (argv[i][0] == '-' && argv[i][1] != '\0') {
-            fprintf(stderr, "sesame: unknown option %s\n", argv[i]);
-            return usage();
-        } else {
-            prefix = argv[i];
+    if (resolve_idat(prefix, "Grn", gpath, sizeof gpath) ||
+        resolve_idat(prefix, "Red", rpath, sizeof rpath))
+        return sesame__fail(err, SESAME_ERR_IO, "IDAT pair not found for %s", prefix);
+
+    if ((rc = sesame_idat_read(gpath, &g, err)) != SESAME_OK ||
+        (rc = sesame_idat_read(rpath, &r, err)) != SESAME_OK)
+        goto done;
+
+    if (expect_plat) {
+        const char *p = sesame_platform_from_beads(g->n);
+        if (!p || strcmp(p, expect_plat) != 0) {
+            rc = sesame__fail(err, SESAME_ERR_FORMAT,
+                "%s is %s (%d beads), not the batch platform %s",
+                prefix, p ? p : "unknown", g->n, expect_plat);
+            goto done;
         }
     }
-    if (!prefix) return usage();
 
-    if (resolve_idat(prefix, "Grn", gpath, sizeof gpath)) {
-        fprintf(stderr, "sesame: Grn IDAT does not exist for %s\n", prefix);
-        return 1;
+    if (!(s = sesame_sigdf_from_idats(g, r, ix, min_beads, err))) {
+        rc = err ? err->code : SESAME_ERR_IO; goto done;
     }
-    if (resolve_idat(prefix, "Red", rpath, sizeof rpath)) {
-        fprintf(stderr, "sesame: Red IDAT does not exist for %s\n", prefix);
-        return 1;
+    *out = s; s = NULL; rc = SESAME_OK;
+
+done:
+    sesame_idat_free(g);
+    sesame_idat_free(r);
+    sesame_sigdf_free(s);
+    return rc;
+}
+
+/* Compute one sample's betas into out (n = index nprobes); *status_out gets the
+ * SigDF status word. */
+static int betas_one(const char *prefix, const sesame_index_t *ix,
+                     const char *expect_plat, const char *prep,
+                     const uint8_t *qmask, int32_t qn,
+                     const uint8_t *bgmask, int32_t bgn,
+                     int min_beads, int apply_mask,
+                     double *out, uint32_t *status_out, sesame_err_t *err)
+{
+    sesame_sigdf_t *s = NULL;
+    int rc = build_sigdf_for(prefix, ix, expect_plat, min_beads, &s, err);
+    if (rc != SESAME_OK) return rc;
+    if ((rc = apply_prep(s, prep, qmask, qn, bgmask, bgn, err)) == SESAME_OK)
+        rc = sesame_get_betas(s, apply_mask, out, err);
+    if (status_out) *status_out = s->status;
+    sesame_sigdf_free(s);
+    return rc;
+}
+
+/* A samples x probes result store, sample-major (column j at offset j*n). Backed
+ * by an unlinked temp file so the OS can page a matrix larger than RAM to disk;
+ * falls back to malloc. Either backing is just a flat double * to callers. */
+typedef struct {
+    double *data;
+    size_t  bytes;
+    int     fd;         /* -1 when malloc-backed */
+} betas_matrix;
+
+static int betas_matrix_init(betas_matrix *m, int32_t n, int32_t nsamp)
+{
+    size_t bytes = (size_t)n * (size_t)nsamp * sizeof(double);
+    const char *tmp = getenv("TMPDIR");
+    char path[4096];
+    int fd;
+
+    m->data = NULL; m->bytes = bytes; m->fd = -1;
+    if (bytes == 0) return -1;
+
+    snprintf(path, sizeof path, "%s/sesame-betas-XXXXXX",
+             tmp && *tmp ? tmp : "/tmp");
+    if ((fd = mkstemp(path)) >= 0) {
+        unlink(path);                        /* auto-clean on close/crash */
+        if (ftruncate(fd, (off_t)bytes) == 0) {
+            void *p = mmap(NULL, bytes, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+            if (p != MAP_FAILED) { m->data = (double *)p; m->fd = fd; return 0; }
+        }
+        close(fd);
+    }
+    m->data = (double *)malloc(bytes);       /* fallback: anonymous RAM */
+    return m->data ? 0 : -1;
+}
+
+static void betas_matrix_free(betas_matrix *m)
+{
+    if (!m->data) return;
+    if (m->fd >= 0) { munmap(m->data, m->bytes); close(m->fd); }
+    else free(m->data);
+    m->data = NULL;
+}
+
+/* Shared state for the worker pool. Only `next`, `status_or`, and `nfail` are
+ * mutable, all guarded by `lock`; everything else is read-only or a disjoint
+ * per-column write into `mat`. */
+typedef struct {
+    char           **prefixes;
+    int32_t          nsamp, n;
+    const sesame_index_t *ix;
+    const char      *plat, *prep;
+    const uint8_t   *qmask, *bgmask;
+    int32_t          qn, bgn;
+    int              min_beads, apply_mask;
+    double          *mat;
+    pthread_mutex_t  lock;
+    int32_t          next, nfail;
+    uint32_t         status_or;
+} batch_ctx;
+
+static void *batch_worker(void *arg)
+{
+    batch_ctx *c = (batch_ctx *)arg;
+    for (;;) {
+        int32_t j, k;
+        uint32_t st = 0;
+        double *col;
+        sesame_err_t e;
+        int rc;
+
+        pthread_mutex_lock(&c->lock);
+        j = c->next < c->nsamp ? c->next++ : -1;
+        pthread_mutex_unlock(&c->lock);
+        if (j < 0) break;
+
+        col = c->mat + (size_t)j * (size_t)c->n;
+        rc = betas_one(c->prefixes[j], c->ix, c->plat, c->prep,
+                       c->qmask, c->qn, c->bgmask, c->bgn,
+                       c->min_beads, c->apply_mask, col, &st, &e);
+        if (rc != SESAME_OK)
+            for (k = 0; k < c->n; k++) col[k] = NAN;   /* NA column, keep shape */
+
+        pthread_mutex_lock(&c->lock);
+        if (rc != SESAME_OK) {
+            c->nfail++;
+            fprintf(stderr, "sesame: %s: %s\n",
+                    path_basename(c->prefixes[j]), e.msg);
+        } else {
+            c->status_or |= st;
+        }
+        pthread_mutex_unlock(&c->lock);
+    }
+    return NULL;
+}
+
+static int cmd_betas(int argc, char **argv)
+{
+    const char *idxpath = NULL, *platform = NULL, *prep = "", *plat = NULL;
+    int min_beads = 0, apply_mask = 1, f64 = 0, dump_col = 0, i, rc = 1;
+    int nthreads = 0;                        /* 0 => auto (online CPUs) */
+    char **prefixes = NULL;
+    int32_t nsamp = 0, n = 0, qn = 0, bgn = 0;
+    char resolved[4096];
+    sesame_index_t *ix = NULL;
+    uint8_t *qmask = NULL, *bgmask = NULL;
+    betas_matrix mat = { NULL, 0, -1 };
+    int have_mat = 0, nfail = 0;
+    uint32_t status_or = 0;
+    sesame_err_t e;
+
+    prefixes = (char **)malloc((size_t)(argc + 1) * sizeof(char *));
+    if (!prefixes) { fprintf(stderr, "sesame: out of memory\n"); return 1; }
+
+    for (i = 0; i < argc; i++) {
+        if (strcmp(argv[i], "--index") == 0 && i + 1 < argc) idxpath = argv[++i];
+        else if (strcmp(argv[i], "--platform") == 0 && i + 1 < argc) platform = argv[++i];
+        else if (strcmp(argv[i], "--min-beads") == 0 && i + 1 < argc)
+            min_beads = (int)strtol(argv[++i], NULL, 10);
+        else if ((strcmp(argv[i], "--threads") == 0 || strcmp(argv[i], "-t") == 0)
+                 && i + 1 < argc)
+            nthreads = (int)strtol(argv[++i], NULL, 10);
+        else if (strcmp(argv[i], "--no-mask") == 0) apply_mask = 0;
+        else if (strcmp(argv[i], "--prep") == 0 && i + 1 < argc) prep = argv[++i];
+        else if (strcmp(argv[i], "--dump-col") == 0) dump_col = 1;
+        else if (strcmp(argv[i], "--f64") == 0) f64 = 1;
+        else if (argv[i][0] == '-' && argv[i][1] != '\0') {
+            fprintf(stderr, "sesame: unknown option %s\n", argv[i]);
+            free(prefixes); return usage();
+        } else prefixes[nsamp++] = argv[i];
+    }
+    if (nsamp == 0) { free(prefixes); return usage(); }
+    if (dump_col && nsamp != 1) {
+        fprintf(stderr, "sesame: --dump-col takes a single prefix\n");
+        free(prefixes); return 1;
     }
 
-    if (sesame_idat_read(gpath, &g, &e) != SESAME_OK ||
-        sesame_idat_read(rpath, &r, &e) != SESAME_OK) {
-        fprintf(stderr, "sesame: %s\n", e.msg); goto out;
-    }
-
-    /* Resolve the index: explicit path > explicit platform > bead-count
-     * detection. Never downloads, never prompts -- see src/cache.c. */
+    /* Determine the platform and open the index ONCE. Auto-detect from the first
+     * sample's Grn bead count when neither --index nor --platform is given. */
     if (!idxpath) {
-        char help[1024];
         if (!platform) {
-            platform = sesame_platform_from_beads(g->n);
+            char gp[4096]; sesame_idat_t *g0 = NULL; int32_t beads;
+            if (resolve_idat(prefixes[0], "Grn", gp, sizeof gp)) {
+                fprintf(stderr, "sesame: Grn IDAT does not exist for %s\n", prefixes[0]);
+                goto out;
+            }
+            if (sesame_idat_read(gp, &g0, &e) != SESAME_OK) {
+                fprintf(stderr, "sesame: %s\n", e.msg); goto out;
+            }
+            beads = g0->n;
+            platform = sesame_platform_from_beads(beads);
+            sesame_idat_free(g0);
             if (!platform) {
                 fprintf(stderr,
                     "sesame: cannot identify platform from %d beads.\n"
-                    "  pass --platform <P> or --index <path>.\n", g->n);
+                    "  pass --platform <P> or --index <path>.\n", beads);
                 goto out;
             }
-            fprintf(stderr, "sesame: detected %s (%d beads)\n", platform, g->n);
+            fprintf(stderr, "sesame: detected %s (%d beads)\n", platform, beads);
         }
         if (sesame_index_locate(platform, resolved, sizeof resolved) != 0) {
+            char help[1024];
             sesame_index_missing_help(platform, help, sizeof help);
-            fprintf(stderr, "sesame: %s\n", help);
-            goto out;
+            fprintf(stderr, "sesame: %s\n", help); goto out;
         }
         idxpath = resolved;
     }
@@ -222,15 +420,16 @@ static int cmd_betas(int argc, char **argv)
     if (!(ix = sesame_index_open(idxpath, &e))) {
         fprintf(stderr, "sesame: %s\n", e.msg); goto out;
     }
-    if (!(s = sesame_sigdf_from_idats(g, r, ix, min_beads, &e))) {
-        fprintf(stderr, "sesame: %s\n", e.msg); goto out;
-    }
+    n = sesame_index_nprobes(ix);
+    plat = platform;   /* NULL only when --index is given without --platform */
 
-    /* Q needs the recommended mask for the platform; load it once (it shells
-     * out to yame) and reuse across every step/sample. */
+    /* Masks: loaded once (they read the .cm), shared read-only across samples. */
     if (strchr(prep, 'Q') || strchr(prep, 'P') || strchr(prep, 'B')) {
-        const char *plat = platform ? platform
-                                    : sesame_platform_from_beads(g->n);
+        if (!plat) {
+            fprintf(stderr, "sesame: --prep Q/P/B needs a known platform; "
+                            "pass --platform with --index.\n");
+            goto out;
+        }
         if (strchr(prep, 'Q') &&
             sesame_quality_mask(plat, &qmask, &qn, &e) != SESAME_OK) {
             fprintf(stderr, "sesame: %s\n", e.msg); goto out;
@@ -241,80 +440,103 @@ static int cmd_betas(int argc, char **argv)
         }
     }
 
-    /* Apply prep steps in the order given. */
-    for (const char *c = prep; *c; c++) {
-        switch (*c) {
-        case 'Q':
-            if (sesame_prep_quality_mask(s, qmask, qn, &e) != SESAME_OK) {
-                fprintf(stderr, "sesame: %s\n", e.msg); goto out;
-            }
-            break;
-        case 'C':
-            if (sesame_prep_infer_channel(s, 0, 0, &e) != SESAME_OK) {
-                fprintf(stderr, "sesame: %s\n", e.msg); goto out;
-            }
-            break;
-        case 'D':
-            if (sesame_prep_dye_bias_nl(s, &e) != SESAME_OK) {
-                fprintf(stderr, "sesame: %s\n", e.msg); goto out;
-            }
-            break;
-        case 'P':
-            if (sesame_prep_poobah(s, bgmask, bgn, 0.05, 1, &e) != SESAME_OK) {
-                fprintf(stderr, "sesame: %s\n", e.msg); goto out;
-            }
-            break;
-        case 'B':
-            if (sesame_prep_noob(s, bgmask, bgn, 1, 15.0, &e) != SESAME_OK) {
-                fprintf(stderr, "sesame: %s\n", e.msg); goto out;
-            }
-            break;
-        default:
-            fprintf(stderr, "sesame: prep code '%c' not implemented "
-                            "(have: Q, C, D, P, B)\n", *c);
-            goto out;
-        }
-    }
-
-    if (dump_col) {
+    if (dump_col) {                          /* single-sample debugging aid */
+        sesame_sigdf_t *s = NULL;
         static const char *nm[] = { "2", "G", "R" };
+        if (build_sigdf_for(prefixes[0], ix, plat, min_beads, &s, &e) != SESAME_OK ||
+            apply_prep(s, prep, qmask, qn, bgmask, bgn, &e) != SESAME_OK) {
+            fprintf(stderr, "sesame: %s\n", e.msg);
+            sesame_sigdf_free(s); goto out;
+        }
         for (int32_t k = 0; k < s->n; k++)
             printf("%s\t%s\n", sesame_index_probe_id(ix, k), nm[s->col[k]]);
-        rc = 0;
-        goto out;
+        sesame_sigdf_free(s);
+        rc = 0; goto out;
     }
 
-    betas = (double *)malloc((size_t)s->n * sizeof(double));
-    if (!betas) { fprintf(stderr, "sesame: out of memory\n"); goto out; }
-    if (sesame_get_betas(s, apply_mask, betas, &e) != SESAME_OK) {
-        fprintf(stderr, "sesame: %s\n", e.msg); goto out;
+    if (betas_matrix_init(&mat, n, nsamp) != 0) {
+        fprintf(stderr, "sesame: cannot allocate %d x %d beta matrix\n", nsamp, n);
+        goto out;
+    }
+    have_mat = 1;
+
+    /* Run the pool: T-1 spawned workers plus this thread, all draining a shared
+     * counter. Output column = argv position, so results are deterministic
+     * regardless of scheduling; --threads 1 == --threads N byte-for-byte. */
+    {
+        batch_ctx ctx;
+        long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
+        int T = nthreads > 0 ? nthreads : (ncpu > 0 ? (int)ncpu : 1);
+        pthread_t *th = NULL;
+        int spawned = 0, t;
+
+        if (T > nsamp) T = nsamp;
+        if (T < 1) T = 1;
+
+        ctx.prefixes = prefixes; ctx.nsamp = nsamp; ctx.n = n;
+        ctx.ix = ix; ctx.plat = plat; ctx.prep = prep;
+        ctx.qmask = qmask; ctx.qn = qn; ctx.bgmask = bgmask; ctx.bgn = bgn;
+        ctx.min_beads = min_beads; ctx.apply_mask = apply_mask;
+        ctx.mat = mat.data; ctx.next = 0; ctx.nfail = 0; ctx.status_or = 0;
+        pthread_mutex_init(&ctx.lock, NULL);
+
+        if (T > 1) th = (pthread_t *)malloc((size_t)(T - 1) * sizeof(pthread_t));
+        if (th)
+            for (t = 0; t < T - 1; t++)
+                if (pthread_create(&th[spawned], NULL, batch_worker, &ctx) == 0)
+                    spawned++;
+        batch_worker(&ctx);                  /* this thread participates */
+        for (t = 0; t < spawned; t++) pthread_join(th[t], NULL);
+        free(th);
+        pthread_mutex_destroy(&ctx.lock);
+
+        nfail = ctx.nfail; status_or = ctx.status_or;
     }
 
     if (f64) {
-        /* Raw float64 so comparisons are lossless. */
-        if (fwrite(betas, sizeof(double), (size_t)s->n, stdout) != (size_t)s->n) {
+        size_t tot = (size_t)n * (size_t)nsamp;
+        if (fwrite(mat.data, sizeof(double), tot, stdout) != tot) {
             fprintf(stderr, "sesame: short write\n"); goto out;
         }
-    } else {
-        for (int32_t k = 0; k < s->n; k++) {
+    } else if (nsamp == 1) {                 /* unchanged single-sample format */
+        for (int32_t k = 0; k < n; k++) {
             const char *id = sesame_index_probe_id(ix, k);
-            if (isnan(betas[k])) printf("%s\tNA\n", id);
-            else                 printf("%s\t%.17g\n", id, betas[k]);
+            if (isnan(mat.data[k])) printf("%s\tNA\n", id);
+            else                    printf("%s\t%.17g\n", id, mat.data[k]);
+        }
+    } else {                                 /* matrix: Probe_ID + one col/sample */
+        fputs("Probe_ID", stdout);
+        for (int32_t j = 0; j < nsamp; j++)
+            printf("\t%s", path_basename(prefixes[j]));
+        putchar('\n');
+        for (int32_t k = 0; k < n; k++) {
+            fputs(sesame_index_probe_id(ix, k), stdout);
+            for (int32_t j = 0; j < nsamp; j++) {
+                double b = mat.data[(size_t)j * (size_t)n + (size_t)k];
+                if (isnan(b)) fputs("\tNA", stdout);
+                else          printf("\t%.17g", b);
+            }
+            putchar('\n');
         }
     }
 
-    if (s->status & SESAME_STAT_ADDR_MISSING)
-        fprintf(stderr, "sesame: note: %d probes had addresses absent from the IDAT\n",
-                s->n_addr_missing);
-    rc = 0;
+    if (status_or & SESAME_STAT_ADDR_MISSING)
+        fprintf(stderr, "sesame: note: some probes had addresses absent from an IDAT\n");
+    if (status_or & SESAME_STAT_DYEBIAS_FAILED)
+        fprintf(stderr, "sesame: note: dye-bias correction gave up on a sample (green channel failed)\n");
+    if (status_or & SESAME_STAT_NOOB_SKIPPED)
+        fprintf(stderr, "sesame: note: noob skipped on a sample (insufficient background)\n");
+    if (status_or & SESAME_STAT_NOOB_MAD0)
+        fprintf(stderr, "sesame: note: noob MAD==0 fallback fired on a sample\n");
+    if (nfail)
+        fprintf(stderr, "sesame: %d of %d samples failed (NA columns)\n", nfail, nsamp);
+    rc = nfail ? 1 : 0;
 
 out:
+    if (have_mat) betas_matrix_free(&mat);
     free(qmask);
     free(bgmask);
-    free(betas);
-    sesame_sigdf_free(s);
-    sesame_idat_free(g);
-    sesame_idat_free(r);
+    free(prefixes);
     sesame_index_close(ix);
     return rc;
 }

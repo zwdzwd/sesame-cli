@@ -29,7 +29,7 @@ OBJ     := $(SRC:.c=.o)
 CLI_OBJ := $(CLI_SRC:.c=.o)
 BIN     := sesame
 
-.PHONY: all asan test test-idat test-betas test-prep test-qmask test-poobah test-noob index yame-lib fuzz fuzz-replay clean
+.PHONY: all asan test test-idat test-betas test-prep test-qmask test-poobah test-noob test-batch index yame-lib fuzz fuzz-replay clean
 
 all: $(BIN)
 
@@ -53,7 +53,7 @@ asan: clean
 	$(MAKE) EXTRA_CFLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
 	        EXTRA_LDFLAGS="-fsanitize=address,undefined"
 
-test: test-idat test-betas test-prep test-qmask test-poobah test-noob
+test: test-idat test-betas test-prep test-qmask test-poobah test-noob test-batch
 
 test-idat: $(BIN)
 	@tests/run_golden.sh
@@ -76,6 +76,9 @@ normexp_test: tests/normexp_test.c src/numerics.o include/sesame.h src/internal.
 
 test-noob: $(BIN) normexp_test
 	@tests/run_noob.sh
+
+test-batch: $(BIN)
+	@tests/run_batch.sh
 
 # Export ordering tables from sesameData (bootstrap; needs Rscript + sesame).
 PLATFORMS := HM450 EPIC EPICv2 MSA

@@ -116,11 +116,27 @@ sesame betas <prefix>                       # prep="" — equivalent to openSesa
 sesame betas --prep QCDPB <prefix>          # full pipeline: Q, C, D, P, B in order
 sesame betas --index <ordering.tsv.gz> <prefix>   # bypass the store
 sesame betas --f64 <prefix> > betas.f64     # raw float64 (lossless)
+
+# Batch: many samples in one process. The index and masks are parsed once and
+# samples run in parallel; output is a matrix (Probe_ID + one column per sample).
+sesame betas --prep QCDPB s1 s2 s3 ... > betas.tsv
+sesame betas --threads 8 --prep QCDPB *_prefixes > betas.tsv
 ```
 
 `<prefix>` resolves `<prefix>_Grn.idat[.gz]` and `<prefix>_Red.idat[.gz]`. `Q`,
 `P`, and `B` require the platform's `.cm` mask in the store
 (`sesame fetch <platform>`).
+
+**Batch mode** (multiple prefixes) amortizes the one-time index/mask parse across
+the whole cohort and runs the independent per-sample work across a pthread pool
+(`--threads`, default = online CPUs). All prefixes must be the same platform; the
+result is a `Probe_ID`-keyed matrix with one column per sample (named by
+basename), or a sample-major `--f64` stream. A sample that fails becomes an NA
+column (with a warning) and the exit code is 1 — one bad IDAT never aborts the
+run. The store is an unlinked temp file paged by the OS, so a matrix larger than
+RAM still works; for whole-cohort scale, shard the sample list (pipelines already
+do). Output order is the argv order regardless of thread scheduling, and
+`--threads 1` is byte-identical to `--threads N`.
 
 Use `--f64` (raw little-endian float64) for lossless output. Do **not** compare
 betas via text: R's parser does not correctly round 17-digit decimals, which
@@ -139,6 +155,7 @@ R is the oracle, permanently. The golden ladder (`make test`):
 | 3. Per-step `P` | every C-vs-R disagreement is 0.05-boundary or D2 | ✅ R-only 0; all 12 flips at the cutoff (`NUMERICS.md`) |
 | 3. Per-step `B` | `normExpSignal`/`huber` vs R on identical inputs; betas on raw-identical probes | ✅ arithmetic ≤ few ULP; betas median 6.5e-6, max 1.6e-3 (lineage) |
 | 4. Betas `prep=""` | **bit-identical** | ✅ 6/6 samples, 4.4M betas |
+| 5. Batch | each column == its single-sample run; `--threads 1 == N`; bad sample → NA column | ✅ byte-identical; ThreadSanitizer-clean |
 
 The IDAT parser eats untrusted files from GEO — `nFields`, per-field
 `byteOffset`, and `nSNPsRead` are all attacker-controlled, and the field table is
