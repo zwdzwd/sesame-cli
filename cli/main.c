@@ -48,15 +48,25 @@ static int usage(void)
       "      main effects (categorical auto-dummied); --design passes a numeric\n"
       "      design for interactions.\n"
       "\n"
+      "  sesame attach-probe [--index <ordering.tsv.gz> | --platform P]\n"
+      "                      [--all] [--beta] [--no-header] <file>\n"
+      "      Prepend the ordering's Probe_ID to a positional file's rows, as TSV\n"
+      "      on stdout. <file> is a YAME .cg/.cm/.cx (fmt0 mask, fmt3 M/U or\n"
+      "      --beta, fmt4 float) or a text .tsv[.gz] (e.g. a .hg38.coord.tsv.gz).\n"
+      "      --all emits every sample column; the ordering is --index, else\n"
+      "      --platform, else inferred from the filename prefix. Row count must\n"
+      "      match the ordering (same platform + tag that made the file).\n"
+      "\n"
       "  sesame idat-dump [--head N] [--tsv] <file.idat|file.idat.gz>\n"
       "      Print IDAT contents. Default prints a summary header; --tsv emits\n"
       "      addr<TAB>mean<TAB>sd<TAB>nbeads. --head N limits records.\n"
       "\n"
       "  sesame fetch [<platform>] [--force]\n"
-      "      Download <platform> (default: all published) at the pinned tag.\n"
-      "      Verifies every file against its digest; a file already present and\n"
-      "      matching is skipped. The ONLY path that touches the network.\n"
-      "      Never prompts.\n"
+      "  sesame fetch genome [<build>] [--force]\n"
+      "      Download <platform> (default: all published), or a genome build's\n"
+      "      genome-level annotation (default: hg38), at the pinned tag. Verifies\n"
+      "      every file against its digest; a file already present and matching is\n"
+      "      skipped. The ONLY path that touches the network. Never prompts.\n"
       "\n"
       "  sesame index-info\n"
       "      Show the store location, which tag it holds, and each platform.\n"
@@ -80,19 +90,25 @@ static int resolve_idat(const char *prefix, const char *chan,
 
 static int cmd_fetch(int argc, char **argv)
 {
-    const char *platform = NULL;
-    int force = 0, i;
-    char dir[4096], path[4096];
+    const char *platform = NULL, *genome = NULL;
+    int force = 0, want_genome = 0, i;
+    char path[4096];
     sesame_err_t e;
 
     for (i = 0; i < argc; i++) {
         if (strcmp(argv[i], "--force") == 0) force = 1;
+        else if (strcmp(argv[i], "genome") == 0) want_genome = 1;
         else if (argv[i][0] == '-' && argv[i][1] != '\0') return usage();
+        else if (want_genome && !genome) genome = argv[i];
         else platform = argv[i];
     }
 
-    (void)dir;
-    if (platform) {
+    if (want_genome) {                    /* sesame fetch genome [<build>] */
+        if (sesame_fetch_genome(genome ? genome : "hg38", force, &e) != SESAME_OK) {
+            fprintf(stderr, "sesame: %s\n", e.msg);
+            return 1;
+        }
+    } else if (platform) {
         if (sesame_fetch_index(platform, force, path, sizeof path, &e) != SESAME_OK) {
             fprintf(stderr, "sesame: %s\n", e.msg);
             return 1;
@@ -921,6 +937,71 @@ out:
     return rc;
 }
 
+/* Infer a platform from a filename like "MSA.hg38.coord.tsv.gz" -> "MSA". Returns
+ * a static registry string, or NULL. */
+static const char *platform_from_basename(const char *path)
+{
+    static const char *plats[] = { "EPICv2", "EPIC", "HM450", "MSA", NULL };
+    const char *base = path_basename(path);
+    for (int i = 0; plats[i]; i++) {
+        size_t l = strlen(plats[i]);
+        if (strncmp(base, plats[i], l) == 0 && base[l] == '.') return plats[i];
+    }
+    return NULL;
+}
+
+static int cmd_attach_probe(int argc, char **argv)
+{
+    const char *path = NULL, *idxpath = NULL, *platform = NULL;
+    sesame_attach_opt_t opt; memset(&opt, 0, sizeof opt);
+    char resolved[4096];
+    sesame_index_t *ix = NULL;
+    sesame_err_t e;
+    int i, rc = 1;
+
+    for (i = 0; i < argc; i++) {
+        if (strcmp(argv[i], "--index") == 0 && i+1 < argc) idxpath = argv[++i];
+        else if (strcmp(argv[i], "--platform") == 0 && i+1 < argc) platform = argv[++i];
+        else if (strcmp(argv[i], "--all") == 0 || strcmp(argv[i], "-a") == 0) opt.all = 1;
+        else if (strcmp(argv[i], "--beta") == 0) opt.beta = 1;
+        else if (strcmp(argv[i], "--no-header") == 0) opt.no_header = 1;
+        else if (argv[i][0] == '-' && argv[i][1] != '\0') {
+            fprintf(stderr, "sesame: unknown option %s\n", argv[i]); return usage();
+        } else path = argv[i];
+    }
+    if (!path) return usage();
+
+    /* Probe IDs come from the ordering: --index wins, else --platform, else
+     * inferred from the filename prefix (e.g. MSA.hg38.coord.tsv.gz). */
+    if (!idxpath) {
+        if (!platform) platform = platform_from_basename(path);
+        if (!platform) {
+            fprintf(stderr, "sesame: cannot tell which ordering to use for %s\n"
+                "  pass --index <ordering.tsv.gz> or --platform <EPIC|EPICv2|HM450|MSA>\n",
+                path);
+            return 1;
+        }
+        if (sesame_index_locate(platform, resolved, sizeof resolved) != 0) {
+            char help[1024];
+            sesame_index_missing_help(platform, help, sizeof help);
+            fprintf(stderr, "sesame: %s\n", help);
+            return 1;
+        }
+        idxpath = resolved;
+    }
+
+    if (!(ix = sesame_index_open(idxpath, &e))) {
+        fprintf(stderr, "sesame: %s\n", e.msg); return 1;
+    }
+    if (sesame_attach_probe(path, ix, &opt, stdout, &e) != SESAME_OK) {
+        fprintf(stderr, "sesame: %s\n", e.msg); goto out;
+    }
+    rc = 0;
+out:
+    sesame_index_close(ix);
+    return rc;
+}
+
 static int cmd_idat_dump(int argc, char **argv)
 {
     const char *path = NULL;
@@ -979,6 +1060,8 @@ int main(int argc, char **argv)
         return cmd_preprocess(argc - 2, argv + 2);
     if (strcmp(argv[1], "dml") == 0)
         return cmd_dml(argc - 2, argv + 2);
+    if (strcmp(argv[1], "attach-probe") == 0)
+        return cmd_attach_probe(argc - 2, argv + 2);
     if (strcmp(argv[1], "fetch") == 0)
         return cmd_fetch(argc - 2, argv + 2);
     if (strcmp(argv[1], "index-info") == 0)

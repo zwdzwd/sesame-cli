@@ -1,8 +1,11 @@
 /* index.c -- the per-platform ordering table.
  *
- * Reads the TSV produced by tools/export_ordering.R:
- *     Probe_ID <TAB> M <TAB> U <TAB> col <TAB> mask
+ * Reads the ordering TSV in either shape:
+ *     Probe_ID <TAB> M <TAB> U <TAB> col [ <TAB> mask ]
  * with M/U as decimal bead addresses or "NA", col in {G,R,2}, mask in {0,1}.
+ * The 5-column form is the legacy tools/export_ordering.R (sesameData) export
+ * with the mask inline; the 4-column form is the published InfiniumAnnotation
+ * ordering, where the mask has moved to the companion .cm file (mask -> 0 here).
  *
  * The whole (decompressed) file is slurped and parsed in place -- for ~937k
  * rows that is far cheaper than per-line I/O, and the blob doubles as the
@@ -163,10 +166,13 @@ sesame_index_t *sesame_index_open(const char *path, sesame_err_t *err)
         for (char *q = line; q < le && nf < 5; q++) {
             if (*q == '\t') { *q = '\0'; f[nf++] = q + 1; }
         }
-        if (nf != 5) {
+        /* 5 columns = legacy sesameData export (mask inline); 4 columns = the
+         * published InfiniumAnnotation ordering, where the mask now lives in the
+         * companion .cm file, so there is no mask column here (mask defaults 0). */
+        if (nf != 4 && nf != 5) {
             sesame_index_close(ix);
             sesame__fail(err, SESAME_ERR_FORMAT,
-                         "%s: row %d has %d fields, expected 5", path, row + 1, nf);
+                         "%s: row %d has %d fields, expected 4 or 5", path, row + 1, nf);
             return NULL;
         }
         /* Terminate the final field (overwrites '\n', or the NUL at EOF). */
@@ -193,7 +199,7 @@ sesame_index_t *sesame_index_open(const char *path, sesame_err_t *err)
             return NULL;
         }
 
-        ix->mask[row] = (uint8_t)(f[4][0] == '1');
+        ix->mask[row] = (uint8_t)(nf == 5 && f[4][0] == '1');
         row++;
         p = le + 1;
     }

@@ -56,9 +56,10 @@ every intentional difference.
 **In:** `readIDATpair` → `prepSesame(sdf, "QCDPB")` → `getBetas`, the `sesameQC`
 panel, and per-probe differential methylation (`DML`), for EPIC, EPICv2, HM450,
 MSA.
-**Out:** DMR (region calling — needs a genomic-coordinate annotation not yet
-hosted), KYCG, CNV, visualization, and all inference (species/strain/age/sex/
-ethnicity) — those stay in R.
+**Out:** DMR (region calling — the algorithm is not built yet, though the
+per-probe genomic coordinates it needs are now published as
+`<platform>.hg38.coord.tsv.gz`), KYCG, CNV, visualization, and all inference
+(species/strain/age/sex/ethnicity) — those stay in R.
 
 ## Installation
 
@@ -101,11 +102,13 @@ A `<prefix>` resolves `<prefix>_Grn.idat[.gz]` and `<prefix>_Red.idat[.gz]`. The
 ## Commands
 
 ```
-sesame preprocess [options] <prefix> [<prefix> ...]   # IDAT -> YAME .cg (+ qc.tsv)
-sesame dml        --betas <beta.cg|matrix.tsv> (--formula .. --meta .. | --design ..)
-sesame fetch      [<platform>] [--force]              # download data into the store
+sesame preprocess   [options] <prefix> [<prefix> ...] # IDAT -> YAME .cg (+ qc.tsv)
+sesame dml          --betas <beta.cg|matrix.tsv> (--formula .. --meta .. | --design ..)
+sesame attach-probe [--platform P] <file.cg|.cm|.tsv> # label a positional file with Probe_IDs
+sesame fetch        [<platform>] [--force]            # download data into the store
+sesame fetch        genome [<build>] [--force]        # download genome-level annotation
 sesame index-info                                     # show store + pinned tag + platforms
-sesame idat-dump  [--head N] [--tsv] <file.idat[.gz]> # inspect a raw IDAT
+sesame idat-dump    [--head N] [--tsv] <file.idat[.gz]> # inspect a raw IDAT
 sesame version
 ```
 
@@ -163,15 +166,40 @@ intercept. For interactions/splines, build the design elsewhere and pass it with
 `--design <numeric.tsv>` (first column = sample id, remaining columns = terms).
 Runs in parallel (`--threads`). Because DML consumes the betas matrix, it has no
 data-lineage caveat — it matches R's `lm` to ~1e-9 (see `NUMERICS.md`). Region
-calling (DMR) is not yet included: it needs per-probe genomic coordinates.
+calling (DMR) is not yet included; the per-probe genomic coordinates it needs
+now ship as `<platform>.hg38.coord.tsv.gz` (see `attach-probe`).
+
+### `sesame attach-probe`
+
+A YAME `.cg`/`.cm` and the per-probe coordinate tables
+(`<platform>.hg38.coord.tsv.gz`) are **positional** — one row per probe in
+ordering order, with no `Probe_ID` column inside them (row names live in the
+ordering). This prepends the ordering's `Probe_ID` to each row and prints a
+labeled TSV, so the file becomes directly greppable / joinable:
+
+```sh
+sesame attach-probe --platform MSA MSA.hg38.coord.tsv.gz          # coord + Probe_ID
+sesame attach-probe --platform MSA --all MSA.hg38.mask.cm         # every mask set, per probe
+sesame attach-probe --index ord.tsv.gz out/beta.cg               # betas (fmt4)
+sesame attach-probe --index ord.tsv.gz --beta out/intensity.cg   # M/U -> beta (fmt3)
+```
+
+The ordering comes from `--index <ordering.tsv.gz>`, else `--platform`, else the
+filename prefix. `--all` emits every sample/record column (e.g. all mask sets in
+a `.cm`); `--beta` prints beta rather than `M<TAB>U` for a format-3 `.cg`. The row
+count **must** match the ordering — a mismatch is a hard error (never silent
+misalignment), so use the same platform + tag that produced the file.
 
 ### `sesame fetch`
 
-Download a platform's data (ordering table + `.cm` mask + `SHA256SUMS`) into the
-[store](#data-files-and-the-store), verifying every file against a digest
-compiled into the build. With no platform, fetches all published platforms.
-`--force` re-downloads even if a file is already present and matches. **This is
-the only command that touches the network**, and it never prompts.
+Download a platform's data (ordering table + `.cm` mask + per-probe
+`.hg38.coord.tsv.gz` + `SHA256SUMS`) into the [store](#data-files-and-the-store),
+verifying every file against a digest compiled into the build. With no platform,
+fetches all published platforms. `sesame fetch genome <build>` (default `hg38`)
+pulls the genome-level annotation (seqinfo/gaps/cytoband) from the separate
+`zhou-lab/genomes` repo. `--force` re-downloads even a file already present and
+matching. **This is the only command that touches the network**, and it never
+prompts.
 
 ### `sesame index-info`
 
@@ -247,12 +275,13 @@ one subfolder per platform, versioned by **git tag**:
 
 ```
 https://github.com/zhou-lab/InfiniumAnnotation/raw/<tag>/<platform>/<file>
-                                                   ^^^^^ the version    e.g. v1/MSA/MSA.ordering.tsv.gz
+                                                   ^^^^^ the version    e.g. v7/MSA/MSA.ordering.tsv.gz
 ```
 
-Each platform folder holds its ordering table, its `.cm` mask (+ `.idx`), and a
-`SHA256SUMS`. This build pins tag **v1**. *(Only MSA is published at v1 so far;
-the others error cleanly until published, and still auto-detect by bead count.)*
+Each platform folder holds its ordering table, its `.cm` mask (+ `.idx`), the
+per-probe genomic coordinate table (`<platform>.hg38.coord.tsv.gz`), and a
+`SHA256SUMS`. This build pins tag **v7**, at which **all four platforms**
+(EPIC, EPICv2, HM450, MSA) are published.
 
 `sesame fetch <platform>` downloads that platform's whole folder into the local
 **store**, mirroring the remote exactly:
@@ -261,12 +290,18 @@ the others error cleanly until published, and still auto-detect by bead count.)*
 <store>/MSA/SHA256SUMS            byte-identical copy of the remote
 <store>/MSA/MSA.ordering.tsv.gz
 <store>/MSA/MSA.hg38.mask.cm(.idx)
+<store>/MSA/MSA.hg38.coord.tsv.gz
 ```
 
 so `cd <store>/MSA && shasum -a 256 -c SHA256SUMS` verifies the store by hand.
 Fetch first pulls `SHA256SUMS`, verifies it against a digest compiled into this
 build (a hard trust anchor), then verifies every file against it; a file already
 present with the right digest is skipped.
+
+Genome-level annotation is separate — `sesame fetch genome hg38` pulls
+`seqinfo/gaps/cytoband` from [`zhou-lab/genomes`](https://github.com/zhou-lab/genomes)
+into `<store>/genome/hg38/`, the same SHA256SUMS-anchored way. It lives in its own
+repo so plotting tools can reuse it independently of the platform annotation.
 
 **Store location** (`sesame fetch` writes here) — resolved in this order:
 

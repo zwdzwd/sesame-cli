@@ -13,6 +13,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <stdio.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -121,10 +122,41 @@ int sesame_fetch_index(const char *platform, int force,
 /* Fetch every platform published at the pinned tag. */
 int sesame_fetch_all(int force, sesame_err_t *err);
 
+/* Fetch one genome's genome-level annotation (seqinfo, gaps, cytoband) from the
+ * zhou-lab/genomes repo into <store>/genome/<genome>/, mirroring the remote --
+ * same SHA256SUMS-anchored, digest-verified, de-duplicated path as
+ * sesame_fetch_index. These files drive CNV binning (seqinfo+gaps) and the CNV
+ * ideogram (cytoband). Genome-level: shared by every platform of the build. */
+int sesame_fetch_genome(const char *genome, int force, sesame_err_t *err);
+
+/* Finds a fetched genome file (e.g. "seqinfo.tsv.gz") in the store. 0 and fills
+ * out on success, -1 if absent. Never downloads. */
+int sesame_genome_locate(const char *genome, const char *file,
+                         char *out, size_t n);
+
 sesame_index_t *sesame_index_open(const char *path, sesame_err_t *err);
 void            sesame_index_close(sesame_index_t *ix);
 int32_t         sesame_index_nprobes(const sesame_index_t *ix);
 const char     *sesame_index_probe_id(const sesame_index_t *ix, int32_t i);
+
+/* ------------------------------------------------------------- attach ---
+ *
+ * Attach the ordering's Probe_IDs to a positional data file, writing a labeled
+ * TSV to `out`. The file's rows are positionally aligned to the ordering (the
+ * lineage MUST match -- use the same platform/tag that produced the file), so
+ * row i is labeled with ix's i-th Probe_ID. Handles YAME .cg/.cm/.cx (any
+ * format: fmt0 mask bit, fmt3 M/U or beta, fmt4 float, ...) and plain text
+ * .tsv[.gz] (e.g. <platform>.hg38.coord.tsv.gz), whose own header is kept and
+ * prefixed with "Probe_ID". Errors if the row count does not match ix. */
+typedef struct {
+    int all;        /* YAME: emit every sample/record, not just the first     */
+    int beta;       /* format 3: print beta instead of M<TAB>U                 */
+    int no_header;  /* suppress the header line (text: treat line 1 as data)   */
+} sesame_attach_opt_t;
+
+int sesame_attach_probe(const char *path, const sesame_index_t *ix,
+                        const sesame_attach_opt_t *opt, FILE *out,
+                        sesame_err_t *err);
 
 /* --------------------------------------------------------------- sigdf ---
  *

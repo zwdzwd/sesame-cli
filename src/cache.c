@@ -208,6 +208,22 @@ int sesame_index_locate(const char *platform, char *out, size_t n)
     return -1;
 }
 
+int sesame_genome_locate(const char *genome, const char *file, char *out, size_t n)
+{
+    char dir[4096];
+    if (!genome || !file) return -1;
+    sesame_store_dir(dir, sizeof dir);
+    /* Mirrors the remote: <store>/genome/<genome>/<file> */
+    snprintf(out, n, "%s/genome/%s/%s", dir, genome, file);
+    if (is_file(out)) return 0;
+
+    snprintf(out, n, "./%s", file);   /* cwd convenience */
+    if (is_file(out)) return 0;
+
+    out[0] = '\0';
+    return -1;
+}
+
 /* Fills msg with the "here is how to fix it" text used when no index is found.
  * Deliberately verbose: this is the error a first-time user will hit. */
 void sesame_index_missing_help(const char *platform, char *msg, size_t n)
@@ -410,25 +426,73 @@ static void mkdir_parent(const char *path)
     if (slash) { *slash = '\0'; mkdirs(tmp); }
 }
 
-/* Fetch one platform at the pinned tag into <store>/<platform>/, mirroring the
- * remote exactly.
+/* Fetch a SHA256SUMS-anchored subtree from <base>/<tag>/<remote_sub>/ into
+ * <store_sub>/, mirroring the remote exactly.
  *
- * Repo layout: <base>/<tag>/<platform>/{SHA256SUMS, <files...>}, where files may
- * themselves be nested (e.g. KYCG/foo.cm). We pull the platform's SHA256SUMS
- * first, verify it against the digest compiled into this build (a hard trust
- * anchor) and KEEP it -- so <store>/<platform>/SHA256SUMS is a byte-identical
- * copy of the remote and `shasum -a 256 -c SHA256SUMS` verifies the platform by
- * hand. Then every file it lists is fetched (ordering + .cm mask + whatever
- * else), a matching one skipped. Mirroring the remote means no cross-platform
- * naming conflicts and room to grow subfolders, with no local merge logic. */
+ * Repo layout: <base>/<tag>/<remote_sub>/{SHA256SUMS, <files...>}, where files
+ * may themselves be nested (e.g. KYCG/foo.cm). We pull SHA256SUMS first, verify
+ * it against the digest compiled into this build (a hard trust anchor) and KEEP
+ * it -- so <store_sub>/SHA256SUMS is a byte-identical copy of the remote and
+ * `shasum -a 256 -c SHA256SUMS` verifies the subtree by hand. Then every file it
+ * lists is fetched, a matching one skipped. `noun` labels the summary line. If
+ * match_file is non-NULL, the on-disk path of the file whose name equals it is
+ * written to out_match. Mirroring means no naming conflicts, room to grow
+ * subfolders, and no local merge logic. Shared by the platform index and the
+ * genome-annotation fetch. */
+static int fetch_subtree(const char *base, const char *tag,
+                         const char *remote_sub, const char *store_sub,
+                         const char *anchor_sha, const char *noun, int force,
+                         const char *match_file, char *out_match, size_t out_n,
+                         sesame_err_t *err)
+{
+    char url[4096], sums_path[4096];
+    sums_t sums[SUMS_MAX];
+    int nsums, i, ndl = 0, dl;
+
+    mkdirs(store_sub);
+    if (out_match && out_n) out_match[0] = '\0';
+
+    /* SHA256SUMS: verified against the anchor, and kept in place. */
+    snprintf(url, sizeof url, "%s/%s/%s/%s", base, tag, remote_sub, SESAME_SUMS_FILE);
+    snprintf(sums_path, sizeof sums_path, "%s/%s", store_sub, SESAME_SUMS_FILE);
+    if (download_verify(url, anchor_sha, sums_path, NULL, 1, NULL, err) != SESAME_OK)
+        return err ? err->code : SESAME_ERR_IO;
+
+    nsums = sums_load(sums_path, sums, SUMS_MAX);
+    if (nsums <= 0)
+        return sesame__fail(err, SESAME_ERR_FORMAT,
+                            "empty or unreadable SHA256SUMS for %s", noun);
+
+    for (i = 0; i < nsums; i++) {
+        char dest[4096];
+        snprintf(dest, sizeof dest, "%s/%s", store_sub, sums[i].file);
+        snprintf(url,  sizeof url,  "%s/%s/%s/%s", base, tag, remote_sub, sums[i].file);
+        mkdir_parent(dest);                /* nested files, e.g. KYCG/foo.cm */
+        if (download_verify(url, sums[i].sha, dest, sums[i].file, force, &dl, err)
+                != SESAME_OK)
+            return err ? err->code : SESAME_ERR_IO;
+        ndl += dl;
+        if (match_file && out_match && strcmp(sums[i].file, match_file) == 0)
+            snprintf(out_match, out_n, "%s", dest);
+    }
+
+    /* One clear summary. When nothing was downloaded, say so plainly instead of
+     * repeating a "(cached)" line for every file. */
+    if (ndl == 0)
+        fprintf(stderr, "sesame: %s up to date (%s, %d files)\n", noun, tag, nsums);
+    else
+        fprintf(stderr, "sesame: %s ready (%s, %d file%s downloaded)\n",
+                noun, tag, ndl, ndl == 1 ? "" : "s");
+    return SESAME_OK;
+}
+
+/* Fetch one platform at the pinned tag into <store>/<platform>/. out_path
+ * receives the ordering table's path. */
 int sesame_fetch_index(const char *platform, int force,
                        char *out_path, size_t out_n, sesame_err_t *err)
 {
     const sesame_reg_t *reg = sesame__reg_for_platform(platform);
-    const char *tag = SESAME_DEFAULT_TAG;
-    char store[4096], pdir[4096], url[4096], sums_path[4096], ordering[4096] = "";
-    sums_t sums[SUMS_MAX];
-    int nsums, i, ndl = 0, dl;
+    char store[4096], pdir[4096];
 
     if (err) { err->code = SESAME_OK; err->msg[0] = '\0'; }
     if (!reg)
@@ -436,50 +500,41 @@ int sesame_fetch_index(const char *platform, int force,
             "unknown platform '%s' (known: EPIC, EPICv2, HM450, MSA)", platform);
     if (!reg->sums_sha256)
         return sesame__fail(err, SESAME_ERR_UNSUPPORTED,
-            "%s is not published at tag %s yet", platform, tag);
+            "%s is not published at tag %s yet", platform, SESAME_DEFAULT_TAG);
 
     sesame_store_dir(store, sizeof store);
     snprintf(pdir, sizeof pdir, "%s/%s", store, platform);
-    mkdirs(pdir);
+    return fetch_subtree(SESAME_BASE_URL, SESAME_DEFAULT_TAG, platform, pdir,
+                         reg->sums_sha256, platform, force,
+                         reg->ordering, out_path, out_n, err);
+}
 
-    /* SHA256SUMS: verified against the anchor, and kept in place. */
-    snprintf(url, sizeof url, "%s/%s/%s/%s",
-             SESAME_BASE_URL, tag, platform, SESAME_SUMS_FILE);
-    snprintf(sums_path, sizeof sums_path, "%s/%s", pdir, SESAME_SUMS_FILE);
-    if (download_verify(url, reg->sums_sha256, sums_path, NULL, 1, NULL, err)
-            != SESAME_OK)
-        return err ? err->code : SESAME_ERR_IO;
+static const sesame_genome_reg_t *sesame__genome_reg_for(const char *genome)
+{
+    if (!genome) return NULL;
+    for (const sesame_genome_reg_t *g = SESAME_GENOME_REGISTRY; g->genome; g++)
+        if (strcmp(g->genome, genome) == 0) return g;
+    return NULL;
+}
 
-    nsums = sums_load(sums_path, sums, SUMS_MAX);
-    if (nsums <= 0)
-        return sesame__fail(err, SESAME_ERR_FORMAT,
-                            "empty or unreadable SHA256SUMS for %s", platform);
+/* Fetch one genome's genome-level annotation into <store>/genome/<genome>/. */
+int sesame_fetch_genome(const char *genome, int force, sesame_err_t *err)
+{
+    const sesame_genome_reg_t *g = sesame__genome_reg_for(genome);
+    char store[4096], gdir[4096];
 
-    for (i = 0; i < nsums; i++) {
-        char dest[4096];
-        snprintf(dest, sizeof dest, "%s/%s", pdir, sums[i].file);
-        snprintf(url,  sizeof url,  "%s/%s/%s/%s",
-                 SESAME_BASE_URL, tag, platform, sums[i].file);
-        mkdir_parent(dest);                /* nested files, e.g. KYCG/foo.cm */
-        if (download_verify(url, sums[i].sha, dest, sums[i].file, force, &dl, err)
-                != SESAME_OK)
-            return err ? err->code : SESAME_ERR_IO;
-        ndl += dl;
-        if (strcmp(sums[i].file, reg->ordering) == 0)
-            snprintf(ordering, sizeof ordering, "%s", dest);
-    }
+    if (err) { err->code = SESAME_OK; err->msg[0] = '\0'; }
+    if (!g)
+        return sesame__fail(err, SESAME_ERR_UNSUPPORTED,
+            "unknown genome '%s' (known: hg38)", genome);
+    if (!g->sums_sha256)
+        return sesame__fail(err, SESAME_ERR_UNSUPPORTED,
+            "genome %s is not published at tag %s yet", genome, SESAME_GENOME_TAG);
 
-    /* One clear summary. When nothing was downloaded, say so plainly instead of
-     * repeating a "(cached)" line for every file. */
-    if (ndl == 0)
-        fprintf(stderr, "sesame: %s up to date (%s, %d files)\n",
-                platform, tag, nsums);
-    else
-        fprintf(stderr, "sesame: %s ready (%s, %d file%s downloaded)\n",
-                platform, tag, ndl, ndl == 1 ? "" : "s");
-
-    if (out_path) snprintf(out_path, out_n, "%s", ordering);
-    return SESAME_OK;
+    sesame_store_dir(store, sizeof store);
+    snprintf(gdir, sizeof gdir, "%s/genome/%s", store, genome);
+    return fetch_subtree(SESAME_GENOME_BASE_URL, SESAME_GENOME_TAG, genome, gdir,
+                         g->sums_sha256, genome, force, NULL, NULL, 0, err);
 }
 
 /* Fetch every platform that is published at the pinned tag. */
@@ -518,5 +573,13 @@ int sesame_fetch_all(int force, sesame_err_t *err)
     (void)force;
     return sesame__fail(err, SESAME_ERR_UNSUPPORTED,
         "this build has no network support");
+}
+
+int sesame_fetch_genome(const char *genome, int force, sesame_err_t *err)
+{
+    (void)force;
+    return sesame__fail(err, SESAME_ERR_UNSUPPORTED,
+        "this build has no network support; download %s/%s/%s/ manually",
+        SESAME_GENOME_BASE_URL, SESAME_GENOME_TAG, genome ? genome : "<genome>");
 }
 #endif

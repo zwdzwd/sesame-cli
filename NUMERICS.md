@@ -261,6 +261,12 @@ keeps. Design masking is `qualityMask`'s job (the `Q` step), which uses a
 different, curated vocabulary. *This is worth a look from the sesame side: the
 column is either vestigial or an intent that was never wired up.*
 
+> The published InfiniumAnnotation ordering (tag v7) has since **dropped the
+> `mask` column** — it is now a 4-column table (`Probe_ID M U col`), with the
+> curated masks living in the companion `.cm` file. `sesame_index_open` accepts
+> either shape (4 columns → mask defaults 0), so nothing downstream changes; the
+> point above stands, the dead column is simply gone from the source now.
+
 **R's text parser is not correctly rounded — do not compare betas via text.**
 `as.numeric("0.96236179722418258")` returns a double one ULP away from the value
 that produced that string, even though C's own `strtod` round-trips it exactly.

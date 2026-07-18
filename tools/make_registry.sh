@@ -63,5 +63,40 @@ cat <<'EOF'
     { NULL, 0, NULL, NULL }
 };
 
+/* --- Genome-level annotation (seqinfo/gaps/cytoband), hosted separately in
+ * zhou-lab/genomes so plotting tools can reuse it. Raw git paths, one repo-wide
+ * tag. Layout: <base>/<tag>/<genome>/{SHA256SUMS, seqinfo.tsv.gz, gaps.tsv.gz,
+ * cytoband.tsv.gz}. Trust anchor = sha256(<genome>/SHA256SUMS) at the tag. */
+EOF
+
+gbase=${SESAME_GENOME_BASE_URL:-https://github.com/zhou-lab/genomes/raw}
+gtag=${SESAME_GENOME_TAG:-v1}
+
+cat <<EOF
+#define SESAME_GENOME_BASE_URL  "$gbase"
+#define SESAME_GENOME_TAG       "$gtag"
+
+typedef struct {
+    const char *genome;
+    const char *sums_sha256;  /* sha256 of <genome>/SHA256SUMS; NULL = unpublished */
+} sesame_genome_reg_t;
+
+static const sesame_genome_reg_t SESAME_GENOME_REGISTRY[] = {
+EOF
+
+for genome in hg38; do
+    url="$gbase/$gtag/$genome/SHA256SUMS"
+    sha=$(curl -sfL "$url" 2>/dev/null | shasum -a 256 | cut -d' ' -f1 || true)
+    if curl -sfIL "$url" >/dev/null 2>&1 && [ -n "$sha" ]; then
+        printf '    { "%s", "%s" },\n' "$genome" "$sha"
+    else
+        printf '    { "%s", NULL },  /* not published at %s */\n' "$genome" "$gtag"
+    fi
+done
+
+cat <<'EOF'
+    { NULL, NULL }
+};
+
 #endif /* SESAME_REGISTRY_H */
 EOF

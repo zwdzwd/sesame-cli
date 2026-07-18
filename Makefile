@@ -23,13 +23,13 @@ YAME_LIB := $(YAME_DIR)/libyame.a
 HTSLIB   := $(YAME_DIR)/htslib/libhts.a
 YAME_INC := -I$(YAME_DIR)/src -I$(YAME_DIR)/htslib
 
-SRC     := src/util.c src/sha256.c src/numerics.c src/idat.c src/index.c src/sigdf.c src/prep.c src/qc.c src/dml.c src/mask.c src/cgwrite.c src/cache.c
+SRC     := src/util.c src/sha256.c src/numerics.c src/idat.c src/index.c src/sigdf.c src/prep.c src/qc.c src/dml.c src/mask.c src/cgwrite.c src/attach.c src/cache.c
 CLI_SRC := cli/main.c
 OBJ     := $(SRC:.c=.o)
 CLI_OBJ := $(CLI_SRC:.c=.o)
 BIN     := sesame
 
-.PHONY: all asan test test-idat test-betas test-prep test-qmask test-poobah test-noob test-batch test-qc test-dml test-cg index cnv-normals yame-lib fuzz fuzz-replay clean
+.PHONY: all asan test test-idat test-betas test-prep test-qmask test-poobah test-noob test-batch test-qc test-dml test-cg test-attach index cnv-normals yame-lib fuzz fuzz-replay clean
 
 all: $(BIN)
 
@@ -50,6 +50,10 @@ src/mask.o: src/mask.c include/sesame.h src/internal.h | $(YAME_LIB)
 src/cgwrite.o: src/cgwrite.c include/sesame.h src/internal.h | $(YAME_LIB)
 	$(CC) -O2 -g -std=gnu11 -Wall -Iinclude $(YAME_INC) $(EXTRA_CFLAGS) -c -o $@ $<
 
+# attach.c also includes YAME headers; same relaxed rule as cgwrite.o.
+src/attach.o: src/attach.c include/sesame.h src/internal.h | $(YAME_LIB)
+	$(CC) -O2 -g -std=gnu11 -Wall -Iinclude $(YAME_INC) $(EXTRA_CFLAGS) -c -o $@ $<
+
 %.o: %.c include/sesame.h src/internal.h src/registry.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
@@ -57,7 +61,7 @@ asan: clean
 	$(MAKE) EXTRA_CFLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
 	        EXTRA_LDFLAGS="-fsanitize=address,undefined"
 
-test: test-idat test-betas test-prep test-qmask test-poobah test-noob test-batch test-qc test-dml test-cg
+test: test-idat test-betas test-prep test-qmask test-poobah test-noob test-batch test-qc test-dml test-cg test-attach
 
 test-idat: $(BIN)
 	@tests/run_golden.sh
@@ -104,6 +108,9 @@ test-dml: $(BIN)
 
 test-cg: $(BIN) pipeline_dump
 	@tests/run_cg.sh
+
+test-attach: $(BIN) mu2cg
+	@tests/run_attach.sh
 
 # Export ordering tables from sesameData (bootstrap; needs Rscript + sesame).
 PLATFORMS := HM450 EPIC EPICv2 MSA
