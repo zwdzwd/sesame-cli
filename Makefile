@@ -29,7 +29,7 @@ OBJ     := $(SRC:.c=.o)
 CLI_OBJ := $(CLI_SRC:.c=.o)
 BIN     := sesame
 
-.PHONY: all asan test test-idat test-betas test-prep test-qmask test-poobah test-noob test-batch test-qc test-dml test-cg index cnv-data yame-lib fuzz fuzz-replay clean
+.PHONY: all asan test test-idat test-betas test-prep test-qmask test-poobah test-noob test-batch test-qc test-dml test-cg index cnv-normals yame-lib fuzz fuzz-replay clean
 
 all: $(BIN)
 
@@ -112,10 +112,11 @@ index:
 	    Rscript tools/export_ordering.R $$p testdata/$$p.ordering.tsv.gz; \
 	done
 
-# Export CNV annotation from sesameData: genome-level genomeInfo (hg38) and the
-# per-platform normal references (format-3 .cg) into the store. Needs Rscript.
-cnv-data: mu2cg
-	Rscript tools/export_genomeinfo.R hg38 data/genome
+# Export the per-platform CNV normal references (format-3 .cg) from sesameData
+# into the store. Genome-level genomeInfo is NOT here -- it lives in the separate
+# zhou-lab/genomes repo (generate it with tools/export_genomeinfo.R) and is
+# pulled by `sesame fetch genome <build>`. Needs Rscript.
+cnv-normals: mu2cg
 	@for p in EPIC EPICv2; do \
 	    mkdir -p data/$$p; \
 	    Rscript tools/export_cnvnormals.R $$p testdata/$$p.ordering.tsv.gz \

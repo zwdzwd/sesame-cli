@@ -8,6 +8,10 @@
 # cytoband is only for the ideogram in visualizeSegments and is bundled for
 # completeness. Genome-level: shared across all platforms of the build.
 #
+# This output is NOT bundled in sesame-cli. It populates the standalone
+# zhou-lab/genomes repo (one <genome>/ folder per build, so plotting tools can
+# reuse it), and `sesame fetch genome <build>` pulls it into the local store.
+#
 #   Rscript tools/export_genomeinfo.R [genome=hg38] [outdir=data/genome]
 
 suppressMessages(library(sesameData))
