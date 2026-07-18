@@ -202,6 +202,15 @@ int sesame_prep_poobah(sesame_sigdf_t *sdf, const uint8_t *bgmask, int32_t bn,
 int sesame_poobah_pvals(const sesame_sigdf_t *sdf, const uint8_t *bgmask, int32_t bn,
                         int combine_neg, double *pout, sesame_err_t *err);
 
+/* Per-sample pipeline: apply prep to a copy of raw, filling whichever of
+ * beta/M/U/total/pval are non-NULL (each nprobes). Signal is from the
+ * preprocessed copy unless raw_signal. Shared by `preprocess` and validation. */
+int sesame_pipeline(const sesame_sigdf_t *raw, const char *prep,
+                    const uint8_t *qmask, int32_t qn,
+                    const uint8_t *bgmask, int32_t bgn, int raw_signal,
+                    double *beta, double *M, double *U, double *total,
+                    double *pval, uint8_t *col, sesame_err_t *err);
+
 /* C -- inferInfiniumIChannel (R/channel_inference.R:20-55). Reassigns each
  * Infinium-I probe to its brighter channel, judged against the 95th percentile
  * of the pooled out-of-band signal under the new assignment. Defaults

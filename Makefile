@@ -62,23 +62,30 @@ test: test-idat test-betas test-prep test-qmask test-poobah test-noob test-batch
 test-idat: $(BIN)
 	@tests/run_golden.sh
 
-test-betas: $(BIN)
+test-betas: $(BIN) pipeline_dump
 	@tests/run_betas.sh
 
-test-prep: $(BIN)
+test-prep: $(BIN) pipeline_dump
 	@tests/run_prep.sh
 
-test-qmask: $(BIN)
+test-qmask: $(BIN) pipeline_dump
 	@tests/run_qmask.sh
 
-test-poobah: $(BIN)
+test-poobah: $(BIN) pipeline_dump
 	@tests/run_poobah.sh
 
 # The B unit harness links only numerics.o (no other deps).
 normexp_test: tests/normexp_test.c src/numerics.o include/sesame.h src/internal.h
 	$(CC) $(CFLAGS) -Isrc -o $@ tests/normexp_test.c src/numerics.o -lm
 
-test-noob: $(BIN) normexp_test
+# Validation harness: full-precision library pipeline (links libsesame + YAME),
+# so differential tests keep their bit-identical/ULP gates that the .cg product
+# (float32) cannot carry.
+pipeline_dump: tests/pipeline_dump.c $(OBJ) $(YAME_LIB) $(HTSLIB) include/sesame.h
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ tests/pipeline_dump.c $(OBJ) \
+	    $(YAME_LIB) $(HTSLIB) -lpthread $(LDLIBS)
+
+test-noob: $(BIN) normexp_test pipeline_dump
 	@tests/run_noob.sh
 
 test-batch: $(BIN)
@@ -90,7 +97,7 @@ test-qc: $(BIN)
 test-dml: $(BIN)
 	@tests/run_dml.sh
 
-test-cg: $(BIN)
+test-cg: $(BIN) pipeline_dump
 	@tests/run_cg.sh
 
 # Export ordering tables from sesameData (bootstrap; needs Rscript + sesame).
@@ -112,5 +119,5 @@ fuzz-replay:
 	    fuzz/fuzz_idat.c src/idat.c src/util.c -lz -o fuzz_replay
 
 clean:
-	rm -f $(OBJ) $(CLI_OBJ) $(BIN) normexp_test fuzz_idat fuzz_replay
+	rm -f $(OBJ) $(CLI_OBJ) $(BIN) normexp_test pipeline_dump fuzz_idat fuzz_replay
 	rm -rf $(BIN).dSYM normexp_test.dSYM fuzz_replay.dSYM fuzz_idat.dSYM

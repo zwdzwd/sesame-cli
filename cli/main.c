@@ -786,91 +786,42 @@ typedef struct {
     uint32_t         status_or;
 } pp_ctx;
 
-static void fill_na(double *col, int32_t n) { int32_t k; for (k = 0; k < n; k++) col[k] = NAN; }
-
-/* fill intensity (M/U) and/or total columns from SigDF g. */
-static int pp_signal(pp_ctx *c, const sesame_sigdf_t *g, int32_t j, sesame_err_t *e)
-{
-    int32_t n = c->n, k;
-    double *cm = c->matM ? c->matM + (size_t)j*(size_t)n : NULL;
-    double *cu = c->matU ? c->matU + (size_t)j*(size_t)n : NULL;
-    double *ct = c->matTot ? c->matTot + (size_t)j*(size_t)n : NULL;
-    int rc = SESAME_OK;
-    if (c->want_int) {
-        rc = sesame_signal_mu(g, cm, cu, e);
-        if (rc == SESAME_OK && c->want_tot)
-            for (k = 0; k < n; k++) ct[k] = cm[k] + cu[k];
-    } else if (c->want_tot) {
-        rc = sesame_total_intensities(g, ct, e);
-    }
-    return rc;
-}
+static void fill_na(double *col, int32_t n) { int32_t k; if (col) for (k = 0; k < n; k++) col[k] = NAN; }
 
 static void *pp_worker(void *arg)
 {
     pp_ctx *c = (pp_ctx *)arg;
     int32_t n = c->n;
-    double *pv = NULL;
-    if (c->want_pval || strchr(c->prep, 'P'))
-        pv = (double *)malloc((size_t)n * sizeof(double));
-
     for (;;) {
-        int32_t j, k;
-        sesame_sigdf_t *raw = NULL, *sig = NULL;
+        int32_t j;
+        sesame_sigdf_t *raw = NULL;
         sesame_err_t e;
         uint32_t st = 0;
-        int rc, pval_done = 0;
-        const char *p;
+        int rc;
+        double *beta, *M, *U, *tot, *pval;
 
         pthread_mutex_lock(&c->lock);
         j = c->next < c->nsamp ? c->next++ : -1;
         pthread_mutex_unlock(&c->lock);
         if (j < 0) break;
 
+        beta = c->matBeta ? c->matBeta + (size_t)j*(size_t)n : NULL;
+        M    = c->matM    ? c->matM    + (size_t)j*(size_t)n : NULL;
+        U    = c->matU    ? c->matU    + (size_t)j*(size_t)n : NULL;
+        tot  = c->matTot  ? c->matTot  + (size_t)j*(size_t)n : NULL;
+        pval = c->matPval ? c->matPval + (size_t)j*(size_t)n : NULL;
+
         rc = build_sigdf_for(c->prefixes[j], c->ix, c->plat, c->min_beads, &raw, &e);
         if (rc == SESAME_OK) st = raw->status;
         if (rc == SESAME_OK && c->want_qc)
             rc = sesame_qc_calc(raw, c->bgmask, c->bgn, &c->qcres[j], &e);
-        if (rc == SESAME_OK && c->raw_signal)
-            rc = pp_signal(c, raw, j, &e);
-        if (rc == SESAME_OK && !(sig = sesame_sigdf_dup(raw)))
-            rc = sesame__fail(&e, SESAME_ERR_NOMEM, "oom");
+        if (rc == SESAME_OK)
+            rc = sesame_pipeline(raw, c->prep, c->qmask, c->qn, c->bgmask, c->bgn,
+                                 c->raw_signal, beta, M, U, tot, pval, NULL, &e);
+        sesame_sigdf_free(raw);
 
-        for (p = c->prep; *p && rc == SESAME_OK; p++) {
-            switch (*p) {
-            case 'Q': rc = sesame_prep_quality_mask(sig, c->qmask, c->qn, &e); break;
-            case 'C': rc = sesame_prep_infer_channel(sig, 0, 0, &e); break;
-            case 'D': rc = sesame_prep_dye_bias_nl(sig, &e); break;
-            case 'P':
-                rc = sesame_poobah_pvals(sig, c->bgmask, c->bgn, 1, pv, &e);
-                if (rc == SESAME_OK) {
-                    for (k = 0; k < n; k++) if (pv[k] > 0.05) sig->mask[k] = 1;
-                    pval_done = 1;
-                }
-                break;
-            case 'B': rc = sesame_prep_noob(sig, c->bgmask, c->bgn, 1, 15.0, &e); break;
-            default:
-                rc = sesame__fail(&e, SESAME_ERR_UNSUPPORTED, "prep code '%c'", *p);
-            }
-        }
-        if (rc == SESAME_OK && c->want_pval && !pval_done)
-            rc = sesame_poobah_pvals(sig, c->bgmask, c->bgn, 1, pv, &e);
-        if (rc == SESAME_OK && c->want_pval)
-            memcpy(c->matPval + (size_t)j*(size_t)n, pv, (size_t)n * sizeof(double));
-        if (rc == SESAME_OK && c->want_beta)
-            rc = sesame_get_betas(sig, 1, c->matBeta + (size_t)j*(size_t)n, &e);
-        if (rc == SESAME_OK && !c->raw_signal)
-            rc = pp_signal(c, sig, j, &e);
-
-        sesame_sigdf_free(sig); sig = NULL;
-        sesame_sigdf_free(raw); raw = NULL;
-
-        if (rc != SESAME_OK) {                       /* NA columns for this sample */
-            if (c->matBeta) fill_na(c->matBeta + (size_t)j*(size_t)n, n);
-            if (c->matM)    fill_na(c->matM + (size_t)j*(size_t)n, n);
-            if (c->matU)    fill_na(c->matU + (size_t)j*(size_t)n, n);
-            if (c->matTot)  fill_na(c->matTot + (size_t)j*(size_t)n, n);
-            if (c->matPval) fill_na(c->matPval + (size_t)j*(size_t)n, n);
+        if (rc != SESAME_OK) {
+            fill_na(beta, n); fill_na(M, n); fill_na(U, n); fill_na(tot, n); fill_na(pval, n);
         }
         pthread_mutex_lock(&c->lock);
         if (rc != SESAME_OK) {
@@ -879,7 +830,6 @@ static void *pp_worker(void *arg)
         } else c->status_or |= st;
         pthread_mutex_unlock(&c->lock);
     }
-    free(pv);
     return NULL;
 }
 

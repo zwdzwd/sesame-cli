@@ -23,7 +23,8 @@ run_one() {
     if [ ! -f "$pfx"_Grn.idat ] && [ ! -f "$pfx"_Grn.idat.gz ]; then
         echo "SKIP $plat QC: no IDAT $pfx"; return; fi
 
-    SESAME_INDEX_DIR="$store" "$bin" qc "$pfx" 2>/dev/null > "$work/c_qc.tsv"
+    SESAME_INDEX_DIR="$store" "$bin" preprocess --output qc --out "$work" "$pfx" 2>/dev/null
+    mv "$work/qc.tsv" "$work/c_qc.tsv"
 
     if Rscript --vanilla "$here/compare_qc.R" "$plat" "$pfx" "$work/c_qc.tsv" \
          2>"$work/r.err"; then

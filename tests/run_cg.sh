@@ -7,6 +7,7 @@ set -eu
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 root=$(dirname "$here")
 bin="$root/sesame"
+dump="$root/pipeline_dump"
 store=${SESAME_INDEX_DIR:-$root/data}
 idats=${SESAME_TEST_IDATS:-$HOME/repo/InfiniumTestIDATs}
 yame="$root/YAME/yame"
@@ -22,14 +23,15 @@ if [ ! -f "$pfx"_Grn.idat ] && [ ! -f "$pfx"_Grn.idat.gz ]; then
 [ -x "$yame" ] || { echo "SKIP cg: could not build $yame"; exit 0; }
 
 name=$(basename "$pfx")
-SESAME_INDEX_DIR="$store" "$bin" intensity "$pfx"                2>/dev/null > "$work/tot.tsv"
-SESAME_INDEX_DIR="$store" "$bin" intensity --cg "$work/mu.cg" "$pfx"      2>/dev/null  # format 3 (default)
-SESAME_INDEX_DIR="$store" "$bin" intensity --cg "$work/f4.cg" --f4 "$pfx" 2>/dev/null  # format 4
+# raw-signal reference (double), and the two .cg via preprocess (raw signal)
+SESAME_INDEX_DIR="$store" "$dump" --prep "" --what total "$pfx" 2>/dev/null > "$work/tot.tsv"
+SESAME_INDEX_DIR="$store" "$bin" preprocess --prep "" --raw-signal \
+    --output intensity,total_intensity --out "$work" "$pfx" 2>/dev/null
 
-"$yame" unpack -f -1 "$work/mu.cg" 2>/dev/null > "$work/mu.txt"    # M<TAB>U
-"$yame" unpack       "$work/f4.cg" 2>/dev/null > "$work/f4.txt"    # float total
+"$yame" unpack -f -1 "$work/intensity.cg"       2>/dev/null > "$work/mu.txt"    # M<TAB>U (fmt3)
+"$yame" unpack       "$work/total_intensity.cg" 2>/dev/null > "$work/f4.txt"    # float total (fmt4)
 
-python3 - "$work/tot.tsv" "$work/mu.txt" "$work/f4.txt" "$work/mu.cg.idx" "$name" <<'PY'
+python3 - "$work/tot.tsv" "$work/mu.txt" "$work/f4.txt" "$work/intensity.cg.idx" "$name" <<'PY'
 import sys, math
 tot = [l.rstrip("\n").split("\t")[1] for l in open(sys.argv[1])]
 mu  = [l.split("\t") for l in open(sys.argv[2]).read().splitlines()]

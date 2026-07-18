@@ -7,11 +7,13 @@ set -eu
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 root=$(dirname "$here")
 bin="$root/sesame"
+dump="$root/pipeline_dump"
 idats=${SESAME_TEST_IDATS:-$HOME/repo/InfiniumTestIDATs}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
 [ -x "$bin" ] || { echo "FAIL: $bin not built"; exit 1; }
+[ -x "$dump" ] || { echo "FAIL: $dump not built"; exit 1; }
 [ -d "$idats" ] || { echo "SKIP: $idats not found"; exit 0; }
 
 fail=0
@@ -29,7 +31,7 @@ while IFS=' ' read -r plat rel prep tol; do
         echo "SKIP $plat: no $idx (run: sesame fetch)"
         continue
     fi
-    if ! "$bin" betas --index "$idx" --prep "$prep" --f64 "$pfx" \
+    if ! "$dump" --index "$idx" --prep "$prep" --what beta --f64 "$pfx" \
            > "$work/c.f64" 2>"$work/c.err"; then
         echo "FAIL $plat: sesame errored"; sed 's/^/    /' "$work/c.err" | head -3
         fail=$((fail+1)); continue

@@ -15,6 +15,7 @@ set -eu
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 root=$(dirname "$here")
 bin="$root/sesame"
+dump="$root/pipeline_dump"
 store=${SESAME_INDEX_DIR:-$root/data}
 idats=${SESAME_TEST_IDATS:-$HOME/repo/InfiniumTestIDATs}
 work=$(mktemp -d)
@@ -47,7 +48,7 @@ open(sys.argv[3],"w").write("\n".join(sorted(exp))+"\n")
 PY
 
     # actual: probes sesame masks (NA) under prep=Q
-    SESAME_INDEX_DIR="$store" "$bin" betas --prep Q "$pfx" 2>/dev/null \
+    SESAME_INDEX_DIR="$store" "$dump" --prep Q --what beta "$pfx" 2>/dev/null \
       | python3 -c "import sys; print('\n'.join(sorted(l.split('\t')[0] for l in sys.stdin if l.rstrip('\n').split('\t')[1]=='NA')))" \
       > "$work/actual.txt"
 

@@ -165,6 +165,79 @@ int sesame_prep_poobah(sesame_sigdf_t *s, const uint8_t *bgmask, int32_t bn,
     return rc;
 }
 
+/* Per-sample pipeline: apply prep to a copy of raw, filling whichever of
+ * beta/M/U/total/pval are non-NULL (each nprobes long). Signal (M/U/total) is
+ * from the preprocessed copy unless raw_signal, then from raw. pval is the
+ * pOOBAH detection p (from the P step, or computed after the chain if prep has
+ * no P). Shared by `preprocess` and the f64 validation harness. */
+int sesame_pipeline(const sesame_sigdf_t *raw, const char *prep,
+                    const uint8_t *qmask, int32_t qn,
+                    const uint8_t *bgmask, int32_t bgn, int raw_signal,
+                    double *beta, double *M, double *U, double *total,
+                    double *pval, uint8_t *col, sesame_err_t *err)
+{
+    int32_t n, k;
+    sesame_sigdf_t *sig = NULL;
+    double *pv = NULL;
+    int rc = SESAME_OK, pval_done = 0;
+    const char *p;
+
+    if (err) { err->code = SESAME_OK; err->msg[0] = '\0'; }
+    if (!raw || !prep) return sesame__fail(err, SESAME_ERR_IO, "null argument");
+    n = raw->n;
+
+    if (raw_signal && (M || U || total)) {
+        if (M || U) rc = sesame_signal_mu(raw, M, U, err);
+        if (rc == SESAME_OK && total) {
+            if (M && U) for (k = 0; k < n; k++) total[k] = M[k] + U[k];
+            else rc = sesame_total_intensities(raw, total, err);
+        }
+        if (rc != SESAME_OK) return rc;
+    }
+
+    if (!(sig = sesame_sigdf_dup(raw)))
+        return sesame__fail(err, SESAME_ERR_NOMEM, "oom");
+    if (pval || strchr(prep, 'P')) {
+        if (!(pv = (double *)malloc((size_t)n * sizeof(double)))) {
+            sesame_sigdf_free(sig);
+            return sesame__fail(err, SESAME_ERR_NOMEM, "oom");
+        }
+    }
+
+    for (p = prep; *p && rc == SESAME_OK; p++) {
+        switch (*p) {
+        case 'Q': rc = sesame_prep_quality_mask(sig, qmask, qn, err); break;
+        case 'C': rc = sesame_prep_infer_channel(sig, 0, 0, err); break;
+        case 'D': rc = sesame_prep_dye_bias_nl(sig, err); break;
+        case 'P':
+            rc = sesame_poobah_pvals(sig, bgmask, bgn, 1, pv, err);
+            if (rc == SESAME_OK) {
+                for (k = 0; k < n; k++) if (pv[k] > 0.05) sig->mask[k] = 1;
+                pval_done = 1;
+            }
+            break;
+        case 'B': rc = sesame_prep_noob(sig, bgmask, bgn, 1, 15.0, err); break;
+        default:  rc = sesame__fail(err, SESAME_ERR_UNSUPPORTED, "prep code '%c'", *p);
+        }
+    }
+    if (rc == SESAME_OK && pval && !pval_done)
+        rc = sesame_poobah_pvals(sig, bgmask, bgn, 1, pv, err);
+    if (rc == SESAME_OK && pval) memcpy(pval, pv, (size_t)n * sizeof(double));
+    if (rc == SESAME_OK && col)  memcpy(col, sig->col, (size_t)n);
+    if (rc == SESAME_OK && beta) rc = sesame_get_betas(sig, 1, beta, err);
+    if (rc == SESAME_OK && !raw_signal && (M || U || total)) {
+        if (M || U) rc = sesame_signal_mu(sig, M, U, err);
+        if (rc == SESAME_OK && total) {
+            if (M && U) for (k = 0; k < n; k++) total[k] = M[k] + U[k];
+            else rc = sesame_total_intensities(sig, total, err);
+        }
+    }
+
+    free(pv);
+    sesame_sigdf_free(sig);
+    return rc;
+}
+
 /* ---------------------------------------------------------------- C ---
  *
  * inferInfiniumIChannel (R/channel_inference.R:20-55).
