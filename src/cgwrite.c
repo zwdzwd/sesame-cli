@@ -11,8 +11,9 @@
 #include "sesame.h"
 #include "internal.h"
 
-#include "cfile.h"    /* cdata_write1, BGZF */
-#include "cdata.h"    /* cdata_t, cdata_compress, bgzf_open2/tell/close */
+#include "cfile.h"    /* cdata_write1, open_cfile, read_cdata1, BGZF */
+#include "cdata.h"    /* cdata_t, cdata_compress, decompress, bgzf_open2/tell/close */
+#include "index.h"    /* loadSampleNamesFromIndex, cleanSampleNames2, snames_t */
 
 #include <math.h>
 #include <stdio.h>
@@ -35,6 +36,60 @@ static void write_idx(const char *path, char *const *names,
         fclose(ix);
     }
     free(idxpath);
+}
+
+/* Read a format-4 .cg into a sample-major matrix (sample j, probe i at
+ * mat[j*nprobe+i]) and the sample names from <path>.idx. NA (negative float) ->
+ * NaN. Caller frees mat, names[i], and names. */
+int sesame_read_cg(const char *path, double **mat_out, int32_t *nprobe_out,
+                   int32_t *nsamp_out, char ***names_out, sesame_err_t *err)
+{
+    cfile_t cf;
+    snames_t sn;
+    double *mat = NULL;
+    char **names = NULL, pathbuf[4096];
+    int32_t np = -1, ns = 0, cap = 0, i;
+
+    if (err) { err->code = SESAME_OK; err->msg[0] = '\0'; }
+    snprintf(pathbuf, sizeof pathbuf, "%s", path);
+    cf = open_cfile(pathbuf);
+    if (!cf.fh) return sesame__fail(err, SESAME_ERR_IO, "cannot open %s", path);
+    sn = loadSampleNamesFromIndex(pathbuf);
+
+    for (;;) {
+        cdata_t c = read_cdata1(&cf), d;
+        float *s;
+        if (c.n == 0) break;                     /* EOF */
+        d = decompress(c);
+        if (d.fmt != '4') {
+            free_cdata(&c); free_cdata(&d); bgzf_close(cf.fh); cleanSampleNames2(sn);
+            free(mat); free(names);
+            return sesame__fail(err, SESAME_ERR_FORMAT, "%s is format %c, expected 4", path, d.fmt);
+        }
+        if (np < 0) np = (int32_t)d.n;
+        else if ((int32_t)d.n != np) {
+            free_cdata(&c); free_cdata(&d); bgzf_close(cf.fh); cleanSampleNames2(sn);
+            free(mat); free(names);
+            return sesame__fail(err, SESAME_ERR_FORMAT, "inconsistent probe count in %s", path);
+        }
+        if (ns >= cap) {
+            cap = cap ? cap * 2 : 8;
+            mat = (double *)realloc(mat, (size_t)cap * (size_t)np * sizeof(double));
+            names = (char **)realloc(names, (size_t)cap * sizeof(char *));
+        }
+        s = (float *)d.s;
+        for (i = 0; i < np; i++) {
+            float v = s[i];
+            mat[(size_t)ns * (size_t)np + (size_t)i] = v < 0.0f ? NAN : (double)v;
+        }
+        names[ns] = strdup(ns < sn.n ? sn.s[ns] : "");
+        ns++;
+        free_cdata(&c); free_cdata(&d);
+    }
+    bgzf_close(cf.fh);
+    cleanSampleNames2(sn);
+    *mat_out = mat; *nprobe_out = np; *nsamp_out = ns; *names_out = names;
+    return SESAME_OK;
 }
 
 /* Format 3 (M/U counts), the default. Rounds M,U to integers -- exact for raw

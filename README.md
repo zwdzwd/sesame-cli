@@ -9,12 +9,13 @@ A standalone C implementation of [sesame](https://github.com/zwdzwd/sesame)'s
 basic Infinium DNA methylation preprocessing: **IDAT → betas**, with no R and no
 Bioconductor. Builds one binary, `sesame`.
 
-> **Status.** The IDAT reader and `betas` with no preprocessing are
-> **bit-identical to R**, and the full **`QCDPB`** pipeline is implemented: `Q`
-> (self-consistent vs R by mask lineage), `C` (channel-identical), `D` (within
-> ~2 ULP), `P` (detection-p exact; residual is 0.05-boundary/lineage), and `B`
-> (noob — `normExpSignal`/`huber` proven to a few ULP in isolation; residual is
-> lineage only). Multi-sample **batch** runs are parallel and deterministic. See
+> **Status.** The IDAT reader and un-preprocessed betas are **bit-identical to
+> R**, and the full **`QCDPB`** pipeline is implemented: `Q` (self-consistent vs R
+> by mask lineage), `C` (channel-identical), `D` (within ~2 ULP), `P` (detection-p
+> exact; residual is 0.05-boundary/lineage), and `B` (noob — `normExpSignal`/
+> `huber` proven to a few ULP in isolation; residual is lineage only). Also
+> implemented: the `sesameQC` panel, differential methylation (`dml`), and YAME
+> `.cg` output. The `preprocess` command batches a cohort in parallel. See
 > [Fidelity and validation](#fidelity-and-validation) and `NUMERICS.md`.
 
 ## Contents
@@ -83,107 +84,76 @@ Other build targets are covered under [Development](#development).
 # 1. Fetch a platform's ordering table + mask into the local store (one time).
 sesame fetch MSA
 
-# 2. Raw betas (no preprocessing) — platform auto-detected from the IDAT.
-sesame betas path/to/sample > sample.betas.tsv      # reads sample_{Grn,Red}.idat[.gz]
-
-# 3. The full default pipeline, same as openSesame(prep="QCDPB").
-sesame betas --prep QCDPB path/to/sample > sample.betas.tsv
-
-# 4. A whole cohort in one parallel process -> a Probe_ID x sample matrix.
+# 2. Preprocess a cohort (default QCDPB) -> YAME .cg outputs + qc.tsv.
 #    A prefix is a path stem; derive them from the Grn files if needed.
-sesame betas --prep QCDPB $(ls idats/*_Grn.idat.gz | sed 's/_Grn.idat.gz//') > cohort.betas.tsv
+sesame preprocess --out out/ $(ls idats/*_Grn.idat.gz | sed 's/_Grn.idat.gz//')
+#    out/beta.cg  out/intensity.cg  out/pval.cg  out/qc.tsv
 
-# 5. Per-sample QC metrics (detection success rate + the sesameQC panel).
-sesame qc path/to/sample                            # one sample -> one TSV row
+# 3. Differential methylation, consuming the beta.cg.
+sesame dml --betas out/beta.cg --index <ordering.tsv.gz> \
+           --meta samples.tsv --formula '~ group + age' > dml.tsv
 ```
 
-Output row `Probe_ID<TAB>beta`, `NA` for missing/masked probes. A `<prefix>`
-resolves `<prefix>_Grn.idat[.gz]` and `<prefix>_Red.idat[.gz]`.
+A `<prefix>` resolves `<prefix>_Grn.idat[.gz]` and `<prefix>_Red.idat[.gz]`. The
+`.cg` files feed the [`yame`](https://github.com/zhou-lab/YAME) toolchain
+(`yame unpack` prints them as text).
 
 ## Commands
 
 ```
-sesame betas      [options] <prefix> [<prefix> ...]   # IDAT -> betas
-sesame intensity  [options] <prefix> [<prefix> ...]   # IDAT -> total intensity (M+U); --cg for YAME
-sesame qc         [options] <prefix> [<prefix> ...]   # IDAT -> QC metrics (TSV)
-sesame dml        --betas <matrix> (--formula .. --meta .. | --design ..)  # diff. methylation
+sesame preprocess [options] <prefix> [<prefix> ...]   # IDAT -> YAME .cg (+ qc.tsv)
+sesame dml        --betas <beta.cg|matrix.tsv> (--formula .. --meta .. | --design ..)
 sesame fetch      [<platform>] [--force]              # download data into the store
 sesame index-info                                     # show store + pinned tag + platforms
 sesame idat-dump  [--head N] [--tsv] <file.idat[.gz]> # inspect a raw IDAT
 sesame version
 ```
 
-### `sesame betas`
+### `sesame preprocess`
 
-Compute beta values from an IDAT pair. Equivalent to
-`openSesame(prefix, prep=CODE, func=getBetas)`. One prefix prints a two-column
-table; multiple prefixes print a matrix (see [Batch mode](#batch-mode)).
+The pipeline command. Applies `--prep` (default `QCDPB`, `openSesame`'s default)
+to each sample and writes one **YAME `.cg`** per requested output over the whole
+cohort — one indexed file, one block per sample — into `--out DIR` (default `.`),
+plus a `qc.tsv`.
 
-| flag | meaning |
-|---|---|
-| `--prep CODE` | preprocessing steps in order, e.g. `QCDPB` (default: none → raw betas) |
-| `--index <path>` | use this ordering table directly, bypassing the store |
-| `--platform P` | force the platform (`EPIC`/`EPICv2`/`HM450`/`MSA`) instead of bead-count detection |
-| `--min-beads N` | mask probes with any bead count `< N` (default: off, matching R's `NULL`) |
-| `--no-mask` | ignore the mask column; emit every beta |
-| `--threads N`, `-t N` | worker threads for a batch (default: online CPUs) |
-| `--f64` | write raw little-endian float64 instead of text (see [Output formats](#output-formats)) |
-| `--dump-col` | emit `Probe_ID<TAB>col` (G/R/2) instead of betas — single prefix, for testing `C` |
+| `--output` (comma list) | file | YAME format |
+|---|---|---|
+| `beta` | `beta.cg` | 4 (float; NA = masked) |
+| `intensity` | `intensity.cg` | 3 (M/U — yame derives beta *and* coverage) |
+| `total_intensity` | `total_intensity.cg` | 4 (M+U float) |
+| `pval` | `pval.cg` | 4 (pOOBAH detection p) |
+| `qc` | `qc.tsv` | the `sesameQC_calcStats` panel, one row per sample |
 
-`Q`, `P`, and `B` need the platform's `.cm` mask in the store; run
-`sesame fetch <platform>` first.
-
-### `sesame intensity`
-
-Total signal intensity (M+U) per probe — R's `totalIntensities` — as a matrix,
-same shape as `betas` and batch-parallel. It's the **CNV signal input** (and the
-tool that generates the copy-number normal reference from normal IDATs).
-
-`--cg <out.cg>` writes a **YAME `.cg`** (+ `<out.cg>.idx` of sample names) instead
-of the TSV, so the output feeds straight into the `yame` toolchain. The default
-is **format 3** (M and U counts) — from which yame derives both the beta
-(`MU2beta`) and the coverage/total (`MU2cov`), so it subsumes the total-intensity
-number; M/U round to integers (exact for raw IDAT signal). `--f4` instead writes
-**format 4** (the total intensity as an exact float per probe).
+Default `--output` is `beta,intensity,pval,qc`. Signal outputs (`intensity`,
+`total_intensity`) reflect the prep; `--raw-signal` takes them from the raw
+signal (what CNV wants). Other flags: `--index`/`--platform` (else auto-detected),
+`--min-beads N`, `--threads N`, `--tmp DIR`. Samples run in parallel; a failed
+sample becomes an NA block and the exit code is 1.
 
 ```sh
-sesame intensity sample                       # Probe_ID <TAB> M+U
-sesame intensity --cg cohort.cg s1 s2 s3      # YAME format-3 (M/U), one block per sample
-sesame intensity --cg cohort.cg --f4 sample   # YAME format-4 (total intensity float)
+sesame preprocess --out out/ s1 s2 s3                        # default outputs
+sesame preprocess --output beta --prep QCDPB --out out/ *pfx # just beta.cg
+sesame preprocess --output total_intensity --raw-signal --out cnv/ tumor  # CNV input
 ```
 
-### `sesame qc`
-
-Per-sample QC metrics — the `sesameQC_calcStats` panel — as a TSV: one row per
-sample, one column per metric, headline being **detection success rate**
-(`frac_dt`, the fraction of probes with pOOBAH detection p ≤ 0.05). Computed from
-the raw signal; the detection and beta groups run pOOBAH internally, so the
-platform's `.cm` mask must be in the store. Batch-parallel like `betas`; a failed
-sample becomes an all-`NA` row. Flags: `--index`, `--platform`, `--min-beads`,
-`--threads`.
-
-```sh
-sesame qc --threads 8 $(ls idats/*_Grn.idat.gz | sed 's/_Grn.idat.gz//') > cohort.qc.tsv
-```
-
-The panel covers detection, probe counts, signal intensity (in/out-of-band),
-Infinium-I channel switches, dye bias (`RGdistort`), and the beta distribution —
-mirroring R's `sesameQC_calcStats`. See `NUMERICS.md` for the two noted behaviors
-(`num_dtna` under the D2 fix; the beta group computed after `D→B→P`).
+Beta is float32 in the `.cg` — biologically lossless. `intensity.cg` (format 3)
+is the richest: `yame` derives both the beta (`MU2beta`) and the coverage/total
+(`MU2cov`) from the stored M/U, which are integers (exact for raw IDAT signal).
 
 ### `sesame dml`
 
 Per-probe **differential methylation**: for each probe, an OLS of its betas
 across samples on a design, giving per-coefficient estimates and t-tests, a
 holdout F-test per categorical variable, effect sizes, and BH-adjusted p-values —
-sesame's `DML` / `summaryExtractTest`, as a TSV (one row per probe). The betas
-matrix is `sesame betas` batch output; `--meta` is a TSV whose first column
-matches the sample names.
+sesame's `DML` / `summaryExtractTest`, as a TSV (one row per probe).
+
+`--betas` is a **`preprocess` `beta.cg`** (with `--index <ordering>` to resolve
+probe IDs, since a `.cg` is positional) or a `Probe_ID` matrix TSV. `--meta`'s
+first column matches the sample names.
 
 ```sh
-# betas matrix from a cohort, then test each CpG against a group (+ covariate)
-sesame betas --prep QCDPB $(ls idats/*_Grn.idat.gz|sed 's/_Grn.idat.gz//') > betas.tsv
-sesame dml --betas betas.tsv --meta samples.tsv --formula '~ group + age' > dml.tsv
+sesame dml --betas out/beta.cg --index <ordering.tsv.gz> \
+           --meta samples.tsv --formula '~ group + age' > dml.tsv
 ```
 
 `--formula` takes **main effects** only (a `~` and metadata column names joined by
@@ -233,43 +203,41 @@ platform must be present in the store.
 
 ## Batch mode
 
-Passing **multiple prefixes** runs them in one process. The index and masks are
-parsed **once** and shared read-only; the independent per-sample work runs across
-a pthread pool (`--threads`, default = online CPUs).
+`preprocess` over **multiple prefixes** runs them in one process. The index and
+masks are parsed **once** and shared read-only; the independent per-sample work
+runs across a pthread pool (`--threads`, default = online CPUs).
 
-- **All prefixes must be the same platform** (the row space of the matrix).
-- Output is a `Probe_ID` matrix, one column per sample named by basename — or a
-  sample-major stream with `--f64`.
-- **Deterministic:** a sample's column is its position on the command line, so
+- **All prefixes must be the same platform** (the row space of the `.cg`).
+- Each output is **one indexed `.cg`** over the cohort — one block per sample,
+  named by basename in the `<file>.idx`.
+- **Deterministic:** a sample's block is its position on the command line, so
   output order never depends on scheduling, and `--threads 1` is byte-identical
   to `--threads N`.
 - **Robust:** a sample that fails (missing/corrupt IDAT, wrong platform) becomes
-  an all-`NA` column with a warning and sets [exit status](#exit-status) 1 — one
+  an all-`NA` block with a warning and sets [exit status](#exit-status) 1 — one
   bad IDAT never aborts the run.
-- **Scales past RAM:** the result store is an unlinked temp file that the OS pages
-  to disk, so a matrix larger than memory still works. For whole-cohort scale,
-  shard the sample list across invocations (pipelines already do this).
+- **Scales past RAM:** each output's result store is an unlinked temp file that
+  the OS pages to disk (`--tmp DIR` to place it), so a cohort larger than memory
+  still works.
 
 ```sh
-sesame betas --prep QCDPB --threads 8 run/S1 run/S2 run/S3 ... > cohort.betas.tsv
+sesame preprocess --prep QCDPB --threads 8 --out out/ run/*prefixes
 ```
-
-On three EPICv2 samples this is ~3× faster than three separate invocations (index
-parsed once, work parallelized); the gap widens with cohort size and core count.
 
 ## Output formats
 
-- **Single prefix, text** (default): `Probe_ID<TAB>beta` per line, `NA` for
-  missing/masked probes.
-- **Multiple prefixes, text**: a header `Probe_ID<TAB><name1><TAB>…` (names are
-  prefix basenames) followed by one row per probe.
-- **`--f64`**: raw little-endian `double` (NA as `NaN`), no IDs — one block of
-  `nprobes` values per sample, in command-line order. Probe order is the ordering
-  table; sample order is argv.
+Numeric outputs are YAME `.cg` files (a BGZF container of per-sample blocks) plus
+a `<file>.idx` mapping sample names to block offsets — read them with
+`yame unpack` / `yame info`, or via `libsesame`'s `sesame_read_cg`.
 
-Use `--f64` for lossless comparison. Do **not** diff betas via text: R's parser
-does not correctly round 17-digit decimals, which manufactures a phantom ~1e-16
-disagreement (see `NUMERICS.md`).
+- **format 3** (`intensity.cg`): M and U per probe as integers. `yame` derives
+  both beta (`MU2beta`) and coverage/total (`MU2cov`); exact for raw IDAT signal.
+- **format 4** (`beta.cg`, `total_intensity.cg`, `pval.cg`): one float32 per
+  probe, NA as a negative value.
+
+`qc.tsv` is a plain TSV (one row per sample). Betas are stored as float32, which
+is biologically lossless; the differential tests validate the double-precision
+library path (`sesame_pipeline`) bit-for-bit against R.
 
 ## Data files and the store
 
@@ -342,8 +310,11 @@ config file.
 
 ## Fidelity and validation
 
-R is the oracle, permanently. Betas are compared as raw float64, never text. The
-golden ladder (`make test`):
+R is the oracle, permanently. The precision-sensitive gates run through a
+validation harness (`tests/pipeline_dump`) that dumps the library pipeline
+(`sesame_pipeline`) at double precision, so they stay bit-identical / ULP-exact
+even though the `preprocess` product stores betas as float32. The golden ladder
+(`make test`):
 
 | level | gate | status |
 |---|---|---|
@@ -354,10 +325,10 @@ golden ladder (`make test`):
 | 3. Per-step `P` | every C-vs-R disagreement is 0.05-boundary or D2 | ✅ R-only 0; all 12 flips at the cutoff (`NUMERICS.md`) |
 | 3. Per-step `B` | `normExpSignal`/`huber` vs R on identical inputs; betas on raw-identical probes | ✅ arithmetic ≤ few ULP; betas median 6.5e-6, max 1.6e-3 (lineage) |
 | 4. Betas `prep=""` | **bit-identical** | ✅ 6/6 samples, 4.4M betas |
-| 5. Batch | each column == its single-sample run; `--threads 1 == N`; bad sample → NA column | ✅ byte-identical; ThreadSanitizer-clean |
+| 5. Batch (`preprocess`) | `--threads 1 == N` byte-identical; per-sample == single run; bad sample → NA block | ✅ ThreadSanitizer-clean |
 | 6. QC panel | every `sesameQC_calcStats` metric within lineage scale | ✅ 65/65 metrics; worst 1.75e-2 (small count, `NUMERICS.md`) |
 | 7. DML | vs R `DML`/`summaryExtractTest` (no lineage) | ✅ Est/Pval/FPval/Eff/BH match to ~5e-10 |
-| 8. .cg output | `intensity --cg` round-trips through `yame unpack` | ✅ format 3 (M/U) + format 4; names + values match |
+| 8. `.cg` output | `preprocess` outputs round-trip through `yame` | ✅ format 3 (M/U) + format 4; names + values match |
 
 "Lineage" means the published ordering/mask is a newer data version than the
 installed `sesameData`, so a handful of probes differ for reasons that predate any

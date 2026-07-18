@@ -264,6 +264,11 @@ int sesame_write_cg_mu(const char *path, const double *matM, const double *matU,
 int sesame_write_cg(const char *path, const double *mat, int32_t nprobe,
                     int32_t nsamp, char *const *names, sesame_err_t *err);
 
+/* Read a format-4 .cg (+ .idx names) into a sample-major matrix (sample j, probe
+ * i at mat[j*nprobe+i]); NA float -> NaN. Caller frees mat, each name, names. */
+int sesame_read_cg(const char *path, double **mat_out, int32_t *nprobe_out,
+                   int32_t *nsamp_out, char ***names_out, sesame_err_t *err);
+
 /* ----------------------------------------------------------------- QC ---
  *
  * The sesameQC panel (R sesameQC_calcStats), computed from a *raw* SigDF. Each
