@@ -19,16 +19,36 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* mat is sample-major: sample j, probe i at mat[j*nprobe + i]. Writes one
- * format-4 cdata block per sample to <path>, and <path>.idx with each sample's
- * name and the bgzf virtual offset of its block (for yame's named access). */
-int sesame_write_cg(const char *path, const double *mat, int32_t nprobe,
-                    int32_t nsamp, char *const *names, sesame_err_t *err)
+/* Write the companion "<path>.idx" of "<name>\t<bgzf-offset>" lines. */
+static void write_idx(const char *path, char *const *names,
+                      const int64_t *offs, int32_t nsamp)
+{
+    size_t z = strlen(path) + 5;
+    char *idxpath = (char *)malloc(z);
+    FILE *ix;
+    int32_t j;
+    if (!idxpath) return;
+    snprintf(idxpath, z, "%s.idx", path);
+    if ((ix = fopen(idxpath, "w"))) {
+        for (j = 0; j < nsamp; j++)
+            fprintf(ix, "%s\t%lld\n", names[j], (long long)offs[j]);
+        fclose(ix);
+    }
+    free(idxpath);
+}
+
+/* Format 3 (M/U counts), the default. Rounds M,U to integers -- exact for raw
+ * IDAT signal (uint16 means), sub-integer rounding for preprocessed floats
+ * (noise). NA (either allele NaN) is stored as (0,0), which yame reads as
+ * beta=NA / cov=0. yame derives beta (MU2beta) and total intensity (MU2cov).
+ * matM/matU are sample-major: sample j, probe i at mat[j*nprobe+i]. */
+int sesame_write_cg_mu(const char *path, const double *matM, const double *matU,
+                       int32_t nprobe, int32_t nsamp, char *const *names,
+                       sesame_err_t *err)
 {
     BGZF *fp;
     int64_t *offs;
     int32_t j, i;
-    char *idxpath;
 
     if (err) { err->code = SESAME_OK; err->msg[0] = '\0'; }
     if (!(fp = bgzf_open2(path, "w")))
@@ -36,7 +56,45 @@ int sesame_write_cg(const char *path, const double *mat, int32_t nprobe,
     if (!(offs = (int64_t *)malloc((size_t)nsamp * sizeof(int64_t)))) {
         bgzf_close(fp); return sesame__fail(err, SESAME_ERR_NOMEM, "oom");
     }
+    for (j = 0; j < nsamp; j++) {
+        cdata_t c;
+        memset(&c, 0, sizeof c);
+        c.fmt = '3'; c.compressed = 0; c.n = (uint64_t)nprobe; c.unit = 8;
+        c.s = (uint8_t *)calloc((size_t)nprobe, 8);
+        if (!c.s) { free(offs); bgzf_close(fp);
+                    return sesame__fail(err, SESAME_ERR_NOMEM, "oom"); }
+        for (i = 0; i < nprobe; i++) {
+            double m = matM[(size_t)j*(size_t)nprobe + (size_t)i];
+            double u = matU[(size_t)j*(size_t)nprobe + (size_t)i];
+            if (isnan(m) || isnan(u)) f3_set_mu(&c, (uint64_t)i, 0, 0);   /* NA */
+            else f3_set_mu(&c, (uint64_t)i, (uint64_t)llround(m), (uint64_t)llround(u));
+        }
+        offs[j] = bgzf_tell(fp);
+        cdata_compress(&c);
+        cdata_write1(fp, &c);
+        free(c.s);
+    }
+    bgzf_close(fp);
+    write_idx(path, names, offs, nsamp);
+    free(offs);
+    return SESAME_OK;
+}
 
+/* Format 4 (one float32 per probe, NA=-1.0), on request -- exact values (e.g.
+ * betas or total intensity) with no rounding. */
+int sesame_write_cg(const char *path, const double *mat, int32_t nprobe,
+                    int32_t nsamp, char *const *names, sesame_err_t *err)
+{
+    BGZF *fp;
+    int64_t *offs;
+    int32_t j, i;
+
+    if (err) { err->code = SESAME_OK; err->msg[0] = '\0'; }
+    if (!(fp = bgzf_open2(path, "w")))
+        return sesame__fail(err, SESAME_ERR_IO, "cannot open %s for writing", path);
+    if (!(offs = (int64_t *)malloc((size_t)nsamp * sizeof(int64_t)))) {
+        bgzf_close(fp); return sesame__fail(err, SESAME_ERR_NOMEM, "oom");
+    }
     for (j = 0; j < nsamp; j++) {
         cdata_t c;
         float *s = (float *)malloc((size_t)nprobe * sizeof(float));
@@ -49,24 +107,13 @@ int sesame_write_cg(const char *path, const double *mat, int32_t nprobe,
         memset(&c, 0, sizeof c);
         c.fmt = '4'; c.compressed = 0; c.n = (uint64_t)nprobe;
         c.unit = sizeof(float); c.s = (uint8_t *)s;
-        offs[j] = bgzf_tell(fp);                    /* block start, for the index */
+        offs[j] = bgzf_tell(fp);
         cdata_compress(&c);                         /* frees s, sets c.s compressed */
         cdata_write1(fp, &c);
         free(c.s);
     }
     bgzf_close(fp);
-
-    idxpath = (char *)malloc(strlen(path) + 5);
-    if (idxpath) {
-        FILE *ix;
-        snprintf(idxpath, strlen(path) + 5, "%s.idx", path);
-        if ((ix = fopen(idxpath, "w"))) {
-            for (j = 0; j < nsamp; j++)
-                fprintf(ix, "%s\t%lld\n", names[j], (long long)offs[j]);
-            fclose(ix);
-        }
-        free(idxpath);
-    }
+    write_idx(path, names, offs, nsamp);
     free(offs);
     return SESAME_OK;
 }

@@ -138,13 +138,18 @@ table; multiple prefixes print a matrix (see [Batch mode](#batch-mode)).
 Total signal intensity (M+U) per probe — R's `totalIntensities` — as a matrix,
 same shape as `betas` and batch-parallel. It's the **CNV signal input** (and the
 tool that generates the copy-number normal reference from normal IDATs).
-`--cg <out.cg>` writes a **YAME format-4 `.cg`** (one float32 per probe, NA as
-`-1.0`, RLE-compressed) plus `<out.cg>.idx` of sample names, so the output feeds
-straight into the `yame` toolchain instead of a TSV.
+
+`--cg <out.cg>` writes a **YAME `.cg`** (+ `<out.cg>.idx` of sample names) instead
+of the TSV, so the output feeds straight into the `yame` toolchain. The default
+is **format 3** (M and U counts) — from which yame derives both the beta
+(`MU2beta`) and the coverage/total (`MU2cov`), so it subsumes the total-intensity
+number; M/U round to integers (exact for raw IDAT signal). `--f4` instead writes
+**format 4** (the total intensity as an exact float per probe).
 
 ```sh
 sesame intensity sample                       # Probe_ID <TAB> M+U
-sesame intensity --cg cohort.cg s1 s2 s3      # YAME .cg (+ .idx), one block per sample
+sesame intensity --cg cohort.cg s1 s2 s3      # YAME format-3 (M/U), one block per sample
+sesame intensity --cg cohort.cg --f4 sample   # YAME format-4 (total intensity float)
 ```
 
 ### `sesame qc`
@@ -352,7 +357,7 @@ golden ladder (`make test`):
 | 5. Batch | each column == its single-sample run; `--threads 1 == N`; bad sample → NA column | ✅ byte-identical; ThreadSanitizer-clean |
 | 6. QC panel | every `sesameQC_calcStats` metric within lineage scale | ✅ 65/65 metrics; worst 1.75e-2 (small count, `NUMERICS.md`) |
 | 7. DML | vs R `DML`/`summaryExtractTest` (no lineage) | ✅ Est/Pval/FPval/Eff/BH match to ~5e-10 |
-| 8. .cg output | `intensity --cg` round-trips through `yame unpack` | ✅ format 4, names + values match |
+| 8. .cg output | `intensity --cg` round-trips through `yame unpack` | ✅ format 3 (M/U) + format 4; names + values match |
 
 "Lineage" means the published ordering/mask is a newer data version than the
 installed `sesameData`, so a handful of probes differ for reasons that predate any

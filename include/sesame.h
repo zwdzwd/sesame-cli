@@ -224,14 +224,26 @@ int sesame_prep_noob(sesame_sigdf_t *sdf, const uint8_t *bgmask, int32_t bn,
 int sesame_get_betas(const sesame_sigdf_t *sdf, int apply_mask,
                      double *out, sesame_err_t *err);
 
+/* Per-probe methylated/unmethylated signal (R's signalMU), index order: col G ->
+ * (MG,UG), col R -> (MR,UR), Inf-II -> (UG,UR). NaN preserved. Either out NULL. */
+int sesame_signal_mu(const sesame_sigdf_t *sdf, double *M, double *U,
+                     sesame_err_t *err);
+
 /* Total intensity (M+U) per probe, in index order (R's totalIntensities,
  * mask=FALSE). NaN if either allele is NA. The CNV signal input. */
 int sesame_total_intensities(const sesame_sigdf_t *sdf, double *out,
                              sesame_err_t *err);
 
-/* Write a sample-major values matrix (sample j, probe i at mat[j*nprobe+i]) as a
- * YAME format-4 .cg (float32 per probe, NA=-1.0) plus <path>.idx of sample
- * names. Consumable by the `yame` toolchain. */
+/* Write sample-major matrices as a YAME .cg (+ <path>.idx of sample names),
+ * consumable by the `yame` toolchain. Mat is sample-major: sample j, probe i at
+ * mat[j*nprobe+i].
+ *
+ * _mu writes format 3 (M/U counts, the default) -- yame derives beta (MU2beta)
+ * and total intensity (MU2cov); M,U round to integers. The plain writer writes
+ * format 4 (one exact float32 per probe, NA=-1.0), on request. */
+int sesame_write_cg_mu(const char *path, const double *matM, const double *matU,
+                       int32_t nprobe, int32_t nsamp, char *const *names,
+                       sesame_err_t *err);
 int sesame_write_cg(const char *path, const double *mat, int32_t nprobe,
                     int32_t nsamp, char *const *names, sesame_err_t *err);
 

@@ -21,27 +21,38 @@ if [ ! -f "$pfx"_Grn.idat ] && [ ! -f "$pfx"_Grn.idat.gz ]; then
 [ -x "$yame" ] || make -C "$root/YAME" >/dev/null 2>&1 || true
 [ -x "$yame" ] || { echo "SKIP cg: could not build $yame"; exit 0; }
 
-SESAME_INDEX_DIR="$store" "$bin" intensity "$pfx"          2>/dev/null > "$work/x.tsv"
-SESAME_INDEX_DIR="$store" "$bin" intensity --cg "$work/x.cg" "$pfx" 2>/dev/null
+name=$(basename "$pfx")
+SESAME_INDEX_DIR="$store" "$bin" intensity "$pfx"                2>/dev/null > "$work/tot.tsv"
+SESAME_INDEX_DIR="$store" "$bin" intensity --cg "$work/mu.cg" "$pfx"      2>/dev/null  # format 3 (default)
+SESAME_INDEX_DIR="$store" "$bin" intensity --cg "$work/f4.cg" --f4 "$pfx" 2>/dev/null  # format 4
 
-"$yame" unpack "$work/x.cg" 2>/dev/null > "$work/x.cg.txt"
+"$yame" unpack -f -1 "$work/mu.cg" 2>/dev/null > "$work/mu.txt"    # M<TAB>U
+"$yame" unpack       "$work/f4.cg" 2>/dev/null > "$work/f4.txt"    # float total
 
-python3 - "$work/x.tsv" "$work/x.cg.txt" "$work/x.cg.idx" "$(basename "$pfx")" <<'PY'
+python3 - "$work/tot.tsv" "$work/mu.txt" "$work/f4.txt" "$work/mu.cg.idx" "$name" <<'PY'
 import sys, math
-tsv = [l.rstrip("\n").split("\t")[1] for l in open(sys.argv[1])]
-cg  = [l.strip() for l in open(sys.argv[2])]
-idx = open(sys.argv[3]).read().split("\t")[0]
-name = sys.argv[4]
-if len(tsv) != len(cg): print(f"FAIL: nrow tsv={len(tsv)} cg={len(cg)}"); sys.exit(1)
-if idx != name:         print(f"FAIL: idx name '{idx}' != '{name}'"); sys.exit(1)
-bad = 0
-for t, c in zip(tsv, cg):
+tot = [l.rstrip("\n").split("\t")[1] for l in open(sys.argv[1])]
+mu  = [l.split("\t") for l in open(sys.argv[2]).read().splitlines()]
+f4  = [l.strip() for l in open(sys.argv[3])]
+idx = open(sys.argv[4]).read().split("\t")[0]
+name = sys.argv[5]
+if not (len(tot) == len(mu) == len(f4)):
+    print(f"FAIL: nrow tot={len(tot)} mu={len(mu)} f4={len(f4)}"); sys.exit(1)
+if idx != name: print(f"FAIL: idx name '{idx}' != '{name}'"); sys.exit(1)
+bad3 = bad4 = 0
+for t, (m, u), v4 in zip(tot, mu, f4):
     tn = math.nan if t == "NA" else float(t)
-    cn = math.nan if c in ("NA","-1","-1.0","nan") else float(c)
-    if math.isnan(tn) and math.isnan(cn): continue
-    if math.isnan(tn) or math.isnan(cn) or abs(tn - cn) > 0.5: bad += 1
-if bad: print(f"FAIL: {bad} value mismatches"); sys.exit(1)
-print(f"ok   MSA/{name} .cg round-trip: {len(cg)} probes, format 4, name+values match")
+    s3 = float(m) + float(u)                 # format 3: M+U == total (NA -> 0,0 -> 0)
+    v  = math.nan if v4 in ("NA","-1","-1.0","nan") else float(v4)
+    if math.isnan(tn):
+        if s3 != 0: bad3 += 1
+        if not math.isnan(v): bad4 += 1
+    else:
+        if abs(s3 - tn) > 0.5: bad3 += 1
+        if math.isnan(v) or abs(v - tn) > 0.5: bad4 += 1
+if bad3 or bad4:
+    print(f"FAIL: format3 M+U mismatches={bad3}, format4 mismatches={bad4}"); sys.exit(1)
+print(f"ok   MSA/{name} .cg round-trip: {len(mu)} probes; fmt3 M+U and fmt4 total match")
 PY
 rc=$?
 

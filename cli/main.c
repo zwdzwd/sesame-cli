@@ -57,12 +57,12 @@ static int usage(void)
       "      then the cache. sesame never downloads implicitly.\n"
       "\n"
       "  sesame intensity [--index ..] [--platform P] [--min-beads N]\n"
-      "            [--threads N] [--f64 | --cg <out.cg>] <prefix> [<prefix> ...]\n"
+      "            [--threads N] [--f64 | --cg <out.cg> [--f4]] <prefix> [...]\n"
       "      Total signal intensity (M+U) per probe -- the CNV signal input, and\n"
       "      how the normal reference is generated. Same matrix output as betas\n"
-      "      (one column per sample); no preprocessing. --cg writes a YAME\n"
-      "      format-4 .cg (float per probe, + .idx of sample names) instead of\n"
-      "      the TSV.\n"
+      "      (one column per sample); no preprocessing. --cg writes a YAME .cg\n"
+      "      (+ .idx of sample names): format 3 (M/U, default -- yame derives\n"
+      "      beta and coverage), or format 4 (total intensity float) with --f4.\n"
       "\n"
       "  sesame qc [--index <ordering.tsv.gz>] [--platform P] [--min-beads N]\n"
       "            [--threads N] <prefix> [<prefix> ...]\n"
@@ -579,7 +579,7 @@ typedef struct {
     const sesame_index_t *ix;
     const char      *plat;
     int              min_beads;
-    double          *mat;
+    double          *matM, *matU;
     pthread_mutex_t  lock;
     int32_t          next, nfail;
     uint32_t         status_or;
@@ -593,7 +593,7 @@ static void *intens_worker(void *arg)
         sesame_sigdf_t *s = NULL;
         sesame_err_t e;
         uint32_t st = 0;
-        double *col;
+        double *colM, *colU;
         int rc;
 
         pthread_mutex_lock(&c->lock);
@@ -601,12 +601,13 @@ static void *intens_worker(void *arg)
         pthread_mutex_unlock(&c->lock);
         if (j < 0) break;
 
-        col = c->mat + (size_t)j * (size_t)c->n;
+        colM = c->matM + (size_t)j * (size_t)c->n;
+        colU = c->matU + (size_t)j * (size_t)c->n;
         rc = build_sigdf_for(c->prefixes[j], c->ix, c->plat, c->min_beads, &s, &e);
-        if (rc == SESAME_OK) { st = s->status; rc = sesame_total_intensities(s, col, &e); }
+        if (rc == SESAME_OK) { st = s->status; rc = sesame_signal_mu(s, colM, colU, &e); }
         sesame_sigdf_free(s);
         if (rc != SESAME_OK)
-            for (k = 0; k < c->n; k++) col[k] = NAN;
+            for (k = 0; k < c->n; k++) { colM[k] = NAN; colU[k] = NAN; }
 
         pthread_mutex_lock(&c->lock);
         if (rc != SESAME_OK) {
@@ -621,13 +622,13 @@ static void *intens_worker(void *arg)
 static int cmd_intensity(int argc, char **argv)
 {
     const char *idxpath = NULL, *platform = NULL, *plat = NULL, *cgpath = NULL;
-    int min_beads = 0, nthreads = 0, f64 = 0, i, rc = 1;
+    int min_beads = 0, nthreads = 0, f64 = 0, f4 = 0, i, rc = 1;
     char **prefixes = NULL;
     int32_t nsamp = 0, n = 0;
     char resolved[4096];
     sesame_index_t *ix = NULL;
-    betas_matrix mat = { NULL, 0, -1 };
-    int have_mat = 0, nfail = 0;
+    betas_matrix matM = { NULL, 0, -1 }, matU = { NULL, 0, -1 };
+    int have_M = 0, have_U = 0, nfail = 0;
     sesame_err_t e;
 
     prefixes = (char **)malloc((size_t)(argc + 1) * sizeof(char *));
@@ -640,6 +641,7 @@ static int cmd_intensity(int argc, char **argv)
         else if ((strcmp(argv[i], "--threads")==0||strcmp(argv[i],"-t")==0) && i+1<argc)
             nthreads = (int)strtol(argv[++i], NULL, 10);
         else if (strcmp(argv[i], "--f64") == 0) f64 = 1;
+        else if (strcmp(argv[i], "--f4") == 0) f4 = 1;
         else if (strcmp(argv[i], "--cg") == 0 && i+1 < argc) cgpath = argv[++i];
         else if (argv[i][0] == '-' && argv[i][1] != '\0') {
             fprintf(stderr, "sesame: unknown option %s\n", argv[i]);
@@ -670,9 +672,10 @@ static int cmd_intensity(int argc, char **argv)
     if (!(ix = sesame_index_open(idxpath, &e))) { fprintf(stderr, "sesame: %s\n", e.msg); goto out; }
     n = sesame_index_nprobes(ix); plat = platform;
 
-    if (betas_matrix_init(&mat, n, nsamp) != 0) {
+    if (betas_matrix_init(&matM, n, nsamp) != 0 ||
+        betas_matrix_init(&matU, n, nsamp) != 0) {
         fprintf(stderr, "sesame: cannot allocate %d x %d matrix\n", nsamp, n); goto out; }
-    have_mat = 1;
+    have_M = have_U = 1;
 
     {
         intens_ctx ctx;
@@ -682,7 +685,8 @@ static int cmd_intensity(int argc, char **argv)
         if (T > nsamp) T = nsamp;
         if (T < 1) T = 1;
         ctx.prefixes=prefixes; ctx.nsamp=nsamp; ctx.n=n; ctx.ix=ix; ctx.plat=plat;
-        ctx.min_beads=min_beads; ctx.mat=mat.data; ctx.next=0; ctx.nfail=0; ctx.status_or=0;
+        ctx.min_beads=min_beads; ctx.matM=matM.data; ctx.matU=matU.data;
+        ctx.next=0; ctx.nfail=0; ctx.status_or=0;
         pthread_mutex_init(&ctx.lock, NULL);
         if (T > 1) th = (pthread_t *)malloc((size_t)(T-1)*sizeof(pthread_t));
         if (th) for (t=0;t<T-1;t++) if (pthread_create(&th[spawned],NULL,intens_worker,&ctx)==0) spawned++;
@@ -694,25 +698,34 @@ static int cmd_intensity(int argc, char **argv)
             fprintf(stderr, "sesame: note: some probes had addresses absent from an IDAT\n");
     }
 
-    if (cgpath) {                                /* YAME format-4 .cg (+ .idx) */
+    if (cgpath) {                                /* YAME .cg (+ .idx) */
         char **names = (char **)malloc((size_t)nsamp * sizeof(char *));
         int32_t j;
         if (!names) { fprintf(stderr, "sesame: oom\n"); goto out; }
         for (j = 0; j < nsamp; j++) names[j] = (char *)path_basename(prefixes[j]);
-        if (sesame_write_cg(cgpath, mat.data, n, nsamp, names, &e) != SESAME_OK) {
-            fprintf(stderr, "sesame: %s\n", e.msg); free(names); goto out; }
+        if (f4) {                                /* format 4: total intensity M+U */
+            size_t q, tot = (size_t)n * (size_t)nsamp;
+            for (q = 0; q < tot; q++) matM.data[q] += matU.data[q];
+            if (sesame_write_cg(cgpath, matM.data, n, nsamp, names, &e) != SESAME_OK) {
+                fprintf(stderr, "sesame: %s\n", e.msg); free(names); goto out; }
+        } else {                                 /* format 3 (default): M/U */
+            if (sesame_write_cg_mu(cgpath, matM.data, matU.data, n, nsamp, names, &e) != SESAME_OK) {
+                fprintf(stderr, "sesame: %s\n", e.msg); free(names); goto out; }
+        }
         free(names);
-        fprintf(stderr, "sesame: wrote %s (%d sample%s, format 4) + %s.idx\n",
-                cgpath, nsamp, nsamp==1?"":"s", cgpath);
-    } else if (f64) {
-        size_t tot = (size_t)n * (size_t)nsamp;
-        if (fwrite(mat.data, sizeof(double), tot, stdout) != tot) {
+        fprintf(stderr, "sesame: wrote %s (%d sample%s, format %d) + %s.idx\n",
+                cgpath, nsamp, nsamp==1?"":"s", f4?4:3, cgpath);
+    } else if (f64) {                            /* total intensity, raw float64 */
+        size_t q, tot = (size_t)n * (size_t)nsamp;
+        for (q = 0; q < tot; q++) matM.data[q] += matU.data[q];
+        if (fwrite(matM.data, sizeof(double), tot, stdout) != tot) {
             fprintf(stderr, "sesame: short write\n"); goto out; }
-    } else if (nsamp == 1) {
+    } else if (nsamp == 1) {                     /* Probe_ID <TAB> total (M+U) */
         for (int32_t k = 0; k < n; k++) {
             const char *id = sesame_index_probe_id(ix, k);
-            if (isnan(mat.data[k])) printf("%s\tNA\n", id);
-            else                    printf("%s\t%.10g\n", id, mat.data[k]);
+            double v = matM.data[k] + matU.data[k];
+            if (isnan(v)) printf("%s\tNA\n", id);
+            else          printf("%s\t%.10g\n", id, v);
         }
     } else {
         fputs("Probe_ID", stdout);
@@ -721,8 +734,9 @@ static int cmd_intensity(int argc, char **argv)
         for (int32_t k = 0; k < n; k++) {
             fputs(sesame_index_probe_id(ix, k), stdout);
             for (int32_t j = 0; j < nsamp; j++) {
-                double b = mat.data[(size_t)j*(size_t)n + (size_t)k];
-                if (isnan(b)) fputs("\tNA", stdout); else printf("\t%.10g", b);
+                size_t o = (size_t)j*(size_t)n + (size_t)k;
+                double v = matM.data[o] + matU.data[o];
+                if (isnan(v)) fputs("\tNA", stdout); else printf("\t%.10g", v);
             }
             putchar('\n');
         }
@@ -731,7 +745,8 @@ static int cmd_intensity(int argc, char **argv)
     rc = nfail ? 1 : 0;
 
 out:
-    if (have_mat) betas_matrix_free(&mat);
+    if (have_M) betas_matrix_free(&matM);
+    if (have_U) betas_matrix_free(&matU);
     free(prefixes);
     sesame_index_close(ix);
     return rc;
