@@ -169,6 +169,36 @@ void sesame_sigdf_free(sesame_sigdf_t *s)
     free(s);
 }
 
+/* Deep copy (shares the read-only index). Used to keep a raw SigDF alongside a
+ * preprocessed one. Returns NULL on OOM. */
+sesame_sigdf_t *sesame_sigdf_dup(const sesame_sigdf_t *s)
+{
+    sesame_sigdf_t *d;
+    size_t z;
+    if (!s) return NULL;
+    d = (sesame_sigdf_t *)calloc(1, sizeof *d);
+    if (!d) return NULL;
+    z = (size_t)s->n;
+    d->ix = s->ix; d->n = s->n; d->status = s->status;
+    d->n_addr_missing = s->n_addr_missing;
+    d->MG = (double *)malloc(z * sizeof(double));
+    d->MR = (double *)malloc(z * sizeof(double));
+    d->UG = (double *)malloc(z * sizeof(double));
+    d->UR = (double *)malloc(z * sizeof(double));
+    d->col  = (uint8_t *)malloc(z);
+    d->mask = (uint8_t *)malloc(z);
+    if (!d->MG || !d->MR || !d->UG || !d->UR || !d->col || !d->mask) {
+        sesame_sigdf_free(d); return NULL;
+    }
+    memcpy(d->MG, s->MG, z * sizeof(double));
+    memcpy(d->MR, s->MR, z * sizeof(double));
+    memcpy(d->UG, s->UG, z * sizeof(double));
+    memcpy(d->UR, s->UR, z * sizeof(double));
+    memcpy(d->col, s->col, z);
+    memcpy(d->mask, s->mask, z);
+    return d;
+}
+
 /* getBetas (R/sesame.R:192-225).
  *
  *   Inf-I  G : max(MG,1) / max(MG+UG, 2)

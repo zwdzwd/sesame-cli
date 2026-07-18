@@ -54,7 +54,18 @@ static int usage(void)
       "                     correctly round 17-digit decimals, losing up to 1 ULP.\n"
       "      If --index is omitted the platform is detected from the IDAT bead\n"
       "      count and the index looked up in $SESAME_INDEX_DIR, ., ./data,\n"
-      "      then the cache. sesame never downloads implicitly.\n"
+      "      then the cache. sesame never downloads implicitly.\n",
+      stderr);
+    fputs(
+      "\n"
+      "  sesame preprocess [--output LIST] [--prep QCDPB] [--raw-signal]\n"
+      "            [--out DIR] [--tmp DIR] [--threads N] <prefix> [<prefix> ...]\n"
+      "      The pipeline: apply --prep (default QCDPB) per sample and write YAME\n"
+      "      .cg outputs to DIR (default .), one indexed file per output over the\n"
+      "      cohort. --output is a comma list from intensity,total_intensity,beta,\n"
+      "      pval,qc (default beta,intensity,pval,qc): beta.cg (fmt4), intensity.cg\n"
+      "      (fmt3 M/U), total_intensity.cg (fmt4), pval.cg (fmt4), qc.tsv. Signal\n"
+      "      outputs reflect the prep; --raw-signal takes intensity/total raw.\n"
       "\n"
       "  sesame intensity [--index ..] [--platform P] [--min-beads N]\n"
       "            [--threads N] [--f64 | --cg <out.cg> [--f4]] <prefix> [...]\n"
@@ -752,6 +763,277 @@ out:
     return rc;
 }
 
+/* ---------------------------------------------------------- preprocess ---
+ *
+ * The one pipeline command: apply --prep (default QCDPB) per sample and emit any
+ * of {intensity, total_intensity, beta, pval} as YAME .cg (one indexed file per
+ * output over the whole cohort) plus a qc.tsv. Signal-derived outputs reflect the
+ * prep by default; --raw-signal takes intensity/total from the raw SigDF. */
+
+typedef struct {
+    char           **prefixes;
+    int32_t          nsamp, n;
+    const sesame_index_t *ix;
+    const char      *plat, *prep;
+    const uint8_t   *qmask, *bgmask;
+    int32_t          qn, bgn;
+    int              min_beads, raw_signal;
+    int              want_beta, want_int, want_tot, want_pval, want_qc;
+    double          *matBeta, *matM, *matU, *matTot, *matPval;   /* NULL if unwanted */
+    sesame_qc_t     *qcres;
+    pthread_mutex_t  lock;
+    int32_t          next, nfail;
+    uint32_t         status_or;
+} pp_ctx;
+
+static void fill_na(double *col, int32_t n) { int32_t k; for (k = 0; k < n; k++) col[k] = NAN; }
+
+/* fill intensity (M/U) and/or total columns from SigDF g. */
+static int pp_signal(pp_ctx *c, const sesame_sigdf_t *g, int32_t j, sesame_err_t *e)
+{
+    int32_t n = c->n, k;
+    double *cm = c->matM ? c->matM + (size_t)j*(size_t)n : NULL;
+    double *cu = c->matU ? c->matU + (size_t)j*(size_t)n : NULL;
+    double *ct = c->matTot ? c->matTot + (size_t)j*(size_t)n : NULL;
+    int rc = SESAME_OK;
+    if (c->want_int) {
+        rc = sesame_signal_mu(g, cm, cu, e);
+        if (rc == SESAME_OK && c->want_tot)
+            for (k = 0; k < n; k++) ct[k] = cm[k] + cu[k];
+    } else if (c->want_tot) {
+        rc = sesame_total_intensities(g, ct, e);
+    }
+    return rc;
+}
+
+static void *pp_worker(void *arg)
+{
+    pp_ctx *c = (pp_ctx *)arg;
+    int32_t n = c->n;
+    double *pv = NULL;
+    if (c->want_pval || strchr(c->prep, 'P'))
+        pv = (double *)malloc((size_t)n * sizeof(double));
+
+    for (;;) {
+        int32_t j, k;
+        sesame_sigdf_t *raw = NULL, *sig = NULL;
+        sesame_err_t e;
+        uint32_t st = 0;
+        int rc, pval_done = 0;
+        const char *p;
+
+        pthread_mutex_lock(&c->lock);
+        j = c->next < c->nsamp ? c->next++ : -1;
+        pthread_mutex_unlock(&c->lock);
+        if (j < 0) break;
+
+        rc = build_sigdf_for(c->prefixes[j], c->ix, c->plat, c->min_beads, &raw, &e);
+        if (rc == SESAME_OK) st = raw->status;
+        if (rc == SESAME_OK && c->want_qc)
+            rc = sesame_qc_calc(raw, c->bgmask, c->bgn, &c->qcres[j], &e);
+        if (rc == SESAME_OK && c->raw_signal)
+            rc = pp_signal(c, raw, j, &e);
+        if (rc == SESAME_OK && !(sig = sesame_sigdf_dup(raw)))
+            rc = sesame__fail(&e, SESAME_ERR_NOMEM, "oom");
+
+        for (p = c->prep; *p && rc == SESAME_OK; p++) {
+            switch (*p) {
+            case 'Q': rc = sesame_prep_quality_mask(sig, c->qmask, c->qn, &e); break;
+            case 'C': rc = sesame_prep_infer_channel(sig, 0, 0, &e); break;
+            case 'D': rc = sesame_prep_dye_bias_nl(sig, &e); break;
+            case 'P':
+                rc = sesame_poobah_pvals(sig, c->bgmask, c->bgn, 1, pv, &e);
+                if (rc == SESAME_OK) {
+                    for (k = 0; k < n; k++) if (pv[k] > 0.05) sig->mask[k] = 1;
+                    pval_done = 1;
+                }
+                break;
+            case 'B': rc = sesame_prep_noob(sig, c->bgmask, c->bgn, 1, 15.0, &e); break;
+            default:
+                rc = sesame__fail(&e, SESAME_ERR_UNSUPPORTED, "prep code '%c'", *p);
+            }
+        }
+        if (rc == SESAME_OK && c->want_pval && !pval_done)
+            rc = sesame_poobah_pvals(sig, c->bgmask, c->bgn, 1, pv, &e);
+        if (rc == SESAME_OK && c->want_pval)
+            memcpy(c->matPval + (size_t)j*(size_t)n, pv, (size_t)n * sizeof(double));
+        if (rc == SESAME_OK && c->want_beta)
+            rc = sesame_get_betas(sig, 1, c->matBeta + (size_t)j*(size_t)n, &e);
+        if (rc == SESAME_OK && !c->raw_signal)
+            rc = pp_signal(c, sig, j, &e);
+
+        sesame_sigdf_free(sig); sig = NULL;
+        sesame_sigdf_free(raw); raw = NULL;
+
+        if (rc != SESAME_OK) {                       /* NA columns for this sample */
+            if (c->matBeta) fill_na(c->matBeta + (size_t)j*(size_t)n, n);
+            if (c->matM)    fill_na(c->matM + (size_t)j*(size_t)n, n);
+            if (c->matU)    fill_na(c->matU + (size_t)j*(size_t)n, n);
+            if (c->matTot)  fill_na(c->matTot + (size_t)j*(size_t)n, n);
+            if (c->matPval) fill_na(c->matPval + (size_t)j*(size_t)n, n);
+        }
+        pthread_mutex_lock(&c->lock);
+        if (rc != SESAME_OK) {
+            c->nfail++;
+            fprintf(stderr, "sesame: %s: %s\n", path_basename(c->prefixes[j]), e.msg);
+        } else c->status_or |= st;
+        pthread_mutex_unlock(&c->lock);
+    }
+    free(pv);
+    return NULL;
+}
+
+static int pp_parse_output(const char *s, pp_ctx *c)
+{
+    char buf[256], *t;
+    snprintf(buf, sizeof buf, "%s", s);
+    c->want_beta = c->want_int = c->want_tot = c->want_pval = c->want_qc = 0;
+    for (t = strtok(buf, ","); t; t = strtok(NULL, ",")) {
+        if      (!strcmp(t, "beta"))            c->want_beta = 1;
+        else if (!strcmp(t, "intensity"))       c->want_int = 1;
+        else if (!strcmp(t, "total_intensity")) c->want_tot = 1;
+        else if (!strcmp(t, "pval"))            c->want_pval = 1;
+        else if (!strcmp(t, "qc"))              c->want_qc = 1;
+        else { fprintf(stderr, "sesame: unknown --output '%s'\n", t); return -1; }
+    }
+    return 0;
+}
+
+static int cmd_preprocess(int argc, char **argv)
+{
+    const char *idxpath = NULL, *platform = NULL, *plat = NULL, *prep = "QCDPB";
+    const char *outlist = "beta,intensity,pval,qc", *outdir = ".", *tmpdir = NULL;
+    int min_beads = 0, nthreads = 0, raw_signal = 0, i, rc = 1;
+    char **prefixes = NULL, **names = NULL;
+    int32_t nsamp = 0, n = 0, qn = 0, bgn = 0;
+    char resolved[4096], path[4096];
+    sesame_index_t *ix = NULL;
+    uint8_t *qmask = NULL, *bgmask = NULL;
+    sesame_qc_t *qcres = NULL;
+    betas_matrix mB={NULL,0,-1}, mM={NULL,0,-1}, mU={NULL,0,-1}, mT={NULL,0,-1}, mP={NULL,0,-1};
+    pp_ctx ctx; memset(&ctx, 0, sizeof ctx);
+    sesame_err_t e;
+
+    prefixes = (char **)malloc((size_t)(argc + 1) * sizeof(char *));
+    if (!prefixes) { fprintf(stderr, "sesame: out of memory\n"); return 1; }
+    for (i = 0; i < argc; i++) {
+        if (strcmp(argv[i], "--index") == 0 && i+1 < argc) idxpath = argv[++i];
+        else if (strcmp(argv[i], "--platform") == 0 && i+1 < argc) platform = argv[++i];
+        else if (strcmp(argv[i], "--prep") == 0 && i+1 < argc) prep = argv[++i];
+        else if (strcmp(argv[i], "--output") == 0 && i+1 < argc) outlist = argv[++i];
+        else if (strcmp(argv[i], "--out") == 0 && i+1 < argc) outdir = argv[++i];
+        else if (strcmp(argv[i], "--tmp") == 0 && i+1 < argc) tmpdir = argv[++i];
+        else if (strcmp(argv[i], "--min-beads") == 0 && i+1 < argc) min_beads = (int)strtol(argv[++i],NULL,10);
+        else if ((strcmp(argv[i],"--threads")==0||strcmp(argv[i],"-t")==0) && i+1<argc) nthreads = (int)strtol(argv[++i],NULL,10);
+        else if (strcmp(argv[i], "--raw-signal") == 0) raw_signal = 1;
+        else if (argv[i][0] == '-' && argv[i][1] != '\0') {
+            fprintf(stderr, "sesame: unknown option %s\n", argv[i]); free(prefixes); return usage();
+        } else prefixes[nsamp++] = argv[i];
+    }
+    if (nsamp == 0) { free(prefixes); return usage(); }
+    if (pp_parse_output(outlist, &ctx) != 0) { free(prefixes); return 1; }
+    if (tmpdir) setenv("TMPDIR", tmpdir, 1);
+    mkdir(outdir, 0777);                              /* ok if it already exists */
+
+    if (!idxpath) {
+        if (!platform) {
+            char gp[4096]; sesame_idat_t *g0 = NULL; int32_t beads;
+            if (resolve_idat(prefixes[0], "Grn", gp, sizeof gp)) {
+                fprintf(stderr, "sesame: Grn IDAT does not exist for %s\n", prefixes[0]); goto out; }
+            if (sesame_idat_read(gp, &g0, &e) != SESAME_OK) { fprintf(stderr, "sesame: %s\n", e.msg); goto out; }
+            beads = g0->n; platform = sesame_platform_from_beads(beads); sesame_idat_free(g0);
+            if (!platform) { fprintf(stderr, "sesame: cannot identify platform from %d beads.\n"
+                "  pass --platform <P> or --index <path>.\n", beads); goto out; }
+            fprintf(stderr, "sesame: detected %s (%d beads)\n", platform, beads);
+        }
+        if (sesame_index_locate(platform, resolved, sizeof resolved) != 0) {
+            char help[1024]; sesame_index_missing_help(platform, help, sizeof help);
+            fprintf(stderr, "sesame: %s\n", help); goto out;
+        }
+        idxpath = resolved;
+    }
+    if (!(ix = sesame_index_open(idxpath, &e))) { fprintf(stderr, "sesame: %s\n", e.msg); goto out; }
+    n = sesame_index_nprobes(ix); plat = platform;
+
+    /* masks: Q needs qmask; P/B/pval/qc need bgmask */
+    if (strchr(prep, 'Q')) {
+        if (!plat) { fprintf(stderr, "sesame: Q needs a known platform; pass --platform with --index\n"); goto out; }
+        if (sesame_quality_mask(plat, &qmask, &qn, &e) != SESAME_OK) { fprintf(stderr, "sesame: %s\n", e.msg); goto out; }
+    }
+    if (strchr(prep,'P') || strchr(prep,'B') || ctx.want_pval || ctx.want_qc) {
+        if (!plat) { fprintf(stderr, "sesame: P/B/pval/qc need a known platform; pass --platform with --index\n"); goto out; }
+        if (sesame_background_mask(plat, &bgmask, &bgn, &e) != SESAME_OK) { fprintf(stderr, "sesame: %s\n", e.msg); goto out; }
+    }
+
+    if ((ctx.want_beta && betas_matrix_init(&mB, n, nsamp)) ||
+        (ctx.want_int  && (betas_matrix_init(&mM, n, nsamp) || betas_matrix_init(&mU, n, nsamp))) ||
+        (ctx.want_tot  && betas_matrix_init(&mT, n, nsamp)) ||
+        (ctx.want_pval && betas_matrix_init(&mP, n, nsamp))) {
+        fprintf(stderr, "sesame: cannot allocate output matrices\n"); goto out;
+    }
+    if (ctx.want_qc) {
+        size_t k, nd = sizeof(sesame_qc_t)/sizeof(double); double *q;
+        qcres = (sesame_qc_t *)malloc((size_t)nsamp * sizeof(sesame_qc_t));
+        if (!qcres) { fprintf(stderr, "sesame: oom\n"); goto out; }
+        q = (double *)qcres; for (k = 0; k < (size_t)nsamp*nd; k++) q[k] = NAN;
+    }
+
+    ctx.prefixes=prefixes; ctx.nsamp=nsamp; ctx.n=n; ctx.ix=ix; ctx.plat=plat; ctx.prep=prep;
+    ctx.qmask=qmask; ctx.qn=qn; ctx.bgmask=bgmask; ctx.bgn=bgn;
+    ctx.min_beads=min_beads; ctx.raw_signal=raw_signal;
+    ctx.matBeta=mB.data; ctx.matM=mM.data; ctx.matU=mU.data; ctx.matTot=mT.data; ctx.matPval=mP.data;
+    ctx.qcres=qcres; ctx.next=0; ctx.nfail=0; ctx.status_or=0;
+    pthread_mutex_init(&ctx.lock, NULL);
+    {
+        long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
+        int T = nthreads > 0 ? nthreads : (ncpu > 0 ? (int)ncpu : 1), t, spawned = 0;
+        pthread_t *th = NULL;
+        if (T > nsamp) T = nsamp;
+        if (T < 1) T = 1;
+        if (T > 1) th = (pthread_t *)malloc((size_t)(T-1)*sizeof(pthread_t));
+        if (th) for (t=0;t<T-1;t++) if (pthread_create(&th[spawned],NULL,pp_worker,&ctx)==0) spawned++;
+        pp_worker(&ctx);
+        for (t=0;t<spawned;t++) pthread_join(th[t],NULL);
+        free(th);
+    }
+    pthread_mutex_destroy(&ctx.lock);
+
+    names = (char **)malloc((size_t)nsamp * sizeof(char *));
+    if (!names) { fprintf(stderr, "sesame: oom\n"); goto out; }
+    for (i = 0; i < nsamp; i++) names[i] = (char *)path_basename(prefixes[i]);
+
+    if (ctx.want_beta) { snprintf(path,sizeof path,"%s/beta.cg",outdir);
+        if (sesame_write_cg(path, mB.data, n, nsamp, names, &e)) { fprintf(stderr,"sesame: %s\n",e.msg); goto out; } }
+    if (ctx.want_int)  { snprintf(path,sizeof path,"%s/intensity.cg",outdir);
+        if (sesame_write_cg_mu(path, mM.data, mU.data, n, nsamp, names, &e)) { fprintf(stderr,"sesame: %s\n",e.msg); goto out; } }
+    if (ctx.want_tot)  { snprintf(path,sizeof path,"%s/total_intensity.cg",outdir);
+        if (sesame_write_cg(path, mT.data, n, nsamp, names, &e)) { fprintf(stderr,"sesame: %s\n",e.msg); goto out; } }
+    if (ctx.want_pval) { snprintf(path,sizeof path,"%s/pval.cg",outdir);
+        if (sesame_write_cg(path, mP.data, n, nsamp, names, &e)) { fprintf(stderr,"sesame: %s\n",e.msg); goto out; } }
+    if (ctx.want_qc) {
+        FILE *qf; snprintf(path,sizeof path,"%s/qc.tsv",outdir);
+        if (!(qf = fopen(path, "w"))) { fprintf(stderr, "sesame: cannot write %s\n", path); goto out; }
+        fprintf(qf, "sample\t%s\n", sesame_qc_header());
+        for (i = 0; i < nsamp; i++) {
+            char row[8192];
+            if (sesame_qc_format_row(&qcres[i], row, sizeof row) < 0) { fclose(qf); fprintf(stderr,"sesame: qc row too long\n"); goto out; }
+            fprintf(qf, "%s\t%s\n", names[i], row);
+        }
+        fclose(qf);
+    }
+    fprintf(stderr, "sesame: preprocess wrote %s to %s/ (%d sample%s, prep=%s)\n",
+            outlist, outdir, nsamp, nsamp==1?"":"s", *prep?prep:"\"\"");
+    if (ctx.nfail) fprintf(stderr, "sesame: %d of %d samples failed (NA)\n", ctx.nfail, nsamp);
+    rc = ctx.nfail ? 1 : 0;
+
+out:
+    betas_matrix_free(&mB); betas_matrix_free(&mM); betas_matrix_free(&mU);
+    betas_matrix_free(&mT); betas_matrix_free(&mP);
+    free(qcres); free(names); free(qmask); free(bgmask); free(prefixes);
+    sesame_index_close(ix);
+    return rc;
+}
+
 /* ------------------------------------------------------------------ qc ---
  *
  * The sesameQC panel per sample, as a TSV (one row per sample). Batch-parallel
@@ -1414,6 +1696,8 @@ int main(int argc, char **argv)
         return cmd_idat_dump(argc - 2, argv + 2);
     if (strcmp(argv[1], "betas") == 0)
         return cmd_betas(argc - 2, argv + 2);
+    if (strcmp(argv[1], "preprocess") == 0)
+        return cmd_preprocess(argc - 2, argv + 2);
     if (strcmp(argv[1], "intensity") == 0)
         return cmd_intensity(argc - 2, argv + 2);
     if (strcmp(argv[1], "qc") == 0)

@@ -73,29 +73,7 @@ int sesame_qc_format_row(const sesame_qc_t *q, char *buf, size_t n)
 static int starts2(const char *s, char a, char b) { return s[0] == a && s[1] == b; }
 #define NA1(x) (isnan(x) ? 1 : 0)
 
-static sesame_sigdf_t *sigdf_dup(const sesame_sigdf_t *s)
-{
-    sesame_sigdf_t *d = (sesame_sigdf_t *)calloc(1, sizeof *d);
-    size_t z = (size_t)s->n;
-    if (!d) return NULL;
-    d->ix = s->ix; d->n = s->n;
-    d->MG = (double *)malloc(z * sizeof(double));
-    d->MR = (double *)malloc(z * sizeof(double));
-    d->UG = (double *)malloc(z * sizeof(double));
-    d->UR = (double *)malloc(z * sizeof(double));
-    d->col  = (uint8_t *)malloc(z);
-    d->mask = (uint8_t *)malloc(z);
-    if (!d->MG || !d->MR || !d->UG || !d->UR || !d->col || !d->mask) {
-        sesame_sigdf_free(d); return NULL;
-    }
-    memcpy(d->MG, s->MG, z * sizeof(double));
-    memcpy(d->MR, s->MR, z * sizeof(double));
-    memcpy(d->UG, s->UG, z * sizeof(double));
-    memcpy(d->UR, s->UR, z * sizeof(double));
-    memcpy(d->col, s->col, z);
-    memcpy(d->mask, s->mask, z);
-    return d;
-}
+#define sigdf_dup sesame_sigdf_dup   /* was a local static; now the public one */
 
 /* Beta-distribution stats over the subset selected by pt (NULL = all probes,
  * else a 2-char probe-type prefix). scr holds >= n doubles. */

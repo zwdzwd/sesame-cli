@@ -83,15 +83,18 @@ static double detect_p(const double *sorted, int32_t n, double x)
     return 1.0 - (double)k / (double)n;
 }
 
-int sesame_prep_poobah(sesame_sigdf_t *s, const uint8_t *bgmask, int32_t bn,
-                       double pval_threshold, int combine_neg, sesame_err_t *err)
+/* Detection p-value per probe (pOOBAH) into pout[n]. Same background pools as the
+ * P step; D2: a probe with no signal in either channel gets p=1 (so it would
+ * mask). Shared by the P step and the `pval` output; does not mutate the SigDF. */
+int sesame_poobah_pvals(const sesame_sigdf_t *s, const uint8_t *bgmask, int32_t bn,
+                        int combine_neg, double *pout, sesame_err_t *err)
 {
     int32_t n, i, nG = 0, nR = 0;
     double *bgG = NULL, *bgR = NULL, *tmp = NULL;
     int rc = SESAME_OK;
 
     if (err) { err->code = SESAME_OK; err->msg[0] = '\0'; }
-    if (!s || !bgmask) return sesame__fail(err, SESAME_ERR_IO, "null argument");
+    if (!s || !bgmask || !pout) return sesame__fail(err, SESAME_ERR_IO, "null argument");
     n = s->n;
     if (bn != n)
         return sesame__fail(err, SESAME_ERR_FORMAT,
@@ -132,16 +135,33 @@ int sesame_prep_poobah(sesame_sigdf_t *s, const uint8_t *bgmask, int32_t bn,
     for (i = 0; i < n; i++) {
         double pr = detect_p(bgR, nR, sesame__pmax2_narm(s->MR[i], s->UR[i]));
         double pg = detect_p(bgG, nG, sesame__pmax2_narm(s->MG[i], s->UG[i]));
-        double p;
-        if (isnan(pr) && isnan(pg)) p = 1.0;           /* D2: both NA -> mask */
-        else if (isnan(pr)) p = pg;                    /* D2: use the other  */
-        else if (isnan(pg)) p = pr;
-        else p = pr < pg ? pr : pg;                    /* pmin */
-        if (p > pval_threshold) s->mask[i] = 1;
+        if (isnan(pr) && isnan(pg)) pout[i] = 1.0;     /* D2: both NA -> mask */
+        else if (isnan(pr)) pout[i] = pg;              /* D2: use the other  */
+        else if (isnan(pg)) pout[i] = pr;
+        else pout[i] = pr < pg ? pr : pg;              /* pmin */
     }
 
 out:
     free(bgG); free(bgR); free(tmp);
+    return rc;
+}
+
+int sesame_prep_poobah(sesame_sigdf_t *s, const uint8_t *bgmask, int32_t bn,
+                       double pval_threshold, int combine_neg, sesame_err_t *err)
+{
+    double *pv;
+    int32_t i, n;
+    int rc;
+
+    if (err) { err->code = SESAME_OK; err->msg[0] = '\0'; }
+    if (!s) return sesame__fail(err, SESAME_ERR_IO, "null sigdf");
+    n = s->n;
+    if (!(pv = (double *)malloc((size_t)n * sizeof(double))))
+        return sesame__fail(err, SESAME_ERR_NOMEM, "oom");
+    rc = sesame_poobah_pvals(s, bgmask, bn, combine_neg, pv, err);
+    if (rc == SESAME_OK)
+        for (i = 0; i < n; i++) if (pv[i] > pval_threshold) s->mask[i] = 1;
+    free(pv);
     return rc;
 }
 

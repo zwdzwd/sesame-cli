@@ -165,6 +165,9 @@ sesame_sigdf_t *sesame_sigdf_from_idats(const sesame_idat_t *grn,
                                         sesame_err_t *err);
 void sesame_sigdf_free(sesame_sigdf_t *sdf);
 
+/* Deep copy, sharing the read-only index (NULL on OOM). */
+sesame_sigdf_t *sesame_sigdf_dup(const sesame_sigdf_t *sdf);
+
 /* --------------------------------------------------------------- prep ---
  *
  * prepSesame steps. Order matters (R/open.R:30-35). Only C is implemented.
@@ -193,6 +196,11 @@ int sesame_background_mask(const char *platform, uint8_t **out, int32_t *out_n,
  * Implements D2 (NA-channel probes are masked, not silently kept). */
 int sesame_prep_poobah(sesame_sigdf_t *sdf, const uint8_t *bgmask, int32_t bn,
                        double pval_threshold, int combine_neg, sesame_err_t *err);
+
+/* The pOOBAH detection p-value per probe into pout[nprobes] (no masking); shared
+ * by the P step and the `pval` output. D2: no-signal probes get p=1. */
+int sesame_poobah_pvals(const sesame_sigdf_t *sdf, const uint8_t *bgmask, int32_t bn,
+                        int combine_neg, double *pout, sesame_err_t *err);
 
 /* C -- inferInfiniumIChannel (R/channel_inference.R:20-55). Reassigns each
  * Infinium-I probe to its brighter channel, judged against the 95th percentile
