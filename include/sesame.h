@@ -286,6 +286,17 @@ int sesame_signal_mu(const sesame_sigdf_t *sdf, double *M, double *U,
 int sesame_total_intensities(const sesame_sigdf_t *sdf, double *out,
                              sesame_err_t *err);
 
+/* Genotype the SNP (rs) probes and write a VCF (sesame's formatVCF). sdf should
+ * be the RAW SigDF -- channel inference would erase the Type-I channel-switch
+ * genotype signal. snp_path is the platform's <platform>.<genome>.snp.tsv.gz
+ * (columns chrm beg end strand rs designType U REF ALT Probe_ID). Sites-only
+ * VCF with per-probe genotype/score in INFO, sorted by chrom then position.
+ * variants_only drops the non-switching Infinium-I probes (REF_InfI with no rs)
+ * -- the bulk that carry no known variant -- keeping rs and channel-switch probes. */
+int sesame_format_vcf(const sesame_sigdf_t *sdf, const char *snp_path,
+                      const char *genome, int variants_only, FILE *out,
+                      sesame_err_t *err);
+
 /* Write sample-major matrices as a YAME .cg (+ <path>.idx of sample names),
  * consumable by the `yame` toolchain. Mat is sample-major: sample j, probe i at
  * mat[j*nprobe+i].

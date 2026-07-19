@@ -282,6 +282,30 @@ ordering-lineage divergence: pick one lineage for target, normals, and coords
 internally exact. Match the CNV inputs' processing state to the normal reference's
 (the store `cnvnormals.cg` is raw signal, so the target should be raw too).
 
+## VCF (formatVCF) — genotype and fraction exact; only the deep-tail score drifts
+
+`sesame vcf` ports `formatVCF` (`R/vcf.R`): from the RAW SigDF (channel inference
+would erase the Type-I channel-switch genotype signal) it forms a per-probe
+variant fraction — `1-beta` if the U bead reports ALT, the out-of-band Type-I
+allele fraction (`getAFTypeIbySumAlleles`) for `REF_InfI`, else `beta` — then a
+3-genotype binomial model (background 0.1, 40 beads) picks 0/0, 0/1, or 1/1 and a
+phred-like score `GS = floor(-log10(1 - GL_max/ΣGL)·10)`.
+
+Validated against R on all **127,572** EPICv2 SNP probes (GM12878, raw;
+`tests/run_vcf.sh`): the **genotype call (GT) and variant fraction (PVF) are
+exact** — 0 GT mismatches, PVF max diff 0. The binomial coefficient cancels in the
+posterior `GL_max/ΣGL`, so the ratio is computed in log space without it. `GS`
+matches on all but **11 probes** (≤10 apart), all at extreme scores (> ~80, beyond
+the nominal 7–85 range) where `1 - GL_max/ΣGL` is ~1e-40: there R's `dbinom`
+(Loader's saddle-point algorithm) is more accurate in the deep tail than a naive
+log-pmf, so `-log10` of a ~1e-40 quantity lands a few integers apart. A
+quality-score-only effect on 0.009% of probes, never on a call.
+
+`--variants` drops the non-switching Infinium-I probes (`REF_InfI` with no
+overlapping `rs`) — the ~99% bulk that carry no known variant and essentially
+always call 0/0 — keeping the rs and channel-switching probes (883 of 127,572 on
+EPICv2). The default emits the full set, matching R.
+
 ## Observations about the R implementation (not divergences)
 
 **Ordering files are sorted by Probe_ID under R's *locale* collation, not byte

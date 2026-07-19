@@ -58,6 +58,13 @@ static int usage(void)
       "      levels). normals/coords/genome default to the fetched store for\n"
       "      --platform. --target may hold several samples (one profile each).\n"
       "\n"
+      "  sesame vcf <prefix> [--platform P | --index <ordering>] [--snp <snp.tsv.gz>]\n"
+      "             [--genome hg38] [--variants] [--out <file.vcf>]\n"
+      "      Genotype the SNP probes into a VCF (sesame formatVCF). Uses the raw\n"
+      "      signal (channel inference would erase the Type-I genotype). --snp\n"
+      "      defaults to the store's <P>.<genome>.snp.tsv.gz; --variants keeps only\n"
+      "      rs and channel-switching probes, dropping the non-switching Inf-I bulk.\n"
+      "\n"
       "  sesame attach-probe [--index <ordering.tsv.gz> | --platform P]\n"
       "                      [--all] [--beta] [--no-header] <file>\n"
       "      Prepend the ordering's Probe_ID to a positional file's rows, as TSV\n"
@@ -1045,6 +1052,71 @@ out:
     return rc;
 }
 
+static int cmd_vcf(int argc, char **argv)
+{
+    const char *prefix = NULL, *idxpath = NULL, *platform = NULL, *snp = NULL;
+    const char *genome = "hg38", *outpath = NULL;
+    int min_beads = 0, variants_only = 0, i, rc = 1;
+    char store[4096], resolved[4096], snpbuf[4096];
+    sesame_index_t *ix = NULL;
+    sesame_sigdf_t *sdf = NULL;
+    FILE *out = stdout;
+    sesame_err_t e;
+
+    for (i = 0; i < argc; i++) {
+        if (strcmp(argv[i], "--index") == 0 && i+1 < argc) idxpath = argv[++i];
+        else if (strcmp(argv[i], "--platform") == 0 && i+1 < argc) platform = argv[++i];
+        else if (strcmp(argv[i], "--snp") == 0 && i+1 < argc) snp = argv[++i];
+        else if (strcmp(argv[i], "--genome") == 0 && i+1 < argc) genome = argv[++i];
+        else if ((strcmp(argv[i], "--out") == 0 || strcmp(argv[i], "-o") == 0) && i+1 < argc) outpath = argv[++i];
+        else if (strcmp(argv[i], "--min-beads") == 0 && i+1 < argc) min_beads = (int)strtol(argv[++i], NULL, 10);
+        else if (strcmp(argv[i], "--variants") == 0) variants_only = 1;
+        else if (argv[i][0] == '-' && argv[i][1] != '\0') { fprintf(stderr, "sesame: unknown option %s\n", argv[i]); return usage(); }
+        else if (!prefix) prefix = argv[i];
+        else { fprintf(stderr, "sesame: vcf takes one IDAT prefix\n"); return usage(); }
+    }
+    if (!prefix) { fprintf(stderr, "sesame: vcf needs an IDAT <prefix>\n"); return usage(); }
+
+    sesame_store_dir(store, sizeof store);
+    if (idxpath) {
+        if (!(ix = sesame_index_open(idxpath, &e))) { fprintf(stderr, "sesame: %s\n", e.msg); return 1; }
+    } else {
+        if (!platform) {                             /* auto-detect from the Grn bead count */
+            char g[4096]; sesame_idat_t *g0 = NULL;
+            if (resolve_idat(prefix, "Grn", g, sizeof g) != 0) { fprintf(stderr, "sesame: cannot find %s_Grn.idat\n", prefix); return 1; }
+            if (sesame_idat_read(g, &g0, &e) != SESAME_OK) { fprintf(stderr, "sesame: %s\n", e.msg); return 1; }
+            platform = sesame_platform_from_beads(g0->n);
+            if (!platform) { fprintf(stderr, "sesame: unknown platform (%d beads); pass --platform or --index\n", g0->n); sesame_idat_free(g0); return 1; }
+            sesame_idat_free(g0);
+        }
+        if (sesame_index_locate(platform, resolved, sizeof resolved) != 0) {
+            char help[1024]; sesame_index_missing_help(platform, help, sizeof help);
+            fprintf(stderr, "sesame: %s\n", help); return 1;
+        }
+        if (!(ix = sesame_index_open(resolved, &e))) { fprintf(stderr, "sesame: %s\n", e.msg); return 1; }
+    }
+
+    if (!snp) {                                      /* default: the store's snp table */
+        if (!platform) { fprintf(stderr, "sesame: vcf needs --snp <file> or --platform\n"); goto out; }
+        snprintf(snpbuf, sizeof snpbuf, "%s/%s/%s.%s.snp.tsv.gz", store, platform, platform, genome);
+        snp = snpbuf;
+    }
+
+    /* raw SigDF -- genotyping must not infer channels (that erases the Type-I
+     * channel-switch genotype signal). */
+    if (build_sigdf_for(prefix, ix, NULL, min_beads, &sdf, &e) != SESAME_OK) {
+        fprintf(stderr, "sesame: %s\n", e.msg); goto out;
+    }
+    if (outpath && !(out = fopen(outpath, "w"))) { fprintf(stderr, "sesame: cannot write %s\n", outpath); goto out; }
+    if (sesame_format_vcf(sdf, snp, genome, variants_only, out, &e) != SESAME_OK) { fprintf(stderr, "sesame: %s\n", e.msg); goto out; }
+    rc = 0;
+out:
+    if (out && out != stdout) fclose(out);
+    if (sdf) sesame_sigdf_free(sdf);
+    sesame_index_close(ix);
+    return rc;
+}
+
 /* Infer a platform from a filename like "MSA.hg38.coord.tsv.gz" -> "MSA". Returns
  * a static registry string, or NULL. */
 static const char *platform_from_basename(const char *path)
@@ -1170,6 +1242,8 @@ int main(int argc, char **argv)
         return cmd_dml(argc - 2, argv + 2);
     if (strcmp(argv[1], "cnv") == 0)
         return cmd_cnv(argc - 2, argv + 2);
+    if (strcmp(argv[1], "vcf") == 0)
+        return cmd_vcf(argc - 2, argv + 2);
     if (strcmp(argv[1], "attach-probe") == 0)
         return cmd_attach_probe(argc - 2, argv + 2);
     if (strcmp(argv[1], "fetch") == 0)
