@@ -171,8 +171,8 @@ lineage from error.
 
 ## QC panel — matches sesameQC to lineage scale; two noted behaviors
 
-`sesame qc` computes the `sesameQC_calcStats` panel (detection, numProbes,
-intensity, channel, dyeBias, betas) from a raw SigDF. It is not bit-identical to
+`sesame preprocess --output qc` computes the `sesameQC_calcStats` panel
+(detection, numProbes, intensity, channel, dyeBias, betas) from a raw SigDF. It is not bit-identical to
 R for the same reason `P`/`B` are not — the published ordering/mask is a newer
 lineage than sesameData (fewer probes, different background mask), so probe
 counts, detection, and beta stats all shift by a handful of probes. The test
@@ -225,9 +225,10 @@ needs the per-probe genomic-coordinate annotation, now published as
 
 ## CNV — arithmetic proven against R's lm; residual is channel-lineage leverage
 
-`sesame cnv` reproduces `cnSegmentation` up to the bin log2 ratios (CBS
-segmentation is left downstream). For a target sample it regresses per-probe total
-intensity on a panel of normals' totals (the **same Householder QR as DML**,
+`sesame cnv` reproduces `cnSegmentation` end to end — the bin log2 ratios **and**
+their circular binary segmentation (see the CBS note below). For a target sample
+it regresses per-probe total intensity on a panel of normals' totals (the **same
+Householder QR as DML**,
 `sesame__ols`), then `log2(target / max(fitted, 1))` per probe, and bins along the
 genome (tile at 50 kb, subtract assembly gaps, left/right-merge to ≥ 20 probes,
 median per bin — `getBinCoordinates` + `leftRightMerge1` + `binSignals`).

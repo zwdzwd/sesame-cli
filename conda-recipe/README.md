@@ -34,12 +34,13 @@ conda config --set anaconda_upload yes
 
 ## Automated builds (CI)
 
-A `.github/workflows/conda-build.yml` (mirroring cinderplot's) can run
-`conda build` on every push/PR across **linux-64**, **osx-64**, and
-**osx-arm64**, uploading each package as a build artifact, and publish to the
-`zhou-lab` channel on a `vX.Y.Z` tag (guarded so the tag must match the recipe
-version). Publishing needs an `ANACONDA_TOKEN` repository secret with upload
-rights to the org. Cutting a release:
+`.github/workflows/conda-build.yml` runs `conda build` on every push/PR to `main`
+across **linux-64** and **osx-arm64** (Intel `osx-64` is dropped — GitHub is
+retiring its Intel macOS runners, so those jobs queue indefinitely), uploading
+each package as a build artifact, and publishes to the `zhou-lab` channel on a
+`vX.Y.Z` tag (guarded so the tag must match the recipe version). Publishing needs
+an `ANACONDA_TOKEN` repository secret with upload rights to the org. Cutting a
+release:
 
 ```sh
 # bump `version` in conda-recipe/meta.yaml and SESAME_VERSION in include/sesame.h,
