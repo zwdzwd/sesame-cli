@@ -27,6 +27,8 @@ standalone reimplementation of [sesame](https://github.com/zwdzwd/sesame) /
   (`DML`), matching R's `lm` to ~1e-9.
 - **Copy number** — log2 ratios vs a normal panel, genome binning, and a
   deterministic port of DNAcopy's **circular binary segmentation**.
+- **SNP genotyping** — genotype the array's `rs` probes into a VCF
+  (`formatVCF`); genotype calls and variant fractions are exact vs R.
 - **Scale** — a cohort runs in one process across a thread pool, streaming to
   compact YAME `.cg` files; a bad IDAT never aborts the run.
 
@@ -82,6 +84,7 @@ verified against a digest compiled into the build, and reused.
 sesame preprocess   [options] <prefix> [<prefix> ...]  # IDAT -> YAME .cg (+ qc.tsv)
 sesame dml          --betas <beta.cg|matrix.tsv> (--formula .. --meta .. | --design ..)
 sesame cnv          --target <total_intensity.cg> [--platform P]   # log2 / bins / CBS segments
+sesame vcf          <prefix> [--platform P] --snp <snp.tsv.gz>     # SNP genotypes -> VCF
 sesame attach-probe [--platform P] <file.cg|.cm|.tsv>  # label a positional file with Probe_IDs
 sesame fetch        [<platform>] | genome [<build>]    # download annotation into the store
 sesame index-info                                      # store location + pinned tag + platforms
@@ -170,6 +173,26 @@ The fit + log2 matches R's `lm` to ~1e-5 on identical inputs; CBS recovers 97% o
 DNAcopy's breakpoints with exact locations (DNAcopy's permutation significance is
 itself unseeded, so an exact match is impossible — see `NUMERICS.md`). The figure
 above is real `sesame cnv` output for K562.
+
+## SNP genotyping — `vcf`
+
+Genotype the array's SNP (`rs`) probes and write a sites-only VCF — sesame's
+`formatVCF`. Per SNP probe it forms a variant fraction (`1-beta` for an ALT bead,
+the out-of-band Type-I allele fraction for a channel-switch probe, else `beta`),
+then a binomial model calls `0/0`, `0/1`, or `1/1` with a phred-like score in the
+`INFO` field.
+
+```sh
+sesame vcf tumor --platform EPICv2 --snp EPICv2.hg38.snp.tsv.gz > geno.vcf
+sesame vcf tumor --platform EPICv2 --snp EPICv2.hg38.snp.tsv.gz --variants > geno.vcf
+```
+
+It uses the **raw** signal (channel inference would erase the Type-I channel-switch
+genotype). `--snp` is the platform's `<platform>.<genome>.snp.tsv.gz` (or the store
+default). `--variants` keeps only the informative probes — rs and channel-switching
+— dropping the non-switching Infinium-I bulk (~99% of rows) that almost never call
+a variant. Genotype calls and variant fractions are **exact** vs R's `formatVCF`
+(the quality score differs on ~0.01% of probes in the deep tail; see `NUMERICS.md`).
 
 ## Utilities
 
@@ -323,6 +346,7 @@ float32. The golden ladder (`make test`):
 | QC panel | every `sesameQC` metric within lineage scale | ✅ 65/65 |
 | DML | vs R `DML`/`summaryExtractTest` | ✅ ~5e-10 |
 | CNV | fit+log2 vs R `lm`; CBS breakpoints vs DNAcopy | ✅ ~1e-5; 97% recall, exact locations |
+| VCF | genotypes vs R `formatVCF` | ✅ 127572 probes, GT + fraction exact |
 
 "Lineage" means the published ordering/mask is a newer data version than the
 installed `sesameData`, so a few probes differ for reasons that predate any

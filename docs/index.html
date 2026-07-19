@@ -4,62 +4,42 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>sesame-cli — Infinium methylation in one C binary</title>
-<meta name="description" content="Standalone C tool for Infinium DNA-methylation analysis: IDAT to betas, QC, differential methylation, and copy number — no R, validated against sesame.">
+<meta name="description" content="Standalone C tool for Infinium DNA-methylation analysis: IDAT to betas, QC, differential methylation, copy number, and SNP genotyping — no R.">
 <style>
   :root{
-    --bg:#ffffff; --fg:#1f2430; --muted:#616b7a; --line:#e6e8ec; --soft:#f6f7f9;
-    --accent:#3f5ae0; --accent-soft:#eef1fd; --code-bg:#0f1626; --code-fg:#e6ebf5;
-    --ok:#1a7f52;
+    --bg:#fff;--fg:#1f2430;--muted:#5b6472;--line:#e6e8ec;--soft:#f6f7f9;
+    --accent:#3f5ae0;--accent-soft:#eef1fd;--code-bg:#0f1626;--code-fg:#e6ebf5;--cm:#8b97b3;--ok:#1a7f52;
   }
-  @media (prefers-color-scheme: dark){
-    :root{ --bg:#0f1420; --fg:#e6ebf5; --muted:#98a2b3; --line:#232a38; --soft:#151b28;
-           --accent:#8ea2ff; --accent-soft:#171e33; --code-bg:#0a0f1a; --code-fg:#dbe3f2; --ok:#4bd08a; }
-  }
-  :root[data-theme=light]{ --bg:#fff; --fg:#1f2430; --muted:#616b7a; --line:#e6e8ec; --soft:#f6f7f9;
-           --accent:#3f5ae0; --accent-soft:#eef1fd; --code-bg:#0f1626; --code-fg:#e6ebf5; --ok:#1a7f52; }
-  :root[data-theme=dark]{ --bg:#0f1420; --fg:#e6ebf5; --muted:#98a2b3; --line:#232a38; --soft:#151b28;
-           --accent:#8ea2ff; --accent-soft:#171e33; --code-bg:#0a0f1a; --code-fg:#dbe3f2; --ok:#4bd08a; }
+  @media (prefers-color-scheme:dark){:root{
+    --bg:#0f1420;--fg:#e6ebf5;--muted:#98a2b3;--line:#232a38;--soft:#151b28;
+    --accent:#8ea2ff;--accent-soft:#171e33;--code-bg:#0a0f1a;--code-fg:#dbe3f2;--cm:#6b7688;--ok:#4bd08a;}}
+  :root[data-theme=light]{--bg:#fff;--fg:#1f2430;--muted:#5b6472;--line:#e6e8ec;--soft:#f6f7f9;--accent:#3f5ae0;--accent-soft:#eef1fd;--code-bg:#0f1626;--code-fg:#e6ebf5;--cm:#8b97b3;--ok:#1a7f52;}
+  :root[data-theme=dark]{--bg:#0f1420;--fg:#e6ebf5;--muted:#98a2b3;--line:#232a38;--soft:#151b28;--accent:#8ea2ff;--accent-soft:#171e33;--code-bg:#0a0f1a;--code-fg:#dbe3f2;--cm:#6b7688;--ok:#4bd08a;}
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--fg);
-    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
-    line-height:1.6;-webkit-font-smoothing:antialiased}
-  .wrap{max-width:960px;margin:0 auto;padding:0 20px}
-  a{color:var(--accent);text-decoration:none}
-  a:hover{text-decoration:underline}
-  header{padding:56px 0 8px}
-  h1{font-size:2.5rem;margin:0 0 6px;letter-spacing:-.02em}
-  .tag{font-size:1.15rem;color:var(--muted);margin:0 0 20px;max-width:640px}
-  .badges{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:22px}
-  .badge{font-size:.72rem;font-weight:600;padding:3px 9px;border-radius:20px;
-    background:var(--accent-soft);color:var(--accent);border:1px solid var(--line)}
-  .cta{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:8px 0 4px}
-  .btn{display:inline-block;padding:9px 16px;border-radius:8px;font-weight:600;font-size:.92rem;
-    border:1px solid var(--line);background:var(--soft);color:var(--fg)}
-  .btn.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
-  .btn:hover{text-decoration:none;filter:brightness(1.03)}
-  figure{margin:26px 0;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--soft)}
-  figure img{display:block;width:100%;height:auto;background:#fff}
-  figcaption{font-size:.85rem;color:var(--muted);padding:9px 14px;border-top:1px solid var(--line)}
-  h2{font-size:1.5rem;margin:52px 0 4px;letter-spacing:-.01em}
-  h2 .n{color:var(--muted);font-weight:400}
-  section>p{color:var(--fg)}
-  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;margin:20px 0}
-  .card{border:1px solid var(--line);border-radius:10px;padding:15px 16px;background:var(--soft)}
-  .card h3{margin:0 0 4px;font-size:1rem}
-  .card p{margin:0;font-size:.9rem;color:var(--muted)}
-  pre{background:var(--code-bg);color:var(--code-fg);border-radius:10px;padding:16px 18px;
-    overflow-x:auto;font-size:.86rem;line-height:1.55;margin:16px 0}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;line-height:1.55;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:820px;margin:0 auto;padding:0 20px}
+  a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+  header{padding:40px 0 6px;border-bottom:1px solid var(--line);margin-bottom:8px}
+  h1{font-size:1.9rem;margin:0 0 4px;letter-spacing:-.02em}
+  .tag{color:var(--muted);margin:0 0 14px;font-size:1.02rem}
+  .links{font-size:.9rem;color:var(--muted)}
+  .links a{font-weight:600}.links span{opacity:.5;margin:0 6px}
+  h2{font-size:1.15rem;margin:30px 0 2px;letter-spacing:-.01em}
+  h2 .m{color:var(--muted);font-weight:400;font-size:.9rem}
+  section>p{margin:.3rem 0 .1rem;color:var(--muted);font-size:.94rem}
+  pre{background:var(--code-bg);color:var(--code-fg);border-radius:9px;padding:13px 15px;overflow-x:auto;font-size:.845rem;line-height:1.5;margin:10px 0}
   pre code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-  .cm{color:#8b97b3}
-  code.inl{background:var(--accent-soft);color:var(--accent);padding:1px 6px;border-radius:5px;
-    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.86em}
-  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:.9rem}
-  th,td{text-align:left;padding:8px 12px;border-bottom:1px solid var(--line);vertical-align:top}
-  th{font-size:.78rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
-  td code,th code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.85em}
+  .cm{color:var(--cm)}
+  code.inl{background:var(--accent-soft);color:var(--accent);padding:1px 5px;border-radius:5px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.85em}
+  figure{margin:12px 0 4px;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+  figure img{display:block;width:100%;height:auto;background:#fff}
+  figcaption{font-size:.8rem;color:var(--muted);padding:7px 12px;border-top:1px solid var(--line);background:var(--soft)}
+  table{border-collapse:collapse;width:100%;margin:10px 0;font-size:.9rem}
+  th,td{text-align:left;padding:6px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+  td code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.86em;color:var(--accent)}
   .tablewrap{overflow-x:auto}
-  footer{margin:64px 0 48px;padding-top:20px;border-top:1px solid var(--line);color:var(--muted);font-size:.88rem}
-  .ok{color:var(--ok);font-weight:600}
+  footer{margin:44px 0 40px;padding-top:16px;border-top:1px solid var(--line);color:var(--muted);font-size:.86rem}
 </style>
 </head>
 <body>
@@ -68,118 +48,107 @@
 <header>
   <h1>sesame-cli</h1>
   <p class="tag">Infinium DNA-methylation analysis as a single C binary —
-    IDAT&nbsp;→&nbsp;betas&nbsp;→&nbsp;QC, differential methylation, and copy number.
-    No R, no Bioconductor.</p>
-  <div class="badges">
-    <span class="badge">C11</span>
-    <span class="badge">EPIC · EPICv2 · HM450 · MSA</span>
-    <span class="badge">betas bit-identical to R</span>
-    <span class="badge">AGPL-3.0</span>
-  </div>
-  <div class="cta">
-    <a class="btn primary" href="https://github.com/zwdzwd/sesame-cli">GitHub&nbsp;↗</a>
-    <a class="btn" href="https://github.com/zwdzwd/sesame-cli/blob/main/README.md">README</a>
-    <a class="btn" href="https://github.com/zwdzwd/sesame-cli/blob/main/NUMERICS.md">Numerics&nbsp;&amp;&nbsp;fidelity</a>
-  </div>
+    IDAT&nbsp;→&nbsp;betas, QC, differential methylation, copy number, and SNP
+    genotyping. No R, no Bioconductor.</p>
+  <p class="links">
+    <a href="https://github.com/zwdzwd/sesame-cli">GitHub</a><span>·</span>
+    <a href="https://github.com/zwdzwd/sesame-cli/blob/main/README.md">README</a><span>·</span>
+    <a href="https://github.com/zwdzwd/sesame-cli/blob/main/NUMERICS.md">Numerics &amp; fidelity</a><span>·</span>
+    arrays: EPIC, EPICv2, HM450, MSA
+  </p>
 </header>
-
-<figure>
-  <img src="figures/pipeline.svg" alt="sesame-cli workflow: IDAT to preprocess (QCDPB) to beta/intensity/pval/qc, feeding dml and cnv">
-  <figcaption>One binary spans the pipeline: read IDATs, preprocess to betas
-    (QCDPB), then differential methylation and copy number off the same products.</figcaption>
-</figure>
-
-<section>
-  <h2>What it does</h2>
-  <div class="grid">
-    <div class="card"><h3>Read IDATs</h3><p><code class="inl">readIDATpair</code>,
-      <span class="ok">bit-identical</span> to R on 33/33 files (~20.4M records, 9 platforms).</p></div>
-    <div class="card"><h3>Preprocess</h3><p>The full <code class="inl">QCDPB</code> pipeline
-      → betas. <code class="inl">prep=""</code> betas are bit-identical to R.</p></div>
-    <div class="card"><h3>Quality control</h3><p>The 65-metric <code class="inl">sesameQC</code>
-      panel, one row per sample.</p></div>
-    <div class="card"><h3>Differential methylation</h3><p>Per-probe OLS with t/F tests and
-      BH adjustment — matches R's <code class="inl">lm</code> to ~1e-9.</p></div>
-    <div class="card"><h3>Copy number</h3><p>log2 ratios vs a normal panel, genome bins,
-      and a deterministic port of DNAcopy's CBS.</p></div>
-    <div class="card"><h3>Scale</h3><p>A cohort runs in one process across a thread pool,
-      streaming to compact YAME <code class="inl">.cg</code> files.</p></div>
-  </div>
-</section>
 
 <section>
   <h2>Install</h2>
-  <pre><code><span class="cm"># conda (recommended) — installs the `sesame` binary</span>
+  <pre><code><span class="cm"># conda (recommended) — installs the `sesame` binary; deps zlib + libcurl</span>
 conda install -c zhou-lab -c conda-forge sesame-cli
 
-<span class="cm"># or build from source (C compiler + make; deps zlib, libcurl)</span>
+<span class="cm"># or build from source (C compiler + make)</span>
 git clone --recurse-submodules https://github.com/zwdzwd/sesame-cli
 cd sesame-cli &amp;&amp; make</code></pre>
 </section>
 
 <section>
-  <h2>Quickstart</h2>
-  <pre><code><span class="cm"># 1. one-time: fetch a platform's annotation into the store</span>
-sesame fetch EPICv2
+  <h2>Fetch annotation <span class="m">— one time, then offline</span></h2>
+  <p>Downloads a platform's ordering, mask, and coordinates into a local store,
+    verified against a compiled-in digest. The only command that touches the network.</p>
+  <pre><code>sesame fetch EPICv2            <span class="cm"># ordering + mask + coords for one platform</span>
+sesame fetch genome hg38      <span class="cm"># genome tiling for CNV (hg38 · mm10 · mm39)</span></code></pre>
+</section>
 
-<span class="cm"># 2. preprocess a cohort (default QCDPB) -> indexed .cg per output + qc.tsv</span>
+<section>
+  <h2>Preprocess <span class="m">— IDAT → betas</span></h2>
+  <p>Runs <code class="inl">QCDPB</code> (openSesame's default) over a cohort in one
+    process. A <code class="inl">&lt;prefix&gt;</code> resolves <code class="inl">&lt;prefix&gt;_Grn.idat[.gz]</code>
+    and <code class="inl">_Red</code>. Outputs are YAME <code class="inl">.cg</code> files + <code class="inl">qc.tsv</code>.</p>
+  <pre><code><span class="cm"># a whole cohort -> beta.cg / intensity.cg / pval.cg / qc.tsv</span>
 sesame preprocess --out out/ $(ls idats/*_Grn.idat.gz | sed 's/_Grn.idat.gz//')
-<span class="cm">#    -> out/beta.cg  out/intensity.cg  out/pval.cg  out/qc.tsv</span>
 
-<span class="cm"># 3a. differential methylation from the betas</span>
-sesame dml --betas out/beta.cg --index EPICv2.ordering.tsv.gz \
-           --meta samples.tsv --formula '~ group + age' &gt; dml.tsv
+sesame preprocess --output beta --out out/ s1 s2 s3      <span class="cm"># just betas</span>
+sesame preprocess --prep "" --out raw/ s1                <span class="cm"># raw betas (bit-identical to R)</span></code></pre>
+</section>
 
-<span class="cm"># 3b. copy number for a tumor sample (CBS segments by default)</span>
-sesame fetch genome hg38
+<section>
+  <h2>Differential methylation <span class="m">— dml</span></h2>
+  <p>Per-probe OLS with t/F tests and BH adjustment (sesame's <code class="inl">DML</code>),
+    matching R's <code class="inl">lm</code> to ~1e-9.</p>
+  <pre><code>sesame dml --betas out/beta.cg --index EPICv2.ordering.tsv.gz \
+           --meta samples.tsv --formula '~ group + age' &gt; dml.tsv</code></pre>
+  <p>Metadata's first column matches the sample names; categorical terms are
+    auto-dummied. Use <code class="inl">--design &lt;numeric.tsv&gt;</code> for interactions.</p>
+</section>
+
+<section>
+  <h2>Copy number <span class="m">— cnv</span></h2>
+  <p>Regress total intensity on a normal panel → log2 ratios → genome bins →
+    circular binary segmentation (a deterministic port of DNAcopy's CBS).</p>
+  <pre><code><span class="cm"># target = raw total intensity, then segment</span>
 sesame preprocess --prep "" --raw-signal --output total_intensity --out t/ tumor
-sesame cnv --target t/total_intensity.cg --platform EPICv2 &gt; segments.tsv</code></pre>
+sesame cnv --target t/total_intensity.cg --platform EPICv2 &gt; segments.tsv  <span class="cm"># default</span>
+sesame cnv --target t/total_intensity.cg --platform EPICv2 --bins &gt; bins.tsv</code></pre>
+  <figure>
+    <img src="figures/cnv_k562.svg" alt="K562 genome-wide copy-number profile from sesame cnv">
+    <figcaption>Real <code>sesame cnv</code> output — K562 (EPICv2/hg38): chr9p21 deletion, chr13/22 amplifications. Blue = loss, red = gain.</figcaption>
+  </figure>
 </section>
 
 <section>
-  <h2>Copy number, from real data</h2>
-  <p>The <code class="inl">cnv</code> command emits per-probe log2 ratios, genome
-    bins, and CBS segments. Below is actual <code class="inl">sesame cnv</code>
-    output for the K562 leukemia line (EPICv2): the deep chr9p21 (<code class="inl">CDKN2A</code>)
-    deletion, chr13/chr22 amplifications, and arm-level losses — bin cloud plus
-    segment lines over a whole-genome axis.</p>
+  <h2>Genotype SNPs → VCF <span class="m">— vcf</span></h2>
+  <p>Genotype the array's SNP (<code class="inl">rs</code>) probes into a VCF (sesame's
+    <code class="inl">formatVCF</code>); GT and variant fractions are exact vs R.</p>
+  <pre><code>sesame vcf tumor --platform EPICv2 --snp EPICv2.hg38.snp.tsv.gz &gt; geno.vcf
+
+<span class="cm"># --variants: only rs + channel-switching probes (drops the non-switching Inf-I bulk)</span>
+sesame vcf tumor --platform EPICv2 --snp EPICv2.hg38.snp.tsv.gz --variants &gt; geno.vcf</code></pre>
 </section>
-<figure>
-  <img src="figures/cnv_k562.svg" alt="K562 genome-wide copy-number profile from sesame cnv">
-  <figcaption>K562 copy number — <code>sesame cnv</code>, EPICv2 / hg38. Blue = loss, red = gain.</figcaption>
-</figure>
 
 <section>
-  <h2>Preprocessing, from real data</h2>
-  <p>QCDPB betas show the expected bimodal methylation signature — probes pile up
-    near 0 (unmethylated) and 1 (methylated). Real GM12878 EPICv2 output:</p>
+  <h2>Inspect <span class="m">— attach-probe, idat-dump</span></h2>
+  <pre><code><span class="cm"># label any positional .cg / .cm / coord table with Probe_IDs (greppable TSV)</span>
+sesame attach-probe --platform MSA --all MSA.hg38.mask.cm
+
+sesame idat-dump --tsv sample_Grn.idat.gz     <span class="cm"># raw addr / mean / sd / nbeads</span>
+sesame index-info                             <span class="cm"># store location + which platforms are present</span></code></pre>
 </section>
-<figure>
-  <img src="figures/beta_dist.svg" alt="bimodal beta-value distribution from QCDPB preprocessing">
-  <figcaption>Beta-value distribution after QCDPB (GM12878, EPICv2).</figcaption>
-</figure>
 
 <section>
-  <h2>Commands</h2>
+  <h2>All commands</h2>
   <div class="tablewrap"><table>
-    <tr><th>command</th><th>what it does</th></tr>
-    <tr><td><code>preprocess</code></td><td>IDAT → betas / intensity / pval / qc as YAME <code>.cg</code> (+ <code>qc.tsv</code>), batched over a cohort</td></tr>
-    <tr><td><code>dml</code></td><td>per-probe differential methylation (OLS, t/F tests, BH)</td></tr>
-    <tr><td><code>cnv</code></td><td>copy number — log2 ratios, genome bins, CBS segments</td></tr>
-    <tr><td><code>attach-probe</code></td><td>label a positional <code>.cg</code>/<code>.cm</code>/coord table with Probe_IDs</td></tr>
-    <tr><td><code>fetch</code></td><td>download platform / genome annotation into the store (verified, offline thereafter)</td></tr>
-    <tr><td><code>index-info</code></td><td>store location, pinned tag, and which platforms are present</td></tr>
-    <tr><td><code>idat-dump</code></td><td>inspect a raw <code>.idat</code></td></tr>
+    <tr><th>command</th><th>output</th></tr>
+    <tr><td><code>preprocess</code></td><td>IDAT → beta / intensity / pval / qc (batched, YAME <code>.cg</code>)</td></tr>
+    <tr><td><code>dml</code></td><td>per-probe differential methylation (TSV)</td></tr>
+    <tr><td><code>cnv</code></td><td>copy-number log2 ratios, bins, CBS segments (TSV)</td></tr>
+    <tr><td><code>vcf</code></td><td>SNP genotypes as VCF</td></tr>
+    <tr><td><code>attach-probe</code></td><td>label a positional file with Probe_IDs</td></tr>
+    <tr><td><code>fetch</code></td><td>download platform / genome annotation (verified)</td></tr>
+    <tr><td><code>idat-dump</code> · <code>index-info</code></td><td>inspect a raw IDAT · show the store</td></tr>
   </table></div>
-  <p>Full options and the fidelity ladder are in the
-    <a href="https://github.com/zwdzwd/sesame-cli/blob/main/README.md">README</a> and
-    <a href="https://github.com/zwdzwd/sesame-cli/blob/main/NUMERICS.md">NUMERICS.md</a>.</p>
 </section>
 
 <footer>
-  <p>sesame-cli is AGPL-3.0-or-later. The R package
-    <a href="https://github.com/zwdzwd/sesame">sesame</a> stays the reference
-    implementation and validation oracle. · <a href="https://github.com/zwdzwd/sesame-cli">github.com/zwdzwd/sesame-cli</a></p>
+  Betas are bit-identical to R where it counts; every intentional divergence is
+  quantified in <a href="https://github.com/zwdzwd/sesame-cli/blob/main/NUMERICS.md">NUMERICS.md</a>.
+  AGPL-3.0-or-later. · <a href="https://github.com/zwdzwd/sesame-cli">github.com/zwdzwd/sesame-cli</a>
 </footer>
 
 </div>
