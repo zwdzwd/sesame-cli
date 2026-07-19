@@ -16,8 +16,9 @@ jobs:
       matrix:
         include:
           - {os: ubuntu-latest, name: linux-64}
-          - {os: macos-13,      name: osx-64}
           - {os: macos-14,      name: osx-arm64}
+          # osx-64 (macos-13, Intel) dropped: GitHub is retiring Intel runners,
+          # so those jobs queue indefinitely. osx-arm64 covers modern Macs.
     defaults:
       run:
         shell: bash -el {0}
