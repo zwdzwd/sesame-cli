@@ -18,79 +18,237 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+/* Top-level command index -- kept brief on purpose; each command's own -h
+ * (e.g. `sesame preprocess -h`) carries the full option detail. */
 static int usage(void)
 {
     fputs(
-      "sesame -- Infinium DNA methylation preprocessing\n"
       "\n"
-      "usage:\n"
-      "  sesame preprocess [--output LIST] [--prep QCDPB] [--raw-signal]\n"
-      "            [--index <ordering.tsv.gz>] [--platform P] [--min-beads N]\n"
-      "            [--out DIR] [--tmp DIR] [--threads N] <prefix> [<prefix> ...]\n"
-      "      The pipeline: apply --prep (default QCDPB) per sample and write YAME\n"
-      "      .cg outputs to DIR (default .), one indexed file per output over the\n"
-      "      cohort. --output is a comma list from intensity,total_intensity,beta,\n"
-      "      pval,qc (default beta,intensity,pval,qc): beta.cg (fmt4), intensity.cg\n"
-      "      (fmt3 M/U -- yame derives beta and coverage), total_intensity.cg\n"
-      "      (fmt4), pval.cg (fmt4), qc.tsv. Signal outputs reflect the prep;\n"
-      "      --raw-signal takes intensity/total from the raw signal. Many prefixes\n"
-      "      -> one indexed .cg per output; a failed sample -> NA + exit 1. If\n"
-      "      --index is omitted the platform is detected from the bead count and\n"
-      "      the index looked up in $SESAME_INDEX_DIR, ., ./data, then the cache.\n"
+      "Program: sesame -- standalone Infinium DNA methylation toolkit\n"
+      "Version: " SESAME_VERSION "\n"
+      "Source:  https://github.com/zwdzwd/sesame-cli\n"
       "\n"
-      "  sesame dml --betas <beta.cg|matrix.tsv> [--index <ordering.tsv.gz>]\n"
-      "             (--formula '~a+b' --meta <s.tsv> | --design <X.tsv>) [--threads N]\n"
-      "      Per-probe differential methylation: OLS of each probe's betas on the\n"
-      "      design, with per-coefficient t-tests, a holdout F-test per categorical\n"
-      "      variable, effect sizes, and BH-adjusted p-values. --betas is a\n"
-      "      preprocess beta.cg (needs --index for probe IDs) or a Probe_ID matrix\n"
-      "      TSV; --meta's first column matches the sample names. --formula takes\n"
-      "      main effects (categorical auto-dummied); --design passes a numeric\n"
-      "      design for interactions.\n"
+      "Usage:   sesame <command> [options]\n"
       "\n"
-      "  sesame cnv --target <total_intensity.cg> [--normals <cnvnormals.cg>]\n"
-      "             [--platform P | --index <ordering>] [--genome hg38]\n"
-      "             [--coords <coord.tsv.gz>] [--segments|--bins|--probes] [--out <file>]\n"
-      "      Copy-number: regress the target's per-probe total intensity on a\n"
-      "      panel of normals (OLS), then log2(target/fitted) per probe, binned\n"
-      "      along the genome (median per bin) and segmented by circular binary\n"
-      "      segmentation (default --segments; --bins/--probes for the finer\n"
-      "      levels). normals/coords/genome default to the fetched store for\n"
-      "      --platform. --target may hold several samples (one profile each).\n"
+      "Preprocessing\n"
+      "  preprocess     IDATs -> betas / signal / detection p-value / QC (prep QCDPB)\n"
       "\n"
-      "  sesame vcf <prefix> [--platform P | --index <ordering>] [--snp <snp.tsv.gz>]\n"
-      "             [--genome hg38] [--variants] [--out <file.vcf>]\n"
-      "      Genotype the SNP probes into a VCF (sesame formatVCF). Uses the raw\n"
-      "      signal (channel inference would erase the Type-I genotype). --snp\n"
-      "      defaults to the store's <P>.<genome>.snp.tsv.gz; --variants keeps only\n"
-      "      rs and channel-switching probes, dropping the non-switching Inf-I bulk.\n"
+      "Analysis\n"
+      "  dml            Differential methylation: per-probe linear models\n"
+      "  cnv            Copy number: log2 ratio vs a normal panel + CBS segmentation\n"
+      "  vcf            Genotype the SNP probes into a VCF (formatVCF)\n"
+      "  region         Extract a region's betas as long-form TSV for plotting\n"
       "\n"
-      "  sesame attach-probe [--index <ordering.tsv.gz> | --platform P]\n"
-      "                      [--all] [--beta] [--no-header] <file>\n"
-      "      Prepend the ordering's Probe_ID to a positional file's rows, as TSV\n"
-      "      on stdout. <file> is a YAME .cg/.cm/.cx (fmt0 mask, fmt3 M/U or\n"
-      "      --beta, fmt4 float) or a text .tsv[.gz] (e.g. a .hg38.coord.tsv.gz).\n"
-      "      --all emits every sample column; the ordering is --index, else\n"
-      "      --platform, else inferred from the filename prefix. Row count must\n"
-      "      match the ordering (same platform + tag that made the file).\n"
+      "Inspect / convert\n"
+      "  attach-probe   Prepend Probe_IDs to a positional .cg / .tsv file\n"
+      "  idat-dump      Dump raw IDAT records, or a summary header\n"
       "\n"
-      "  sesame idat-dump [--head N] [--tsv] <file.idat|file.idat.gz>\n"
-      "      Print IDAT contents. Default prints a summary header; --tsv emits\n"
-      "      addr<TAB>mean<TAB>sd<TAB>nbeads. --head N limits records.\n"
+      "Data store\n"
+      "  fetch          Download ordering / genome annotation (the only network path)\n"
+      "  index-info     Show the store location and available platforms\n"
       "\n"
-      "  sesame fetch [<platform>] [--force]\n"
-      "  sesame fetch genome [<build>] [--force]\n"
-      "      Download <platform> (default: all published), or a genome build's\n"
-      "      genome-level annotation (default: hg38), at the pinned tag. Verifies\n"
-      "      every file against its digest; a file already present and matching is\n"
-      "      skipped. The ONLY path that touches the network. Never prompts.\n"
+      "Other\n"
+      "  version        Print the version and exit\n"
+      "  help           Show this help; `sesame <command> -h` for command detail\n"
       "\n"
-      "  sesame index-info\n"
-      "      Show the store location, which tag it holds, and each platform.\n"
-      "\n"
-      "  sesame version\n",
+      "Run `sesame <command> -h` for a command's options.\n"
+      "\n",
       stderr);
-    return 2;
+    return 1;
+}
+
+static int usage_preprocess(void)
+{
+    fputs(
+      "Usage: sesame preprocess [options] <prefix> [<prefix> ...]\n"
+      "\n"
+      "  Preprocess Infinium IDATs to methylation levels. Each <prefix> is an IDAT\n"
+      "  pair (<prefix>_Grn.idat / _Red.idat, .gz ok). Apply the --prep steps to\n"
+      "  every sample and write one indexed YAME .cg per requested output, over the\n"
+      "  whole cohort. A failed sample becomes an NA column and sets exit status 1.\n"
+      "\n"
+      "Options:\n"
+      "  --output LIST      Comma list (default beta,intensity,pval,qc) from:\n"
+      "                       beta, intensity, total_intensity, pval, qc\n"
+      "  --prep STEPS       Prep code (default QCDPB): Q qualityMask, C inferChannel,\n"
+      "                       D dyeBias, P pOOBAH, B noob. Empty string = raw betas.\n"
+      "  --raw-signal       Take intensity/total from the raw signal, not the prep.\n"
+      "  --platform P       EPIC | EPICv2 | HM450 | MSA (else from the bead count).\n"
+      "  --index FILE       Ordering .tsv.gz (overrides --platform / detection).\n"
+      "  --min-beads N      Mask probes with < N beads (default 0).\n"
+      "  --out DIR          Output directory (default: current directory).\n"
+      "  --tmp DIR          Scratch dir for the sample-major matrix (default $TMPDIR).\n"
+      "  --threads N, -t N  Worker threads (default: number of CPUs).\n"
+      "\n"
+      "Outputs (written under --out):\n"
+      "  beta.cg  fmt4 betas    intensity.cg  fmt3 M/U    total_intensity.cg  fmt4\n"
+      "  pval.cg  fmt4 det. p   qc.tsv  per-sample QC\n"
+      "\n"
+      "If --index is omitted the platform is detected from the bead count and the\n"
+      "ordering is looked up in $SESAME_INDEX_DIR, ., ./data, then the cache.\n",
+      stderr);
+    return 1;
+}
+
+static int usage_dml(void)
+{
+    fputs(
+      "Usage: sesame dml --betas <beta.cg|matrix.tsv>\n"
+      "                  (--formula '~a+b' --meta <s.tsv> | --design <X.tsv>)\n"
+      "                  [--index <ordering.tsv.gz>] [--threads N]\n"
+      "\n"
+      "  Per-probe differential methylation: OLS of each probe's betas on the\n"
+      "  design, with per-coefficient t-tests, a holdout F-test per categorical\n"
+      "  variable, effect sizes, and BH-adjusted p-values (TSV on stdout).\n"
+      "\n"
+      "Options:\n"
+      "  --betas FILE       A preprocess beta.cg (needs --index for Probe_IDs) or a\n"
+      "                       Probe_ID x sample matrix TSV.\n"
+      "  --formula '~a+b'   Model over --meta columns (categoricals auto-dummied).\n"
+      "  --meta FILE        Sample table; its first column matches the sample names.\n"
+      "  --design FILE      A numeric design matrix (for interactions), in place of\n"
+      "                       --formula/--meta.\n"
+      "  --index FILE       Ordering .tsv.gz (required when --betas is a .cg).\n"
+      "  --threads N, -t N  Worker threads (default: number of CPUs).\n",
+      stderr);
+    return 1;
+}
+
+static int usage_cnv(void)
+{
+    fputs(
+      "Usage: sesame cnv --target <total_intensity.cg> [options]\n"
+      "\n"
+      "  Copy number: regress the target's per-probe total intensity on a panel of\n"
+      "  normals (OLS), take log2(target/fitted) per probe, bin along the genome\n"
+      "  (median per bin), and segment by circular binary segmentation. The target\n"
+      "  may hold several samples -- one profile each. TSV on stdout.\n"
+      "\n"
+      "Options:\n"
+      "  --target FILE      Target total_intensity.cg (also the positional arg).\n"
+      "  --normals FILE     Normal panel .cg (default: the store's cnvnormals).\n"
+      "  --platform P       EPIC | EPICv2 | HM450 | MSA -- supplies the defaults below.\n"
+      "  --index FILE       Ordering .tsv.gz (overrides --platform).\n"
+      "  --coords FILE      Probe coordinate .tsv.gz (default: the store's).\n"
+      "  --genome BUILD     Genome build (default hg38).\n"
+      "  --tilewidth BP     Genome bin width (default 50000).\n"
+      "  --min-probes N     Drop bins with < N probes (default 20).\n"
+      "  --segments         Output segments (default).\n"
+      "  --bins             Output per-bin log2 ratios.\n"
+      "  --probes           Output per-probe log2 ratios.\n"
+      "  --out FILE         Write here instead of stdout.\n"
+      "\n"
+      "normals/coords/genome default to the fetched store for --platform.\n",
+      stderr);
+    return 1;
+}
+
+static int usage_vcf(void)
+{
+    fputs(
+      "Usage: sesame vcf <prefix> [options]\n"
+      "\n"
+      "  Genotype the SNP probes into a VCF (sesame formatVCF). Runs on the raw\n"
+      "  signal -- channel inference would erase the Type-I genotype. <prefix> is\n"
+      "  an IDAT pair. Sites-only VCF on stdout.\n"
+      "\n"
+      "Options:\n"
+      "  --platform P       EPIC | EPICv2 | HM450 | MSA (else from the bead count).\n"
+      "  --index FILE       Ordering .tsv.gz (overrides --platform).\n"
+      "  --snp FILE         SNP table (default: the store's <P>.<genome>.snp.tsv.gz).\n"
+      "  --genome BUILD     Genome build (default hg38).\n"
+      "  --variants         Keep only rs and channel-switching probes, dropping the\n"
+      "                       non-switching Infinium-I bulk (unlikely to vary).\n"
+      "  --min-beads N      Mask probes with < N beads (default 0).\n"
+      "  --out FILE, -o     Write here instead of stdout.\n",
+      stderr);
+    return 1;
+}
+
+static int usage_region(void)
+{
+    fputs(
+      "Usage: sesame region <chr:beg-end> --betas <beta.cg> [options]\n"
+      "\n"
+      "  Extract a region's betas from a multi-sample beta.cg as long-form TSV:\n"
+      "    chrom  beg  end  Probe_ID  beta  sample_name\n"
+      "  -- one row per (probe in region) x sample, the plot-ready feed for a\n"
+      "  locus / region view. Commas in the region string are ignored.\n"
+      "\n"
+      "Options:\n"
+      "  --betas FILE       Multi-sample beta.cg (required).\n"
+      "  --platform P       EPIC | EPICv2 | HM450 | MSA -- supplies Probe_IDs/coords.\n"
+      "  --index FILE       Ordering .tsv.gz (overrides --platform).\n"
+      "  --coords FILE      Probe coordinate .tsv.gz (default: the store's).\n"
+      "  --genome BUILD     Genome build (default hg38).\n"
+      "  --out FILE, -o     Write here instead of stdout.\n",
+      stderr);
+    return 1;
+}
+
+static int usage_attach(void)
+{
+    fputs(
+      "Usage: sesame attach-probe [options] <file>\n"
+      "\n"
+      "  Prepend the ordering's Probe_ID to a positional file's rows, as TSV on\n"
+      "  stdout. <file> is a YAME .cg/.cm/.cx (fmt0 mask, fmt3 M/U or --beta, fmt4\n"
+      "  float) or a text .tsv[.gz] (e.g. a .hg38.coord.tsv.gz). The row count must\n"
+      "  match the ordering (same platform + tag that made the file).\n"
+      "\n"
+      "Options:\n"
+      "  --platform P       EPIC | EPICv2 | HM450 | MSA (else from the filename).\n"
+      "  --index FILE       Ordering .tsv.gz (overrides --platform).\n"
+      "  --all, -a          Emit every sample column (default: first only).\n"
+      "  --beta             Read fmt3 M/U as beta.\n"
+      "  --no-header        Omit the header row.\n",
+      stderr);
+    return 1;
+}
+
+static int usage_idat(void)
+{
+    fputs(
+      "Usage: sesame idat-dump [options] <file.idat|file.idat.gz>\n"
+      "\n"
+      "  Print IDAT contents. Default prints a summary header.\n"
+      "\n"
+      "Options:\n"
+      "  --tsv              Emit addr<TAB>mean<TAB>sd<TAB>nbeads.\n"
+      "  --head N           Limit to the first N records.\n",
+      stderr);
+    return 1;
+}
+
+static int usage_fetch(void)
+{
+    fputs(
+      "Usage: sesame fetch [<platform>] [--force]\n"
+      "       sesame fetch genome [<build>] [--force]\n"
+      "\n"
+      "  Download a <platform> ordering (default: all published), or a genome\n"
+      "  build's annotation (default: hg38), at the pinned tag. Every file is\n"
+      "  verified against its digest; one already present and matching is skipped.\n"
+      "  This is the ONLY path that touches the network. Never prompts.\n"
+      "\n"
+      "Options:\n"
+      "  --force            Re-download even if present and matching.\n",
+      stderr);
+    return 1;
+}
+
+/* Route `sesame help <cmd>` / `sesame <cmd> -h` to the command's own help. */
+static int route_usage(const char *cmd)
+{
+    if (!strcmp(cmd, "preprocess"))   return usage_preprocess();
+    if (!strcmp(cmd, "dml"))          return usage_dml();
+    if (!strcmp(cmd, "cnv"))          return usage_cnv();
+    if (!strcmp(cmd, "vcf"))          return usage_vcf();
+    if (!strcmp(cmd, "region"))       return usage_region();
+    if (!strcmp(cmd, "attach-probe")) return usage_attach();
+    if (!strcmp(cmd, "idat-dump"))    return usage_idat();
+    if (!strcmp(cmd, "fetch"))        return usage_fetch();
+    return usage();
 }
 
 /* Resolve <prefix>_Grn.idat, trying .gz as R does (R/sesame.R:331-345). */
@@ -115,7 +273,8 @@ static int cmd_fetch(int argc, char **argv)
     for (i = 0; i < argc; i++) {
         if (strcmp(argv[i], "--force") == 0) force = 1;
         else if (strcmp(argv[i], "genome") == 0) want_genome = 1;
-        else if (argv[i][0] == '-' && argv[i][1] != '\0') return usage();
+        else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) { usage_fetch(); return 0; }
+        else if (argv[i][0] == '-' && argv[i][1] != '\0') return usage_fetch();
         else if (want_genome && !genome) genome = argv[i];
         else platform = argv[i];
     }
@@ -394,11 +553,12 @@ static int cmd_preprocess(int argc, char **argv)
         else if (strcmp(argv[i], "--min-beads") == 0 && i+1 < argc) min_beads = (int)strtol(argv[++i],NULL,10);
         else if ((strcmp(argv[i],"--threads")==0||strcmp(argv[i],"-t")==0) && i+1<argc) nthreads = (int)strtol(argv[++i],NULL,10);
         else if (strcmp(argv[i], "--raw-signal") == 0) raw_signal = 1;
+        else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) { free(prefixes); usage_preprocess(); return 0; }
         else if (argv[i][0] == '-' && argv[i][1] != '\0') {
-            fprintf(stderr, "sesame: unknown option %s\n", argv[i]); free(prefixes); return usage();
+            fprintf(stderr, "sesame: unknown option %s\n", argv[i]); free(prefixes); return usage_preprocess();
         } else prefixes[nsamp++] = argv[i];
     }
-    if (nsamp == 0) { free(prefixes); return usage(); }
+    if (nsamp == 0) { free(prefixes); return usage_preprocess(); }
     if (pp_parse_output(outlist, &ctx) != 0) { free(prefixes); return 1; }
     if (tmpdir) setenv("TMPDIR", tmpdir, 1);
     mkdir(outdir, 0777);                              /* ok if it already exists */
@@ -693,11 +853,12 @@ static int cmd_dml(int argc, char **argv)
         else if (strcmp(argv[i], "--index") == 0 && i+1 < argc) idxpath = argv[++i];
         else if ((strcmp(argv[i], "--threads")==0||strcmp(argv[i],"-t")==0) && i+1<argc)
             nthreads = (int)strtol(argv[++i], NULL, 10);
-        else { fprintf(stderr, "sesame: unknown/incomplete option %s\n", argv[i]); return usage(); }
+        else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) { usage_dml(); return 0; }
+        else { fprintf(stderr, "sesame: unknown/incomplete option %s\n", argv[i]); return usage_dml(); }
     }
     if (!betapath || (!formula && !designpath)) {
         fprintf(stderr, "sesame: dml needs --betas and either --formula (with --meta) or --design\n");
-        return usage();
+        return usage_dml();
     }
     { size_t bl = strlen(betapath);
       if (bl >= 3 && strcmp(betapath + bl - 3, ".cg") == 0) {   /* YAME beta.cg */
@@ -979,11 +1140,12 @@ static int cmd_cnv(int argc, char **argv)
         else if (strcmp(argv[i], "--bins") == 0) mode = 1;
         else if (strcmp(argv[i], "--probes") == 0) mode = 2;
         else if (strcmp(argv[i], "--out") == 0 && i+1 < argc) outpath = argv[++i];
-        else if (argv[i][0] == '-' && argv[i][1] != '\0') { fprintf(stderr, "sesame: unknown option %s\n", argv[i]); return usage(); }
+        else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) { usage_cnv(); return 0; }
+        else if (argv[i][0] == '-' && argv[i][1] != '\0') { fprintf(stderr, "sesame: unknown option %s\n", argv[i]); return usage_cnv(); }
         else if (!target) target = argv[i];
-        else { fprintf(stderr, "sesame: unexpected argument %s\n", argv[i]); return usage(); }
+        else { fprintf(stderr, "sesame: unexpected argument %s\n", argv[i]); return usage_cnv(); }
     }
-    if (!target) { fprintf(stderr, "sesame: cnv needs --target <total_intensity.cg>\n"); return usage(); }
+    if (!target) { fprintf(stderr, "sesame: cnv needs --target <total_intensity.cg>\n"); return usage_cnv(); }
     if (tilewidth < 1 || min_probes < 1) { fprintf(stderr, "sesame: --tilewidth and --min-probes must be positive\n"); return 1; }
 
     /* Defaults for normals/coords/index come from the store, keyed on platform. */
@@ -1071,11 +1233,12 @@ static int cmd_vcf(int argc, char **argv)
         else if ((strcmp(argv[i], "--out") == 0 || strcmp(argv[i], "-o") == 0) && i+1 < argc) outpath = argv[++i];
         else if (strcmp(argv[i], "--min-beads") == 0 && i+1 < argc) min_beads = (int)strtol(argv[++i], NULL, 10);
         else if (strcmp(argv[i], "--variants") == 0) variants_only = 1;
-        else if (argv[i][0] == '-' && argv[i][1] != '\0') { fprintf(stderr, "sesame: unknown option %s\n", argv[i]); return usage(); }
+        else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) { usage_vcf(); return 0; }
+        else if (argv[i][0] == '-' && argv[i][1] != '\0') { fprintf(stderr, "sesame: unknown option %s\n", argv[i]); return usage_vcf(); }
         else if (!prefix) prefix = argv[i];
-        else { fprintf(stderr, "sesame: vcf takes one IDAT prefix\n"); return usage(); }
+        else { fprintf(stderr, "sesame: vcf takes one IDAT prefix\n"); return usage_vcf(); }
     }
-    if (!prefix) { fprintf(stderr, "sesame: vcf needs an IDAT <prefix>\n"); return usage(); }
+    if (!prefix) { fprintf(stderr, "sesame: vcf needs an IDAT <prefix>\n"); return usage_vcf(); }
 
     sesame_store_dir(store, sizeof store);
     if (idxpath) {
@@ -1117,6 +1280,69 @@ out:
     return rc;
 }
 
+static int cmd_region(int argc, char **argv)
+{
+    const char *regstr = NULL, *betapath = NULL, *idxpath = NULL, *platform = NULL;
+    const char *coords = NULL, *genome = "hg38", *outpath = NULL;
+    char store[4096], resolved[4096], cbuf[4096], chrom[64] = "";
+    long beg = 0, end = 0;
+    sesame_index_t *ix = NULL;
+    FILE *out = stdout;
+    int i, rc = 1;
+    sesame_err_t e;
+
+    for (i = 0; i < argc; i++) {
+        if (strcmp(argv[i], "--betas") == 0 && i+1 < argc) betapath = argv[++i];
+        else if (strcmp(argv[i], "--index") == 0 && i+1 < argc) idxpath = argv[++i];
+        else if (strcmp(argv[i], "--platform") == 0 && i+1 < argc) platform = argv[++i];
+        else if (strcmp(argv[i], "--coords") == 0 && i+1 < argc) coords = argv[++i];
+        else if (strcmp(argv[i], "--genome") == 0 && i+1 < argc) genome = argv[++i];
+        else if ((strcmp(argv[i], "--out") == 0 || strcmp(argv[i], "-o") == 0) && i+1 < argc) outpath = argv[++i];
+        else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) { usage_region(); return 0; }
+        else if (argv[i][0] == '-' && argv[i][1] != '\0') { fprintf(stderr, "sesame: unknown option %s\n", argv[i]); return usage_region(); }
+        else if (!regstr) regstr = argv[i];
+        else { fprintf(stderr, "sesame: region takes one <chr:beg-end>\n"); return usage_region(); }
+    }
+    if (!regstr || !betapath) { fprintf(stderr, "sesame: region needs <chr:beg-end> and --betas <beta.cg>\n"); return usage_region(); }
+
+    {                                            /* parse chr:beg-end (commas allowed) */
+        char tmp[256], *colon, *dash, *p;
+        snprintf(tmp, sizeof tmp, "%s", regstr);
+        colon = strchr(tmp, ':'); dash = colon ? strchr(colon + 1, '-') : NULL;
+        if (!colon || !dash) { fprintf(stderr, "sesame: bad region '%s' (want chr:beg-end)\n", regstr); return 1; }
+        *colon = '\0'; *dash = '\0';
+        snprintf(chrom, sizeof chrom, "%s", tmp);
+        for (p = colon + 1; *p; p++) if (*p >= '0' && *p <= '9') beg = beg*10 + (*p - '0');
+        for (p = dash + 1;  *p; p++) if (*p >= '0' && *p <= '9') end = end*10 + (*p - '0');
+    }
+    if (end < beg) { fprintf(stderr, "sesame: region end < beg\n"); return 1; }
+
+    if (!idxpath) {
+        if (!platform) { fprintf(stderr, "sesame: region needs --platform (or --index) for probe IDs\n"); return 1; }
+        if (sesame_index_locate(platform, resolved, sizeof resolved) != 0) {
+            char help[1024]; sesame_index_missing_help(platform, help, sizeof help);
+            fprintf(stderr, "sesame: %s\n", help); return 1;
+        }
+        idxpath = resolved;
+    }
+    sesame_store_dir(store, sizeof store);
+    if (!coords) {
+        if (!platform) { fprintf(stderr, "sesame: region needs --coords or --platform\n"); return 1; }
+        snprintf(cbuf, sizeof cbuf, "%s/%s/%s.%s.coord.tsv.gz", store, platform, platform, genome);
+        coords = cbuf;
+    }
+    if (!(ix = sesame_index_open(idxpath, &e))) { fprintf(stderr, "sesame: %s\n", e.msg); return 1; }
+    if (outpath && !(out = fopen(outpath, "w"))) { fprintf(stderr, "sesame: cannot write %s\n", outpath); goto out; }
+    if (sesame_region_extract(betapath, ix, coords, chrom, beg, end, out, &e) != SESAME_OK) {
+        fprintf(stderr, "sesame: %s\n", e.msg); goto out;
+    }
+    rc = 0;
+out:
+    if (out && out != stdout) fclose(out);
+    sesame_index_close(ix);
+    return rc;
+}
+
 /* Infer a platform from a filename like "MSA.hg38.coord.tsv.gz" -> "MSA". Returns
  * a static registry string, or NULL. */
 static const char *platform_from_basename(const char *path)
@@ -1145,11 +1371,12 @@ static int cmd_attach_probe(int argc, char **argv)
         else if (strcmp(argv[i], "--all") == 0 || strcmp(argv[i], "-a") == 0) opt.all = 1;
         else if (strcmp(argv[i], "--beta") == 0) opt.beta = 1;
         else if (strcmp(argv[i], "--no-header") == 0) opt.no_header = 1;
+        else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) { usage_attach(); return 0; }
         else if (argv[i][0] == '-' && argv[i][1] != '\0') {
-            fprintf(stderr, "sesame: unknown option %s\n", argv[i]); return usage();
+            fprintf(stderr, "sesame: unknown option %s\n", argv[i]); return usage_attach();
         } else path = argv[i];
     }
-    if (!path) return usage();
+    if (!path) return usage_attach();
 
     /* Probe IDs come from the ordering: --index wins, else --platform, else
      * inferred from the filename prefix (e.g. MSA.hg38.coord.tsv.gz). */
@@ -1195,14 +1422,16 @@ static int cmd_idat_dump(int argc, char **argv)
             tsv = 1;
         } else if (strcmp(argv[i], "--head") == 0 && i + 1 < argc) {
             head = strtol(argv[++i], NULL, 10);
+        } else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) {
+            usage_idat(); return 0;
         } else if (argv[i][0] == '-' && argv[i][1] != '\0') {
             fprintf(stderr, "sesame: unknown option %s\n", argv[i]);
-            return usage();
+            return usage_idat();
         } else {
             path = argv[i];
         }
     }
-    if (!path) return usage();
+    if (!path) return usage_idat();
 
     if (sesame_idat_read(path, &d, &e) != SESAME_OK) {
         fprintf(stderr, "sesame: %s: %s\n", path, e.msg);
@@ -1234,6 +1463,11 @@ static int cmd_idat_dump(int argc, char **argv)
 int main(int argc, char **argv)
 {
     if (argc < 2) return usage();
+    /* `sesame help`, `sesame -h`, `sesame --help`, `sesame help <cmd>` */
+    if (!strcmp(argv[1], "help") || !strcmp(argv[1], "-h") || !strcmp(argv[1], "--help")) {
+        if (argc >= 3) { route_usage(argv[2]); return 0; }
+        usage(); return 0;
+    }
     if (strcmp(argv[1], "idat-dump") == 0)
         return cmd_idat_dump(argc - 2, argv + 2);
     if (strcmp(argv[1], "preprocess") == 0)
@@ -1244,6 +1478,8 @@ int main(int argc, char **argv)
         return cmd_cnv(argc - 2, argv + 2);
     if (strcmp(argv[1], "vcf") == 0)
         return cmd_vcf(argc - 2, argv + 2);
+    if (strcmp(argv[1], "region") == 0)
+        return cmd_region(argc - 2, argv + 2);
     if (strcmp(argv[1], "attach-probe") == 0)
         return cmd_attach_probe(argc - 2, argv + 2);
     if (strcmp(argv[1], "fetch") == 0)

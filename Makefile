@@ -29,7 +29,7 @@ YAME_LIB := $(YAME_DIR)/libyame.a
 HTSLIB   := $(YAME_DIR)/htslib/libhts.a
 YAME_INC := -I$(YAME_DIR)/src -I$(YAME_DIR)/htslib
 
-SRC     := src/util.c src/sha256.c src/numerics.c src/idat.c src/index.c src/sigdf.c src/prep.c src/qc.c src/dml.c src/cnv.c src/cbs.c src/vcf.c src/mask.c src/cgwrite.c src/attach.c src/cache.c
+SRC     := src/util.c src/sha256.c src/numerics.c src/idat.c src/index.c src/sigdf.c src/prep.c src/qc.c src/dml.c src/cnv.c src/cbs.c src/vcf.c src/region.c src/mask.c src/cgwrite.c src/attach.c src/cache.c
 CLI_SRC := cli/main.c
 OBJ     := $(SRC:.c=.o)
 CLI_OBJ := $(CLI_SRC:.c=.o)

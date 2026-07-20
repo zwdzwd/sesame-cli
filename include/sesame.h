@@ -297,6 +297,14 @@ int sesame_format_vcf(const sesame_sigdf_t *sdf, const char *snp_path,
                       const char *genome, int variants_only, FILE *out,
                       sesame_err_t *err);
 
+/* Extract a genomic region's betas from a multi-sample beta .cg as long-form
+ * (tidy) TSV -- one row per (probe in [chrom:beg-end]) x (sample), columns
+ * chrom/beg/end/Probe_ID/beta/sample_name. beta_cg, ix, and coords_path are all
+ * positional in the same ordering. The plot-ready feed for a region/locus view. */
+int sesame_region_extract(const char *beta_cg, const sesame_index_t *ix,
+                          const char *coords_path, const char *chrom,
+                          long beg, long end, FILE *out, sesame_err_t *err);
+
 /* Write sample-major matrices as a YAME .cg (+ <path>.idx of sample names),
  * consumable by the `yame` toolchain. Mat is sample-major: sample j, probe i at
  * mat[j*nprobe+i].
