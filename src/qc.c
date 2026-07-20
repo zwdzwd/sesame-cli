@@ -15,6 +15,7 @@
  */
 #include "sesame.h"
 #include "internal.h"
+#include <zlib.h>
 
 #include <math.h>
 #include <stdio.h>
@@ -102,7 +103,30 @@ static void beta_stats(const double *b, const sesame_sigdf_t *s, const char *pt,
 
 /* ----------------------------------------------------------------- calc --- */
 
+/* Load the positional Type-I extension-base codes (<plat>.typeI_ext.tsv.gz:
+ * header then one token per probe, C/T/. -> 1/2/0) for the GCT metric. */
+int sesame_load_ext_codes(const char *path, int32_t np, uint8_t **out,
+                          sesame_err_t *err)
+{
+    gzFile f = gzopen(path, "rb");
+    char line[256]; uint8_t *e; int32_t row = 0;
+    if (err) { err->code = SESAME_OK; err->msg[0] = '\0'; }
+    if (!f) return sesame__fail(err, SESAME_ERR_IO, "cannot open %s", path);
+    if (!(e = (uint8_t *)malloc((size_t)np))) { gzclose(f); return sesame__fail(err, SESAME_ERR_NOMEM, "oom"); }
+    if (!gzgets(f, line, sizeof line)) { free(e); gzclose(f); return sesame__fail(err, SESAME_ERR_FORMAT, "empty %s", path); }
+    while (gzgets(f, line, sizeof line)) {
+        if (row < np) e[row] = (line[0]=='C') ? 1 : (line[0]=='T') ? 2 : 0;
+        row++;
+    }
+    gzclose(f);
+    if (row != np) { free(e); return sesame__fail(err, SESAME_ERR_FORMAT,
+        "%s has %d rows, ordering has %d -- lineage mismatch", path, row, np); }
+    *out = e;
+    return SESAME_OK;
+}
+
 int sesame_qc_calc(const sesame_sigdf_t *s, const uint8_t *bgmask, int32_t bn,
+                   const uint8_t *ext, int32_t extn,
                    sesame_qc_t *out, sesame_err_t *err)
 {
     int32_t n, i;
@@ -283,6 +307,17 @@ int sesame_qc_calc(const sesame_sigdf_t *s, const uint8_t *bgmask, int32_t bn,
         out->RGdistort = (topR/topG)/(medR/medG);
     }
     free(dR); dR = NULL; free(dG); dG = NULL;
+
+    /* ===== GCT (bisConversionControl): mean green of Type-I extension-C probes
+     * over that of extension-A/T probes (R/sesame.R:562). NaN without ext. ===== */
+    {
+        double sumC=0.0, sumT=0.0; int32_t cC=0, cT=0;
+        if (ext && extn == n) for (i = 0; i < n; i++) {
+            if (ext[i]==1) { if(!isnan(s->MG[i])){sumC+=s->MG[i];cC++;} if(!isnan(s->UG[i])){sumC+=s->UG[i];cC++;} }
+            else if (ext[i]==2) { if(!isnan(s->MG[i])){sumT+=s->MG[i];cT++;} if(!isnan(s->UG[i])){sumT+=s->UG[i];cT++;} }
+        }
+        out->GCT = (cC && cT) ? (sumC/(double)cC)/(sumT/(double)cT) : NAN;
+    }
 
     /* ===== betas: getBetas(pOOBAH(noob(dyeBiasNL(copy)))) ===== */
     cp = sigdf_dup(s);

@@ -165,14 +165,69 @@ int sesame_prep_poobah(sesame_sigdf_t *s, const uint8_t *bgmask, int32_t bn,
     return rc;
 }
 
+/* detectionPnegEcdf (R/detection.R:100-118): detection p from the empirical CDF
+ * of the negative-control probes -- funcG over their Grn (UG), funcR over their
+ * Red (UR). Per probe p = pmin(1-funcR(pmax(MR,UR)), 1-funcG(pmax(MG,UG))) with
+ * na.rm (an NA channel keeps the other's p), and no signal in either channel
+ * gives p = 1. Into pout[n]; does not mutate the SigDF. An alternative to pOOBAH
+ * that needs only the negative controls (no out-of-band pool). */
+int sesame_detection_pneg_pvals(const sesame_sigdf_t *s, double *pout,
+                                sesame_err_t *err)
+{
+    int32_t n, i, nG = 0, nR = 0;
+    double *bgG = NULL, *bgR = NULL, *tmp = NULL;
+    int rc = SESAME_OK;
+
+    if (err) { err->code = SESAME_OK; err->msg[0] = '\0'; }
+    if (!s || !pout) return sesame__fail(err, SESAME_ERR_IO, "null argument");
+    n = s->n;
+
+    /* neg-control pools: G = UG, R = UR of every "negative" probe. */
+    bgG = (double *)malloc((size_t)n * sizeof(double));
+    bgR = (double *)malloc((size_t)n * sizeof(double));
+    tmp = (double *)malloc((size_t)n * sizeof(double));
+    if (!bgG || !bgR || !tmp) { rc = sesame__fail(err, SESAME_ERR_NOMEM, "oom"); goto out; }
+
+    for (i = 0; i < n; i++)
+        if (sesame__is_neg_control(sesame_index_probe_id(s->ix, i))) {
+            bgG[nG++] = s->UG[i];
+            bgR[nR++] = s->UR[i];
+        }
+    if (nG == 0 || nR == 0) {
+        rc = sesame__fail(err, SESAME_ERR_FORMAT,
+                          "no negative-control probes for pneg detection");
+        goto out;
+    }
+    /* R's ecdf sorts and drops NA (na.last=NA). */
+    nG = sesame__drop_na(bgG, nG, tmp); memcpy(bgG, tmp, (size_t)nG * sizeof(double));
+    nR = sesame__drop_na(bgR, nR, tmp); memcpy(bgR, tmp, (size_t)nR * sizeof(double));
+    sesame__sort(bgG, nG);
+    sesame__sort(bgR, nR);
+
+    for (i = 0; i < n; i++) {
+        double pr = detect_p(bgR, nR, sesame__pmax2_narm(s->MR[i], s->UR[i]));
+        double pg = detect_p(bgG, nG, sesame__pmax2_narm(s->MG[i], s->UG[i]));
+        if (isnan(pr) && isnan(pg)) pout[i] = 1.0;     /* both NA -> mask */
+        else if (isnan(pr)) pout[i] = pg;
+        else if (isnan(pg)) pout[i] = pr;
+        else pout[i] = pr < pg ? pr : pg;              /* pmin */
+    }
+
+out:
+    free(bgG); free(bgR); free(tmp);
+    return rc;
+}
+
 /* Per-sample pipeline: apply prep to a copy of raw, filling whichever of
  * beta/M/U/total/pval are non-NULL (each nprobes long). Signal (M/U/total) is
  * from the preprocessed copy unless raw_signal, then from raw. pval is the
- * pOOBAH detection p (from the P step, or computed after the chain if prep has
- * no P). Shared by `preprocess` and the f64 validation harness. */
+ * detection p -- pOOBAH by default, or (pneg_detection) detectionPnegEcdf --
+ * taken at the P-step lineage point, or on the final signal if prep has no P.
+ * Masking always uses pOOBAH. Shared by `preprocess` and the f64 harness. */
 int sesame_pipeline(const sesame_sigdf_t *raw, const char *prep,
                     const uint8_t *qmask, int32_t qn,
                     const uint8_t *bgmask, int32_t bgn, int raw_signal,
+                    int pneg_detection,
                     double *beta, double *M, double *U, double *total,
                     double *pval, uint8_t *col, sesame_err_t *err)
 {
@@ -197,7 +252,7 @@ int sesame_pipeline(const sesame_sigdf_t *raw, const char *prep,
 
     if (!(sig = sesame_sigdf_dup(raw)))
         return sesame__fail(err, SESAME_ERR_NOMEM, "oom");
-    if (pval || strchr(prep, 'P')) {
+    if (strchr(prep, 'P')) {   /* pv holds pOOBAH values for the P-step mask */
         if (!(pv = (double *)malloc((size_t)n * sizeof(double)))) {
             sesame_sigdf_free(sig);
             return sesame__fail(err, SESAME_ERR_NOMEM, "oom");
@@ -209,20 +264,29 @@ int sesame_pipeline(const sesame_sigdf_t *raw, const char *prep,
         case 'Q': rc = sesame_prep_quality_mask(sig, qmask, qn, err); break;
         case 'C': rc = sesame_prep_infer_channel(sig, 0, 0, err); break;
         case 'D': rc = sesame_prep_dye_bias_nl(sig, err); break;
+        case 'E': rc = sesame_prep_dye_bias_l(sig, err); break;
         case 'P':
+            /* Masking is always pOOBAH (that is what the P code means). The pval
+             * OUTPUT is taken at this lineage point too -- pneg if requested. */
             rc = sesame_poobah_pvals(sig, bgmask, bgn, 1, pv, err);
             if (rc == SESAME_OK) {
                 for (k = 0; k < n; k++) if (pv[k] > 0.05) sig->mask[k] = 1;
-                pval_done = 1;
+                if (pval) {
+                    if (pneg_detection)
+                        rc = sesame_detection_pneg_pvals(sig, pval, err);
+                    else
+                        memcpy(pval, pv, (size_t)n * sizeof(double));
+                    pval_done = 1;
+                }
             }
             break;
         case 'B': rc = sesame_prep_noob(sig, bgmask, bgn, 1, 15.0, err); break;
         default:  rc = sesame__fail(err, SESAME_ERR_UNSUPPORTED, "prep code '%c'", *p);
         }
     }
-    if (rc == SESAME_OK && pval && !pval_done)
-        rc = sesame_poobah_pvals(sig, bgmask, bgn, 1, pv, err);
-    if (rc == SESAME_OK && pval) memcpy(pval, pv, (size_t)n * sizeof(double));
+    if (rc == SESAME_OK && pval && !pval_done)   /* no P: detect on final signal */
+        rc = pneg_detection ? sesame_detection_pneg_pvals(sig, pval, err)
+                            : sesame_poobah_pvals(sig, bgmask, bgn, 1, pval, err);
     if (rc == SESAME_OK && col)  memcpy(col, sig->col, (size_t)n);
     if (rc == SESAME_OK && beta) rc = sesame_get_betas(sig, 1, beta, err);
     if (rc == SESAME_OK && !raw_signal && (M || U || total)) {
@@ -597,6 +661,75 @@ out:
     free(IG0); free(IR0); free(IG1); free(IR1); free(IG2); free(IR2);
     free(IGmid); free(IRmid); free(tbuf);
     free(kR.x); free(kR.y); free(kG.x); free(kG.y);
+    return rc;
+}
+
+/* ---------------------------------------------------------------- E ---
+ *
+ * dyeBiasL (R/dye_bias.R:191-208) -- linear dye-bias correction.
+ *
+ * ref = meanIntensity(sdf)                 (mean of unmasked in-band M,U)
+ * fR  = ref / median(unmasked col==R {MR,UR})
+ * fG  = ref / median(unmasked col==G {MG,UG})
+ * then MG,UG *= fG and MR,UR *= fR over every probe (R scales whole columns).
+ * signalMU/meanIntensity use mask=TRUE, i.e. masked probes are excluded from the
+ * reference and the per-channel medians (but scaling still applies to all rows).
+ */
+int sesame_prep_dye_bias_l(sesame_sigdf_t *s, sesame_err_t *err)
+{
+    int32_t i, n, nR = 0, nG = 0;
+    double *buf = NULL, ref, sum = 0.0, medR, medG, fR, fG;
+    long cnt = 0;
+    int rc = SESAME_OK;
+
+    if (err) { err->code = SESAME_OK; err->msg[0] = '\0'; }
+    if (!s) return sesame__fail(err, SESAME_ERR_IO, "null sigdf");
+    n = s->n;
+
+    /* ref = mean of unmasked in-band M,U over all probes (meanIntensity). */
+    for (i = 0; i < n; i++) {
+        double m, u;
+        if (s->mask[i]) continue;
+        if (s->col[i] == SESAME_COL_G)      { m = s->MG[i]; u = s->UG[i]; }
+        else if (s->col[i] == SESAME_COL_R) { m = s->MR[i]; u = s->UR[i]; }
+        else                                { m = s->UG[i]; u = s->UR[i]; }
+        if (!isnan(m)) { sum += m; cnt++; }
+        if (!isnan(u)) { sum += u; cnt++; }
+    }
+    if (cnt == 0) return SESAME_OK;   /* nothing to normalize; R -> NaN ref */
+    ref = sum / (double)cnt;
+
+    /* per-channel medians of unmasked in-band Inf-I {M,U}. */
+    buf = (double *)malloc((size_t)n * 2 * sizeof(double));
+    if (!buf) return sesame__fail(err, SESAME_ERR_NOMEM, "oom in E step");
+
+    for (i = 0; i < n; i++)
+        if (!s->mask[i] && s->col[i] == SESAME_COL_R) {
+            if (!isnan(s->MR[i])) buf[nR++] = s->MR[i];
+            if (!isnan(s->UR[i])) buf[nR++] = s->UR[i];
+        }
+    sesame__sort(buf, nR);
+    medR = nR ? sesame__median_sorted(buf, nR) : NAN;
+
+    for (i = 0; i < n; i++)
+        if (!s->mask[i] && s->col[i] == SESAME_COL_G) {
+            if (!isnan(s->MG[i])) buf[nG++] = s->MG[i];
+            if (!isnan(s->UG[i])) buf[nG++] = s->UG[i];
+        }
+    sesame__sort(buf, nG);
+    medG = nG ? sesame__median_sorted(buf, nG) : NAN;
+    free(buf);
+
+    fR = ref / medR;
+    fG = ref / medG;
+
+    /* R multiplies the whole MG/UG/MR/UR columns (NaN passes through). If a
+     * channel has no Inf-I signal its factor is NaN; guard so the other channel
+     * (and the Inf-II readout it drives) is not clobbered -- R would propagate
+     * NaN, but a missing channel is a degenerate array, not a normal result. */
+    if (isfinite(fG)) for (i = 0; i < n; i++) { s->MG[i] *= fG; s->UG[i] *= fG; }
+    if (isfinite(fR)) for (i = 0; i < n; i++) { s->MR[i] *= fR; s->UR[i] *= fR; }
+
     return rc;
 }
 

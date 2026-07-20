@@ -29,13 +29,13 @@ YAME_LIB := $(YAME_DIR)/libyame.a
 HTSLIB   := $(YAME_DIR)/htslib/libhts.a
 YAME_INC := -I$(YAME_DIR)/src -I$(YAME_DIR)/htslib
 
-SRC     := src/util.c src/sha256.c src/numerics.c src/idat.c src/index.c src/sigdf.c src/prep.c src/qc.c src/dml.c src/cnv.c src/cbs.c src/vcf.c src/region.c src/deidentify.c src/mask.c src/cgwrite.c src/attach.c src/cache.c
+SRC     := src/util.c src/sha256.c src/numerics.c src/idat.c src/index.c src/sigdf.c src/prep.c src/qc.c src/dml.c src/cnv.c src/cbs.c src/vcf.c src/region.c src/collapse.c src/liftover.c src/impute.c src/deidentify.c src/mask.c src/cgwrite.c src/attach.c src/cache.c
 CLI_SRC := cli/main.c
 OBJ     := $(SRC:.c=.o)
 CLI_OBJ := $(CLI_SRC:.c=.o)
 BIN     := sesame
 
-.PHONY: all asan test test-idat test-betas test-prep test-qmask test-poobah test-noob test-batch test-qc test-dml test-cg test-attach test-cnv test-cbs test-vcf test-deidentify index cnv-normals yame-lib install fuzz fuzz-replay clean
+.PHONY: all asan test test-idat test-betas test-prep test-qmask test-poobah test-noob test-dyebiasL test-pneg test-collapse test-liftover test-impute test-gct test-neighbors test-batch test-qc test-dml test-cg test-attach test-cnv test-cbs test-vcf test-deidentify index cnv-normals yame-lib install fuzz fuzz-replay clean
 
 all: $(BIN)
 
@@ -74,7 +74,7 @@ asan: clean
 	$(MAKE) EXTRA_CFLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
 	        EXTRA_LDFLAGS="-fsanitize=address,undefined"
 
-test: test-idat test-betas test-prep test-qmask test-poobah test-noob test-batch test-qc test-dml test-cg test-attach test-cnv test-cbs test-vcf test-deidentify
+test: test-idat test-betas test-prep test-qmask test-poobah test-noob test-dyebiasL test-pneg test-collapse test-liftover test-impute test-gct test-neighbors test-batch test-qc test-dml test-cg test-attach test-cnv test-cbs test-vcf test-deidentify
 
 test-idat: $(BIN)
 	@tests/run_golden.sh
@@ -113,6 +113,27 @@ mu2cg: tools/mu2cg.c $(OBJ) $(YAME_LIB) $(HTSLIB) include/sesame.h
 
 test-noob: $(BIN) normexp_test pipeline_dump
 	@tests/run_noob.sh
+
+test-dyebiasL: $(BIN) pipeline_dump
+	@tests/run_dyebiasL.sh
+
+test-pneg: $(BIN) pipeline_dump
+	@tests/run_pneg.sh
+
+test-collapse: $(BIN) pipeline_dump
+	@tests/run_collapse.sh
+
+test-liftover: $(BIN) pipeline_dump
+	@tests/run_liftover.sh
+
+test-impute: $(BIN)
+	@tests/run_impute.sh
+
+test-gct: $(BIN)
+	@tests/run_gct.sh
+
+test-neighbors: $(BIN) pipeline_dump
+	@tests/run_neighbors.sh
 
 test-batch: $(BIN)
 	@tests/run_batch.sh

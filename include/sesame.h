@@ -238,12 +238,20 @@ int sesame_prep_poobah(sesame_sigdf_t *sdf, const uint8_t *bgmask, int32_t bn,
 int sesame_poobah_pvals(const sesame_sigdf_t *sdf, const uint8_t *bgmask, int32_t bn,
                         int combine_neg, double *pout, sesame_err_t *err);
 
+/* detectionPnegEcdf (R/detection.R:100-118): detection p per probe from the
+ * empirical CDF of the negative-control probes (funcG over their UG, funcR over
+ * their UR); p = pmin of the two 1-F channel values (na.rm), no-signal -> 1.
+ * An alternative to pOOBAH needing only negative controls. Into pout[nprobes]. */
+int sesame_detection_pneg_pvals(const sesame_sigdf_t *sdf, double *pout,
+                                sesame_err_t *err);
+
 /* Per-sample pipeline: apply prep to a copy of raw, filling whichever of
  * beta/M/U/total/pval are non-NULL (each nprobes). Signal is from the
  * preprocessed copy unless raw_signal. Shared by `preprocess` and validation. */
 int sesame_pipeline(const sesame_sigdf_t *raw, const char *prep,
                     const uint8_t *qmask, int32_t qn,
                     const uint8_t *bgmask, int32_t bgn, int raw_signal,
+                    int pneg_detection,
                     double *beta, double *M, double *U, double *total,
                     double *pval, uint8_t *col, sesame_err_t *err);
 
@@ -261,6 +269,13 @@ int sesame_prep_infer_channel(sesame_sigdf_t *sdf, int switch_failed,
  * SESAME_STAT_DYEBIAS_FAILED and returns -- R does this silently. */
 int sesame_prep_dye_bias_nl(sesame_sigdf_t *sdf, sesame_err_t *err);
 
+/* E -- dyeBiasL (R/dye_bias.R:191-208). Linear dye-bias correction: scale each
+ * colour channel so the median in-band Inf-I intensity meets a common reference
+ * (the sample's mean in-band intensity). Only Inf-II betas change (per-channel
+ * scaling leaves Inf-I M/(M+U) invariant). Both medians and the reference use
+ * unmasked probes (signalMU/meanIntensity mask=TRUE). */
+int sesame_prep_dye_bias_l(sesame_sigdf_t *sdf, sesame_err_t *err);
+
 /* B -- noob (R/background.R:85-123). Normal-exponential background subtraction:
  * background (out-of-band + negative controls, probes in bgmask excluded) is
  * modelled Normal, true signal Exponential, and each channel's signal is
@@ -276,6 +291,44 @@ int sesame_prep_noob(sesame_sigdf_t *sdf, const uint8_t *bgmask, int32_t bn,
  * when apply_mask is non-zero. out must hold sesame_index_nprobes() doubles. */
 int sesame_get_betas(const sesame_sigdf_t *sdf, int apply_mask,
                      double *out, sesame_err_t *err);
+
+/* betasCollapseToPfx (R/sesame.R:157): average betas that share a probe-ID
+ * prefix (the part before the first '_'), collapsing EPICv2/MSA replicate probes
+ * to one value per prefix. mat_in is sample-major [nsamp*nprobes]; *mat_out is a
+ * fresh sample-major [nsamp*(*m_out)] over the *m_out sorted unique prefixes
+ * returned in *pfx_out. NaN-skipping mean; an all-NaN group is NaN. Caller frees
+ * *mat_out, each *pfx_out[k], and *pfx_out. */
+int sesame_betas_collapse_prefix(const sesame_index_t *ix,
+                                 const double *mat_in, int32_t nsamp,
+                                 double **mat_out, char ***pfx_out, int32_t *m_out,
+                                 sesame_err_t *err);
+
+/* mLiftOver (R/mLiftOver.R, mapping=NULL/impute=FALSE path): lift betas from the
+ * source platform/ordering to the target platform/ordering by a probe-ID prefix
+ * join (the modern side -- EPICv2/MSA -- has its _suffix stripped when crossing
+ * to/from a legacy platform; same-family joins on the full ID). Each target
+ * probe takes the first prefix-matched source beta, else NaN. mat_in is
+ * sample-major [nsamp*src_nprobes]; *mat_out is a fresh sample-major
+ * [nsamp*tgt_nprobes], positional to the target ordering. Caller frees. */
+int sesame_liftover_betas(const char *src_platform, const sesame_index_t *src_ix,
+                          const char *tgt_platform, const sesame_index_t *tgt_ix,
+                          const double *mat_in, int32_t nsamp,
+                          double **mat_out, sesame_err_t *err);
+
+/* imputeBetasMatrixByMean (R/impute.R): fill NaN in a sample-major matrix
+ * [nsamp*nprobe] in place with axis=1 (per probe, mean across samples) or axis=2
+ * (per sample, mean across probes). An all-NaN row/column is left NaN. */
+int sesame_impute_mean(double *mat, int32_t nprobe, int32_t nsamp, int axis,
+                       sesame_err_t *err);
+
+/* imputeBetasByGenomicNeighbors (R/impute.R): fill each missing probe's NaN with
+ * the mean of up to max_neighbors nearest non-missing probes within max_dist bp,
+ * searched 5'->3' along the probe's strand (per R's start-anchored strand-aware
+ * resize + findOverlaps). coords_path is the positional <plat>.<genome>.coord
+ * table (CpG_chrm, CpG_beg, strand). In place, sample-major [nsamp*nprobe]. */
+int sesame_impute_neighbors(double *mat, int32_t nprobe, int32_t nsamp,
+                            const char *coords_path, int max_neighbors,
+                            long max_dist, sesame_err_t *err);
 
 /* Per-probe methylated/unmethylated signal (R's signalMU), index order: col G ->
  * (MG,UG), col R -> (MR,UR), Inf-II -> (UG,UR). NaN preserved. Either out NULL. */
@@ -381,7 +434,7 @@ int sesame_read_cg_total(const char *path, double **mat_out, int32_t *nprobe_out
     _(I, na_intensity_ig)  _(I, na_intensity_ir)  _(I, na_intensity_ii) \
     _(I, InfI_switch_R2R)  _(I, InfI_switch_G2G) \
     _(I, InfI_switch_R2G)  _(I, InfI_switch_G2R) \
-    _(D, medR) _(D, medG) _(D, topR) _(D, topG) _(D, RGratio) _(D, RGdistort) \
+    _(D, medR) _(D, medG) _(D, topR) _(D, topG) _(D, RGratio) _(D, RGdistort) _(D, GCT) \
     _(D, mean_beta)    _(D, median_beta)    _(D, frac_unmeth)    _(D, frac_meth)    _(I, num_na)    _(D, frac_na) \
     _(D, mean_beta_cg) _(D, median_beta_cg) _(D, frac_unmeth_cg) _(D, frac_meth_cg) _(I, num_na_cg) _(D, frac_na_cg) \
     _(D, mean_beta_ch) _(D, median_beta_ch) _(D, frac_unmeth_ch) _(D, frac_meth_ch) _(I, num_na_ch) _(D, frac_na_ch) \
@@ -394,10 +447,21 @@ typedef struct {
 } sesame_qc_t;
 
 /* Compute the panel from a raw SigDF. bgmask is the background mask (as for P/B);
- * required, since the detection and beta groups run pOOBAH internally. Does not
+ * required, since the detection and beta groups run pOOBAH internally. `ext`
+ * (optional, positional to the ordering, length extn) carries the Type-I
+ * extension-base class per probe -- 1 = extension-C, 2 = extension-A/T, 0 = none
+ * -- for the GCT bisulfite-conversion metric; pass NULL (extn 0) to leave GCT
+ * NaN (e.g. EPICv2/MSA, where R also has no built-in extension lists). Does not
  * modify sdf. */
 int sesame_qc_calc(const sesame_sigdf_t *sdf, const uint8_t *bgmask, int32_t bn,
+                   const uint8_t *ext, int32_t extn,
                    sesame_qc_t *out, sesame_err_t *err);
+
+/* Load positional Type-I extension-base codes (<plat>.typeI_ext.tsv.gz) for GCT:
+ * C/T/. -> 1/2/0, one per probe in ordering order. *out is malloc'd (caller
+ * frees). Errors (incl. absent file) leave GCT NaN at the call site. */
+int sesame_load_ext_codes(const char *path, int32_t np, uint8_t **out,
+                          sesame_err_t *err);
 
 /* Tab-separated metric-name header, no leading sample column and no trailing
  * tab. */

@@ -38,6 +38,8 @@ static int usage(void)
       "  cnv            Copy number: log2 ratio vs a normal panel + CBS segmentation\n"
       "  vcf            Genotype the SNP probes into a VCF (formatVCF)\n"
       "  region         Extract a region's betas as long-form TSV for plotting\n"
+      "  liftover       Lift a beta.cg to another platform (EPICv2<->EPIC<->HM450)\n"
+      "  impute         Fill missing betas (matrix mean or genomic neighbours)\n"
       "\n"
       "Inspect / convert\n"
       "  attach-probe   Prepend Probe_IDs to a positional .cg / .tsv file\n"
@@ -73,8 +75,13 @@ static int usage_preprocess(void)
       "  --output LIST      Comma list (default beta,intensity,pval,qc) from:\n"
       "                       beta, intensity, total_intensity, pval, qc\n"
       "  --prep STEPS       Prep code (default QCDPB): Q qualityMask, C inferChannel,\n"
-      "                       D dyeBias, P pOOBAH, B noob. Empty string = raw betas.\n"
+      "                       D dyeBias(NL), E dyeBias(linear), P pOOBAH, B noob.\n"
+      "                       Empty string = raw betas.\n"
       "  --raw-signal       Take intensity/total from the raw signal, not the prep.\n"
+      "  --detection METHOD pval source: poobah (default) or pneg (negative-control\n"
+      "                       ECDF, detectionPnegEcdf). Masking always uses pOOBAH.\n"
+      "  --collapse         Average replicate probes to their cg-prefix in the beta\n"
+      "                       output (betasCollapseToPfx); axis -> beta.cg.probes.\n"
       "  --platform P       EPIC | EPICv2 | HM450 | MSA (else from the bead count).\n"
       "  --index FILE       Ordering .tsv.gz (overrides --platform / detection).\n"
       "  --min-beads N      Mask probes with < N beads (default 0).\n"
@@ -203,6 +210,52 @@ static int usage_region(void)
     return 1;
 }
 
+static int usage_liftover(void)
+{
+    fputs(
+      "Usage: sesame liftover --to <platform> [options] <in.cg> <out.cg>\n"
+      "\n"
+      "  Lift a beta.cg from one Infinium platform to another (mLiftOver), by a\n"
+      "  probe-ID prefix join: EPICv2/MSA carry a _suffix that EPIC/HM450/HM27 lack,\n"
+      "  stripped on the modern side when crossing families; each target probe takes\n"
+      "  the first prefix-matched source beta (NA if none). The output is positional\n"
+      "  to the TARGET ordering -- a valid target-platform beta.cg.\n"
+      "\n"
+      "Options:\n"
+      "  --to P             Target platform: EPIC | EPICv2 | HM450 | MSA (required).\n"
+      "  --platform P       Source platform (required, sets the join direction).\n"
+      "  --index FILE       Source ordering .tsv.gz (default: the store's).\n"
+      "  --index-to FILE    Target ordering .tsv.gz (default: the store's).\n"
+      "\n"
+      "  The empirical liftOver quality mappings and impute=TRUE are not ported.\n",
+      stderr);
+    return 1;
+}
+
+static int usage_impute(void)
+{
+    fputs(
+      "Usage: sesame impute --method <mean|neighbors> [options] <in.cg> <out.cg>\n"
+      "\n"
+      "  Fill missing (NA) beta values in a beta.cg (imputeBetas*). Output is\n"
+      "  positional to the same ordering.\n"
+      "\n"
+      "  mean       imputeBetasMatrixByMean: replace each NA with a mean.\n"
+      "    --axis probe   mean of the probe across samples (default; R axis=1).\n"
+      "    --axis sample  mean of the sample across probes (R axis=2).\n"
+      "\n"
+      "  neighbors  imputeBetasByGenomicNeighbors: replace each missing probe with\n"
+      "             the mean of its nearest non-missing genomic neighbours.\n"
+      "    --platform P       EPIC | EPICv2 | HM450 | MSA (for the coord table).\n"
+      "    --coords FILE      Mapped-coordinate .tsv.gz (default: the store's\n"
+      "                         <P>.<genome>.mapcoord.tsv.gz -- the manifest mapping).\n"
+      "    --genome BUILD     Genome build (default hg38).\n"
+      "    --max-neighbors N  Up to N nearest neighbours (default 3).\n"
+      "    --max-dist BP      Search window in bp (default 10000).\n",
+      stderr);
+    return 1;
+}
+
 static int usage_attach(void)
 {
     fputs(
@@ -289,6 +342,8 @@ static int route_usage(const char *cmd)
     if (!strcmp(cmd, "cnv"))          return usage_cnv();
     if (!strcmp(cmd, "vcf"))          return usage_vcf();
     if (!strcmp(cmd, "region"))       return usage_region();
+    if (!strcmp(cmd, "liftover"))     return usage_liftover();
+    if (!strcmp(cmd, "impute"))       return usage_impute();
     if (!strcmp(cmd, "deidentify")) return usage_deidentify();
     if (!strcmp(cmd, "attach-probe")) return usage_attach();
     if (!strcmp(cmd, "idat-dump"))    return usage_idat();
@@ -497,9 +552,9 @@ typedef struct {
     int32_t          nsamp, n;
     const sesame_index_t *ix;
     const char      *plat, *prep;
-    const uint8_t   *qmask, *bgmask;
-    int32_t          qn, bgn;
-    int              min_beads, raw_signal;
+    const uint8_t   *qmask, *bgmask, *ext;
+    int32_t          qn, bgn, extn;
+    int              min_beads, raw_signal, pneg_detection;
     int              want_beta, want_int, want_tot, want_pval, want_qc;
     double          *matBeta, *matM, *matU, *matTot, *matPval;   /* NULL if unwanted */
     sesame_qc_t     *qcres;
@@ -536,10 +591,11 @@ static void *pp_worker(void *arg)
         rc = build_sigdf_for(c->prefixes[j], c->ix, c->plat, c->min_beads, &raw, &e);
         if (rc == SESAME_OK) st = raw->status;
         if (rc == SESAME_OK && c->want_qc)
-            rc = sesame_qc_calc(raw, c->bgmask, c->bgn, &c->qcres[j], &e);
+            rc = sesame_qc_calc(raw, c->bgmask, c->bgn, c->ext, c->extn, &c->qcres[j], &e);
         if (rc == SESAME_OK)
             rc = sesame_pipeline(raw, c->prep, c->qmask, c->qn, c->bgmask, c->bgn,
-                                 c->raw_signal, beta, M, U, tot, pval, NULL, &e);
+                                 c->raw_signal, c->pneg_detection,
+                                 beta, M, U, tot, pval, NULL, &e);
         sesame_sigdf_free(raw);
 
         if (rc != SESAME_OK) {
@@ -618,12 +674,13 @@ static int cmd_preprocess(int argc, char **argv)
 {
     const char *idxpath = NULL, *platform = NULL, *plat = NULL, *prep = "QCDPB";
     const char *outlist = "beta,intensity,pval,qc", *outdir = ".", *tmpdir = NULL;
-    int min_beads = 0, nthreads = 0, raw_signal = 0, i, rc = 1;
+    int min_beads = 0, nthreads = 0, raw_signal = 0, pneg_detection = 0, collapse = 0, i, rc = 1;
     char **prefixes = NULL, **names = NULL;
     int32_t nsamp = 0, pcap = 0, n = 0, qn = 0, bgn = 0;
     char resolved[4096], path[4096];
     sesame_index_t *ix = NULL;
-    uint8_t *qmask = NULL, *bgmask = NULL;
+    uint8_t *qmask = NULL, *bgmask = NULL, *ext = NULL;
+    int32_t extn = 0;
     sesame_qc_t *qcres = NULL;
     betas_matrix mB={NULL,0,-1}, mM={NULL,0,-1}, mU={NULL,0,-1}, mT={NULL,0,-1}, mP={NULL,0,-1};
     pp_ctx ctx; memset(&ctx, 0, sizeof ctx);
@@ -639,6 +696,14 @@ static int cmd_preprocess(int argc, char **argv)
         else if (strcmp(argv[i], "--min-beads") == 0 && i+1 < argc) min_beads = (int)strtol(argv[++i],NULL,10);
         else if ((strcmp(argv[i],"--threads")==0||strcmp(argv[i],"-t")==0) && i+1<argc) nthreads = (int)strtol(argv[++i],NULL,10);
         else if (strcmp(argv[i], "--raw-signal") == 0) raw_signal = 1;
+        else if (strcmp(argv[i], "--collapse") == 0) collapse = 1;
+        else if (strcmp(argv[i], "--detection") == 0 && i+1 < argc) {
+            const char *m = argv[++i];
+            if      (!strcmp(m, "poobah")) pneg_detection = 0;
+            else if (!strcmp(m, "pneg"))   pneg_detection = 1;
+            else { fprintf(stderr, "sesame: --detection must be poobah or pneg\n");
+                   pp_free_prefixes(prefixes, nsamp); return usage_preprocess(); }
+        }
         else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) { pp_free_prefixes(prefixes, nsamp); usage_preprocess(); return 0; }
         else if (argv[i][0] == '-' && argv[i][1] != '\0') {
             fprintf(stderr, "sesame: unknown option %s\n", argv[i]); pp_free_prefixes(prefixes, nsamp); return usage_preprocess();
@@ -690,6 +755,13 @@ static int cmd_preprocess(int argc, char **argv)
         if (!plat) { fprintf(stderr, "sesame: P/B/pval/qc need a known platform; pass --platform with --index\n"); goto out; }
         if (sesame_background_mask(plat, &bgmask, &bgn, &e) != SESAME_OK) { fprintf(stderr, "sesame: %s\n", e.msg); goto out; }
     }
+    if (ctx.want_qc && plat) {                 /* GCT ext codes (optional) */
+        char sdir[4096], epath[4096];
+        sesame_store_dir(sdir, sizeof sdir);
+        snprintf(epath, sizeof epath, "%s/%s/%s.typeI_ext.tsv.gz", sdir, plat, plat);
+        if (sesame_load_ext_codes(epath, n, &ext, &e) == SESAME_OK) extn = n;
+        else ext = NULL;                       /* absent -> GCT NaN, no error */
+    }
 
     if ((ctx.want_beta && betas_matrix_init(&mB, n, nsamp)) ||
         (ctx.want_int  && (betas_matrix_init(&mM, n, nsamp) || betas_matrix_init(&mU, n, nsamp))) ||
@@ -705,8 +777,8 @@ static int cmd_preprocess(int argc, char **argv)
     }
 
     ctx.prefixes=prefixes; ctx.nsamp=nsamp; ctx.n=n; ctx.ix=ix; ctx.plat=plat; ctx.prep=prep;
-    ctx.qmask=qmask; ctx.qn=qn; ctx.bgmask=bgmask; ctx.bgn=bgn;
-    ctx.min_beads=min_beads; ctx.raw_signal=raw_signal;
+    ctx.qmask=qmask; ctx.qn=qn; ctx.bgmask=bgmask; ctx.bgn=bgn; ctx.ext=ext; ctx.extn=extn;
+    ctx.min_beads=min_beads; ctx.raw_signal=raw_signal; ctx.pneg_detection=pneg_detection;
     ctx.matBeta=mB.data; ctx.matM=mM.data; ctx.matU=mU.data; ctx.matTot=mT.data; ctx.matPval=mP.data;
     ctx.qcres=qcres; ctx.next=0; ctx.nfail=0; ctx.status_or=0;
     pthread_mutex_init(&ctx.lock, NULL);
@@ -728,7 +800,24 @@ static int cmd_preprocess(int argc, char **argv)
     if (!names) { fprintf(stderr, "sesame: oom\n"); goto out; }
     for (i = 0; i < nsamp; i++) names[i] = (char *)path_basename(prefixes[i]);
 
-    if (ctx.want_beta) { snprintf(path,sizeof path,"%s/beta.cg",outdir);
+    if (ctx.want_beta && collapse) {
+        /* betasCollapseToPfx: average replicate probes to their cg-prefix, then
+         * write beta.cg over the collapsed axis + a beta.cg.probes sidecar (one
+         * prefix per line, positional) since the axis is no longer the ordering. */
+        double *cmat = NULL; char **cpfx = NULL; int32_t m = 0; FILE *pf;
+        if (sesame_betas_collapse_prefix(ix, mB.data, nsamp, &cmat, &cpfx, &m, &e)) {
+            fprintf(stderr,"sesame: %s\n",e.msg); goto out; }
+        snprintf(path,sizeof path,"%s/beta.cg",outdir);
+        if (sesame_write_cg(path, cmat, m, nsamp, names, &e)) {
+            free(cmat); for (i=0;i<m;i++) free(cpfx[i]); free(cpfx);
+            fprintf(stderr,"sesame: %s\n",e.msg); goto out; }
+        snprintf(path,sizeof path,"%s/beta.cg.probes",outdir);
+        if ((pf = fopen(path,"w"))) {
+            for (i = 0; i < m; i++) fprintf(pf, "%s\n", cpfx[i]);
+            fclose(pf);
+        } else fprintf(stderr,"sesame: cannot write %s\n", path);
+        free(cmat); for (i=0;i<m;i++) free(cpfx[i]); free(cpfx);
+    } else if (ctx.want_beta) { snprintf(path,sizeof path,"%s/beta.cg",outdir);
         if (sesame_write_cg(path, mB.data, n, nsamp, names, &e)) { fprintf(stderr,"sesame: %s\n",e.msg); goto out; } }
     if (ctx.want_int)  { snprintf(path,sizeof path,"%s/intensity.cg",outdir);
         if (sesame_write_cg_mu(path, mM.data, mU.data, n, nsamp, names, &e)) { fprintf(stderr,"sesame: %s\n",e.msg); goto out; } }
@@ -755,7 +844,7 @@ static int cmd_preprocess(int argc, char **argv)
 out:
     betas_matrix_free(&mB); betas_matrix_free(&mM); betas_matrix_free(&mU);
     betas_matrix_free(&mT); betas_matrix_free(&mP);
-    free(qcres); free(names); free(qmask); free(bgmask); pp_free_prefixes(prefixes, nsamp);
+    free(qcres); free(names); free(qmask); free(bgmask); free(ext); pp_free_prefixes(prefixes, nsamp);
     sesame_index_close(ix);
     return rc;
 }
@@ -1492,6 +1581,137 @@ out:
     return rc;
 }
 
+static const char *platform_from_basename(const char *path);
+
+static int cmd_liftover(int argc, char **argv)
+{
+    const char *inpath = NULL, *outpath = NULL, *src_plat = NULL, *tgt_plat = NULL;
+    const char *src_idx = NULL, *tgt_idx = NULL;
+    char sres[4096], tres[4096];
+    sesame_index_t *six = NULL, *tix = NULL;
+    double *mat = NULL, *lifted = NULL;
+    char **names = NULL;
+    int32_t nprobe = 0, nsamp = 0, i, rc = 1;
+    sesame_err_t e;
+
+    for (i = 0; i < argc; i++) {
+        if (strcmp(argv[i], "--to") == 0 && i+1 < argc) tgt_plat = argv[++i];
+        else if (strcmp(argv[i], "--platform") == 0 && i+1 < argc) src_plat = argv[++i];
+        else if (strcmp(argv[i], "--index") == 0 && i+1 < argc) src_idx = argv[++i];
+        else if (strcmp(argv[i], "--index-to") == 0 && i+1 < argc) tgt_idx = argv[++i];
+        else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) { usage_liftover(); return 0; }
+        else if (argv[i][0] == '-' && argv[i][1] != '\0') { fprintf(stderr, "sesame: unknown option %s\n", argv[i]); return usage_liftover(); }
+        else if (!inpath) inpath = argv[i];
+        else if (!outpath) outpath = argv[i];
+        else { fprintf(stderr, "sesame: liftover takes <in.cg> <out.cg>\n"); return usage_liftover(); }
+    }
+    if (!inpath || !outpath || !tgt_plat) {
+        fprintf(stderr, "sesame: liftover needs --to <platform>, <in.cg> and <out.cg>\n");
+        return usage_liftover();
+    }
+
+    if (!src_idx) {
+        if (!src_plat) { fprintf(stderr, "sesame: liftover needs --platform or --index for the source\n"); return 1; }
+        if (sesame_index_locate(src_plat, sres, sizeof sres) != 0) {
+            char h[1024]; sesame_index_missing_help(src_plat, h, sizeof h);
+            fprintf(stderr, "sesame: %s\n", h); return 1;
+        }
+        src_idx = sres;
+    } else if (!src_plat) src_plat = platform_from_basename(src_idx);
+    if (!src_plat) { fprintf(stderr, "sesame: liftover needs --platform for the source (sets the join direction)\n"); return 1; }
+
+    if (!tgt_idx) {
+        if (sesame_index_locate(tgt_plat, tres, sizeof tres) != 0) {
+            char h[1024]; sesame_index_missing_help(tgt_plat, h, sizeof h);
+            fprintf(stderr, "sesame: %s\n", h); return 1;
+        }
+        tgt_idx = tres;
+    }
+
+    if (!(six = sesame_index_open(src_idx, &e))) { fprintf(stderr, "sesame: %s\n", e.msg); return 1; }
+    if (!(tix = sesame_index_open(tgt_idx, &e))) { fprintf(stderr, "sesame: %s\n", e.msg); goto out; }
+
+    if (sesame_read_cg(inpath, &mat, &nprobe, &nsamp, &names, &e) != SESAME_OK) {
+        fprintf(stderr, "sesame: %s\n", e.msg); goto out; }
+    if (nprobe != sesame_index_nprobes(six)) {
+        fprintf(stderr, "sesame: %s has %d probes but the %s ordering has %d\n",
+                inpath, nprobe, src_plat, sesame_index_nprobes(six)); goto out; }
+
+    if (sesame_liftover_betas(src_plat, six, tgt_plat, tix, mat, nsamp, &lifted, &e) != SESAME_OK) {
+        fprintf(stderr, "sesame: %s\n", e.msg); goto out; }
+    if (sesame_write_cg(outpath, lifted, sesame_index_nprobes(tix), nsamp, names, &e) != SESAME_OK) {
+        fprintf(stderr, "sesame: %s\n", e.msg); goto out; }
+    fprintf(stderr, "sesame: lifted %d sample(s) %s -> %s (%d -> %d probes) to %s\n",
+            nsamp, src_plat, tgt_plat, nprobe, sesame_index_nprobes(tix), outpath);
+    rc = 0;
+out:
+    free(mat); free(lifted);
+    if (names) { for (i = 0; i < nsamp; i++) free(names[i]); free(names); }
+    sesame_index_close(six); sesame_index_close(tix);
+    return rc;
+}
+
+static int cmd_impute(int argc, char **argv)
+{
+    const char *inpath = NULL, *outpath = NULL, *method = NULL;
+    const char *platform = NULL, *coords = NULL, *genome = "hg38", *axis = "probe";
+    int max_neighbors = 3, i, rc = 1;
+    long max_dist = 10000;
+    char store[4096], cbuf[4096];
+    double *mat = NULL; char **names = NULL;
+    int32_t nprobe = 0, nsamp = 0;
+    sesame_err_t e;
+
+    for (i = 0; i < argc; i++) {
+        if (strcmp(argv[i], "--method") == 0 && i+1 < argc) method = argv[++i];
+        else if (strcmp(argv[i], "--axis") == 0 && i+1 < argc) axis = argv[++i];
+        else if (strcmp(argv[i], "--platform") == 0 && i+1 < argc) platform = argv[++i];
+        else if (strcmp(argv[i], "--coords") == 0 && i+1 < argc) coords = argv[++i];
+        else if (strcmp(argv[i], "--genome") == 0 && i+1 < argc) genome = argv[++i];
+        else if (strcmp(argv[i], "--max-neighbors") == 0 && i+1 < argc) max_neighbors = (int)strtol(argv[++i],NULL,10);
+        else if (strcmp(argv[i], "--max-dist") == 0 && i+1 < argc) max_dist = strtol(argv[++i],NULL,10);
+        else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) { usage_impute(); return 0; }
+        else if (argv[i][0] == '-' && argv[i][1] != '\0') { fprintf(stderr, "sesame: unknown option %s\n", argv[i]); return usage_impute(); }
+        else if (!inpath) inpath = argv[i];
+        else if (!outpath) outpath = argv[i];
+        else { fprintf(stderr, "sesame: impute takes <in.cg> <out.cg>\n"); return usage_impute(); }
+    }
+    if (!inpath || !outpath || !method) {
+        fprintf(stderr, "sesame: impute needs --method <mean|neighbors>, <in.cg> and <out.cg>\n");
+        return usage_impute();
+    }
+
+    if (sesame_read_cg(inpath, &mat, &nprobe, &nsamp, &names, &e) != SESAME_OK) {
+        fprintf(stderr, "sesame: %s\n", e.msg); return 1; }
+
+    if (strcmp(method, "mean") == 0) {
+        int ax = !strcmp(axis, "probe") ? 1 : !strcmp(axis, "sample") ? 2 : 0;
+        if (!ax) { fprintf(stderr, "sesame: --axis must be probe or sample\n"); goto out; }
+        if (sesame_impute_mean(mat, nprobe, nsamp, ax, &e) != SESAME_OK) { fprintf(stderr, "sesame: %s\n", e.msg); goto out; }
+    } else if (strcmp(method, "neighbors") == 0) {
+        if (!coords) {
+            if (!platform) { fprintf(stderr, "sesame: impute --method neighbors needs --coords or --platform\n"); goto out; }
+            sesame_store_dir(store, sizeof store);
+            snprintf(cbuf, sizeof cbuf, "%s/%s/%s.%s.mapcoord.tsv.gz", store, platform, platform, genome);
+            coords = cbuf;
+        }
+        if (sesame_impute_neighbors(mat, nprobe, nsamp, coords, max_neighbors, max_dist, &e) != SESAME_OK) {
+            fprintf(stderr, "sesame: %s\n", e.msg); goto out; }
+    } else {
+        fprintf(stderr, "sesame: --method must be mean or neighbors\n"); goto out;
+    }
+
+    if (sesame_write_cg(outpath, mat, nprobe, nsamp, names, &e) != SESAME_OK) {
+        fprintf(stderr, "sesame: %s\n", e.msg); goto out; }
+    fprintf(stderr, "sesame: imputed %d sample(s) x %d probes (%s) to %s\n",
+            nsamp, nprobe, method, outpath);
+    rc = 0;
+out:
+    free(mat);
+    if (names) { for (i = 0; i < nsamp; i++) free(names[i]); free(names); }
+    return rc;
+}
+
 /* Infer a platform from a filename like "MSA.hg38.coord.tsv.gz" -> "MSA". Returns
  * a static registry string, or NULL. */
 static const char *platform_from_basename(const char *path)
@@ -1716,6 +1936,10 @@ int main(int argc, char **argv)
         return cmd_deidentify(argc - 2, argv + 2);
     if (strcmp(argv[1], "region") == 0)
         return cmd_region(argc - 2, argv + 2);
+    if (strcmp(argv[1], "liftover") == 0)
+        return cmd_liftover(argc - 2, argv + 2);
+    if (strcmp(argv[1], "impute") == 0)
+        return cmd_impute(argc - 2, argv + 2);
     if (strcmp(argv[1], "attach-probe") == 0)
         return cmd_attach_probe(argc - 2, argv + 2);
     if (strcmp(argv[1], "fetch") == 0)

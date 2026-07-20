@@ -85,6 +85,9 @@ sesame preprocess   [options] <prefix|dir> [...]       # IDAT -> YAME .cg (+ qc.
 sesame dml          --betas <beta.cg|matrix.tsv> (--formula .. --meta .. | --design ..)
 sesame cnv          [--probes] [--platform P] <target.cg> <segments.tsv> <bins|probes.tsv>
 sesame vcf          <prefix> [--platform P] --snp <snp.tsv.gz>     # SNP genotypes -> VCF
+sesame liftover     --to <platform> --platform <src> <in.cg> <out.cg>  # cross-platform betas (mLiftOver)
+sesame impute       --method <mean|neighbors> <in.cg> <out.cg>    # fill NA betas
+sesame region       (<chr:beg-end>|--gene NAME) --betas <beta.cg> # region betas -> long-form TSV
 sesame deidentify   [--randomize|-r --seed N] <prefix|idat>        # strip SNP fingerprint from IDAT
 sesame attach-probe [--platform P] <file.cg|.cm|.tsv>  # label a positional file with Probe_IDs
 sesame fetch        [<platform>] | genome [<build>]    # download annotation into the store
@@ -235,8 +238,15 @@ Each is an independent, self-contained port of the R function (see `NUMERICS.md`
 | `Q` | `qualityMask` | OR the platform's recommended probe mask (from the `.cm`) into the SigDF mask |
 | `C` | `inferInfiniumIChannel` | reassign each Infinium-I probe to its brighter color channel |
 | `D` | `dyeBiasNL` | nonlinear dye-bias correction — pull the red and green Inf-I distributions to a common curve |
+| `E` | `dyeBiasL` | linear dye-bias correction — scale each channel to a common reference intensity |
 | `P` | `pOOBAH` | detection-p masking from the out-of-band + negative-control background; mask probes with `p > 0.05` |
 | `B` | `noob` | normal-exponential background subtraction |
+
+Extra `preprocess` options: `--collapse` averages EPICv2/MSA replicate probes to
+their cg-prefix in the beta output (`betasCollapseToPfx`; axis → `beta.cg.probes`);
+`--detection pneg` emits the negative-control-ECDF detection p (`detectionPnegEcdf`)
+in `pval.cg` instead of pOOBAH. The `qc.tsv` panel adds `GCT`
+(`bisConversionControl`) on EPIC/HM450.
 
 Pass any subset in any order (`--prep CD` for channel + dye bias, `--prep ""` for
 raw betas). `Q`, `P`, and `B` read the `.cm` mask, so the platform must be in the

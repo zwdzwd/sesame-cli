@@ -28,7 +28,7 @@ static int resolve(const char *pfx, const char *chan, char *out, size_t n)
 int main(int argc, char **argv)
 {
     const char *idxpath = NULL, *platform = NULL, *prep = "", *what = "beta", *prefix = NULL;
-    int f64 = 0, i, rc = 1;
+    int f64 = 0, pneg = 0, i, rc = 1;
     char gp[4096], rp[4096];
     sesame_idat_t *g = NULL, *r = NULL;
     sesame_index_t *ix = NULL;
@@ -44,6 +44,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--prep") && i+1 < argc) prep = argv[++i];
         else if (!strcmp(argv[i], "--what") && i+1 < argc) what = argv[++i];
         else if (!strcmp(argv[i], "--f64")) f64 = 1;
+        else if (!strcmp(argv[i], "--detection") && i+1 < argc) pneg = !strcmp(argv[++i], "pneg");
         else prefix = argv[i];
     }
     if (!prefix) {
@@ -86,7 +87,7 @@ int main(int argc, char **argv)
     else if (!strcmp(what, "col"))   col = (uint8_t *)malloc((size_t)n);
     else { fprintf(stderr, "unknown --what %s\n", what); goto out; }
 
-    if (sesame_pipeline(sig, prep, qmask, qn, bgmask, bgn, 0,
+    if (sesame_pipeline(sig, prep, qmask, qn, bgmask, bgn, 0, pneg,
                         beta, M, U, tot, pval, col, &e)) { fprintf(stderr, "%s\n", e.msg); goto out; }
 
     if (col) {
