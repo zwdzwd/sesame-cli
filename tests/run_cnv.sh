@@ -35,8 +35,8 @@ export SESAME_INDEX_DIR="$store"
 
 # target total intensity (raw), then C's CNV probe signals
 "$bin" preprocess --prep "" --raw-signal --output total_intensity --out "$work" "$pfx" 2>/dev/null
-"$bin" cnv --probes --target "$work/total_intensity.cg" --platform $plat --genome hg38 2>/dev/null > "$work/c_probes.tsv"
-"$bin" cnv --bins   --target "$work/total_intensity.cg" --platform $plat --genome hg38 2>/dev/null > "$work/c_bins.tsv"
+"$bin" cnv --probes --platform $plat --genome hg38 "$work/total_intensity.cg" "$work/c_seg.tsv" "$work/c_probes.tsv" 2>/dev/null
+"$bin" cnv          --platform $plat --genome hg38 "$work/total_intensity.cg" "$work/c_seg.tsv" "$work/c_bins.tsv"   2>/dev/null
 
 # extract C's own totals/normals/coords (Probe_ID-keyed) for the R oracle
 "$bin" attach-probe --index "$ord" "$work/total_intensity.cg" 2>/dev/null > "$work/tgt.tsv"

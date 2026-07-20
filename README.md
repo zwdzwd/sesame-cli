@@ -61,18 +61,18 @@ are linked statically); the `yame` tool need not be installed.
 sesame fetch EPICv2
 
 # 2. preprocess a cohort (default QCDPB) -> one indexed .cg per output + qc.tsv
-#    a <prefix> is a path stem resolving <prefix>_Grn.idat[.gz] and _Red
-sesame preprocess --out out/ $(ls idats/*_Grn.idat.gz | sed 's/_Grn.idat.gz//')
+#    each arg is an IDAT prefix, or a directory searched recursively for pairs
+sesame preprocess --out out/ idats/
 #    -> out/beta.cg  out/intensity.cg  out/pval.cg  out/qc.tsv
 
 # 3a. differential methylation from the betas
 sesame dml --betas out/beta.cg --index EPICv2.ordering.tsv.gz \
            --meta samples.tsv --formula '~ group + age' > dml.tsv
 
-# 3b. copy number for a tumor sample (segments by default)
+# 3b. copy number for a tumor sample (writes segments + bins)
 sesame fetch genome hg38
 sesame preprocess --prep "" --raw-signal --output total_intensity --out t/ tumor
-sesame cnv --target t/total_intensity.cg --platform EPICv2 > segments.tsv
+sesame cnv --platform EPICv2 t/total_intensity.cg out/segments.tsv out/bins.tsv
 ```
 
 Everything is offline except `sesame fetch`. Annotation is downloaded once,
@@ -81,10 +81,11 @@ verified against a digest compiled into the build, and reused.
 ## Commands
 
 ```
-sesame preprocess   [options] <prefix> [<prefix> ...]  # IDAT -> YAME .cg (+ qc.tsv)
+sesame preprocess   [options] <prefix|dir> [...]       # IDAT -> YAME .cg (+ qc.tsv)
 sesame dml          --betas <beta.cg|matrix.tsv> (--formula .. --meta .. | --design ..)
-sesame cnv          --target <total_intensity.cg> [--platform P]   # log2 / bins / CBS segments
+sesame cnv          [--probes] [--platform P] <target.cg> <segments.tsv> <bins|probes.tsv>
 sesame vcf          <prefix> [--platform P] --snp <snp.tsv.gz>     # SNP genotypes -> VCF
+sesame deidentify   [--randomize|-r --seed N] <prefix|idat>        # strip SNP fingerprint from IDAT
 sesame attach-probe [--platform P] <file.cg|.cm|.tsv>  # label a positional file with Probe_IDs
 sesame fetch        [<platform>] | genome [<build>]    # download annotation into the store
 sesame index-info                                      # store location + pinned tag + platforms
@@ -114,10 +115,10 @@ one indexed file, one block per sample — into `--out DIR` (default `.`), plus 
 Default `--output` is `beta,intensity,pval,qc`.
 
 ```sh
-sesame preprocess --out out/ s1 s2 s3                          # default outputs
-sesame preprocess --output beta --prep QCDPB --out out/ *pfx   # just beta.cg
+sesame preprocess --out out/ idats/                           # a folder, searched recursively
+sesame preprocess --output beta --out out/ pfx1 pfx2          # explicit prefixes -> just beta.cg
 sesame preprocess --output total_intensity --raw-signal --out cnv/ tumor  # CNV input
-sesame preprocess --prep "" --out raw/ s1                      # raw (bit-identical to R) betas
+sesame preprocess --prep "" --out raw/ pfx1                   # raw (bit-identical to R) betas
 ```
 
 Signal outputs (`intensity`, `total_intensity`) reflect the prep; `--raw-signal`
@@ -156,19 +157,20 @@ minus assembly gaps, merged to ≥ `--min-probes`), each bin takes the median pr
 signal, and the bins are segmented by **circular binary segmentation** (a
 deterministic port of DNAcopy's CBS).
 
-<img src="docs/figures/cnv_k562.svg" alt="K562 copy-number profile" width="100%">
+<img src="docs/figures/cnv_k562.png" alt="K562 copy-number profile" width="100%">
 
 ```sh
-sesame cnv --target t/total_intensity.cg --platform EPICv2 > segments.tsv  # --segments (default)
-sesame cnv --target t/total_intensity.cg --platform EPICv2 --bins > bins.tsv
-sesame cnv --target t/total_intensity.cg --platform EPICv2 --probes > probes.tsv
+# <target.cg> <segments.tsv> <bins.tsv> are all required, positional:
+sesame cnv --platform EPICv2 t/total_intensity.cg out/segments.tsv out/bins.tsv
+# --probes writes per-probe log2 to the detail file instead of per-bin:
+sesame cnv --platform EPICv2 --probes t/total_intensity.cg out/segments.tsv out/probes.tsv
 ```
 
 `--normals`, `--coords`, and the ordering default to the fetched store for
 `--platform` (`<store>/<P>/<P>.cnvnormals.cg`, `<P>.hg38.coord.tsv.gz`); genome
-tiling comes from `sesame fetch genome <--genome>` (default hg38). Output is a TSV
-with a leading `sample` column — `--segments`: chrom/start/end/nbin/seg.mean;
-`--bins`: chrom/start/end/nprobes/log2ratio; `--probes`: Probe_ID/chrom/pos/log2ratio.
+tiling comes from `sesame fetch genome <--genome>` (default hg38). Both output
+files carry a leading `sample` column — segments: chrom/start/end/nbin/seg.mean;
+bins: chrom/start/end/nprobes/log2ratio; probes: Probe_ID/chrom/pos/log2ratio.
 The fit + log2 matches R's `lm` to ~1e-5 on identical inputs; CBS recovers 97% of
 DNAcopy's breakpoints with exact locations (DNAcopy's permutation significance is
 itself unseeded, so an exact match is impossible — see `NUMERICS.md`). The figure

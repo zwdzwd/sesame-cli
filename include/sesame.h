@@ -52,6 +52,7 @@ typedef struct {
     uint8_t  *nbeads;   /* field 107 */
     int64_t   version;
     int32_t   n_fields;
+    int64_t   off_mean; /* byte offset of the Mean section (for de-identify rewrite) */
 } sesame_idat_t;
 
 /* Reads a .idat or .idat.gz. On success *out is a heap object owned by the
@@ -304,6 +305,27 @@ int sesame_format_vcf(const sesame_sigdf_t *sdf, const char *snp_path,
 int sesame_region_extract(const char *beta_cg, const sesame_index_t *ix,
                           const char *coords_path, const char *chrom,
                           long beg, long end, FILE *out, sesame_err_t *err);
+
+/* De-identify an IDAT by removing the genetic fingerprint: the SNP (rs) probes'
+ * mean intensities are zeroed (randomize=0) or reversibly scrambled with `seed`
+ * (randomize=1), and a new IDAT is written to out_path (everything else copied
+ * byte-for-byte). Ports sesame's deIdentify. `ix` supplies the rs-probe M/U
+ * addresses. reIdentify restores a scrambled file given the same seed. NOTE: the
+ * scramble PRNG is this tool's own, so a randomized file round-trips with sesame
+ * reidentify --seed, not with R (zeroing is fully R-equivalent and irreversible). */
+int sesame_deidentify(const char *in_path, const char *out_path,
+                      const sesame_index_t *ix, int randomize, uint64_t seed,
+                      sesame_err_t *err);
+int sesame_reidentify(const char *in_path, const char *out_path,
+                      const sesame_index_t *ix, uint64_t seed, sesame_err_t *err);
+
+/* Resolve a gene symbol to its span [beg,end) on chrom from a GENCODE BED12+
+ * gene-model file (genes.bed.gz; field 14 = gene_name). A symbol on several
+ * chromosomes resolves to the one with the most transcripts. Feeds
+ * sesame_region_extract so `region --gene ADA` works without a chr:beg-end. */
+int sesame_gene_span(const char *genes_bed, const char *gene,
+                     char *chrom, size_t chrom_n, long *beg, long *end,
+                     sesame_err_t *err);
 
 /* Write sample-major matrices as a YAME .cg (+ <path>.idx of sample names),
  * consumable by the `yame` toolchain. Mat is sample-major: sample j, probe i at

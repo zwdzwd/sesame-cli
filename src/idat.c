@@ -189,6 +189,7 @@ int sesame_idat_read(const char *path, sesame_idat_t **out, sesame_err_t *err)
     d->n = n;
     d->version = version;
     d->n_fields = n_fields;
+    d->off_mean = off_mean;
     d->addr   = (uint32_t *)malloc((size_t)n * sizeof(uint32_t));
     d->mean   = (uint16_t *)malloc((size_t)n * sizeof(uint16_t));
     d->sd     = (uint16_t *)malloc((size_t)n * sizeof(uint16_t));

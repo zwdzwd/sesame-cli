@@ -42,6 +42,7 @@ static int usage(void)
       "Inspect / convert\n"
       "  attach-probe   Prepend Probe_IDs to a positional .cg / .tsv file\n"
       "  idat-dump      Dump raw IDAT records, or a summary header\n"
+      "  deidentify     Remove the genetic fingerprint (SNP probes) from an IDAT\n"
       "\n"
       "Data store\n"
       "  fetch          Download ordering / genome annotation (the only network path)\n"
@@ -60,12 +61,13 @@ static int usage(void)
 static int usage_preprocess(void)
 {
     fputs(
-      "Usage: sesame preprocess [options] <prefix> [<prefix> ...]\n"
+      "Usage: sesame preprocess [options] <prefix|dir> [<prefix|dir> ...]\n"
       "\n"
-      "  Preprocess Infinium IDATs to methylation levels. Each <prefix> is an IDAT\n"
-      "  pair (<prefix>_Grn.idat / _Red.idat, .gz ok). Apply the --prep steps to\n"
-      "  every sample and write one indexed YAME .cg per requested output, over the\n"
-      "  whole cohort. A failed sample becomes an NA column and sets exit status 1.\n"
+      "  Preprocess Infinium IDATs to methylation levels. Each argument is an IDAT\n"
+      "  prefix (<prefix>_Grn.idat / _Red.idat, .gz ok) OR a directory, searched\n"
+      "  recursively for IDAT pairs (found prefixes are sorted). Apply the --prep\n"
+      "  steps to every sample and write one indexed YAME .cg per requested output,\n"
+      "  over the whole cohort. A failed sample becomes an NA column, exit status 1.\n"
       "\n"
       "Options:\n"
       "  --output LIST      Comma list (default beta,intensity,pval,qc) from:\n"
@@ -117,15 +119,29 @@ static int usage_dml(void)
 static int usage_cnv(void)
 {
     fputs(
-      "Usage: sesame cnv --target <total_intensity.cg> [options]\n"
+      "Usage: sesame cnv [options] <target.cg> <segments.tsv> <bins.tsv>\n"
+      "       sesame cnv --probes [options] <target.cg> <segments.tsv> <probes.tsv>\n"
       "\n"
       "  Copy number: regress the target's per-probe total intensity on a panel of\n"
       "  normals (OLS), take log2(target/fitted) per probe, bin along the genome\n"
       "  (median per bin), and segment by circular binary segmentation. The target\n"
-      "  may hold several samples -- one profile each. TSV on stdout.\n"
+      "  may hold several samples -- one profile each.\n"
+      "\n"
+      "  Writes two required files: the CBS <segments.tsv>, and a detail file that\n"
+      "  is per-bin log2 ratios by default, or per-probe with --probes. cinderplot\n"
+      "  reads the two as separate layers (segment step + points).\n"
+      "\n"
+      "Arguments (all required):\n"
+      "  <target.cg>        Total-intensity .cg (from `preprocess --raw-signal\n"
+      "                       --output total_intensity`); may hold several samples.\n"
+      "  <segments.tsv>     Output: sample chrom start end nbin seg.mean\n"
+      "  <bins.tsv>         Output: sample chrom start end nprobes log2ratio\n"
+      "                       (or <probes.tsv>: sample Probe_ID chrom pos log2ratio)\n"
       "\n"
       "Options:\n"
-      "  --target FILE      Target total_intensity.cg (also the positional arg).\n"
+      "  --probes           Write per-probe rows to the detail file (not per-bin).\n"
+      "  --exclude LIST     Comma list of chromosomes to drop from both outputs\n"
+      "                       (e.g. chrY for a female sample; unreliable on arrays).\n"
       "  --normals FILE     Normal panel .cg (default: the store's cnvnormals).\n"
       "  --platform P       EPIC | EPICv2 | HM450 | MSA -- supplies the defaults below.\n"
       "  --index FILE       Ordering .tsv.gz (overrides --platform).\n"
@@ -133,10 +149,6 @@ static int usage_cnv(void)
       "  --genome BUILD     Genome build (default hg38).\n"
       "  --tilewidth BP     Genome bin width (default 50000).\n"
       "  --min-probes N     Drop bins with < N probes (default 20).\n"
-      "  --segments         Output segments (default).\n"
-      "  --bins             Output per-bin log2 ratios.\n"
-      "  --probes           Output per-probe log2 ratios.\n"
-      "  --out FILE         Write here instead of stdout.\n"
       "\n"
       "normals/coords/genome default to the fetched store for --platform.\n",
       stderr);
@@ -168,15 +180,20 @@ static int usage_vcf(void)
 static int usage_region(void)
 {
     fputs(
-      "Usage: sesame region <chr:beg-end> --betas <beta.cg> [options]\n"
+      "Usage: sesame region (<chr:beg-end> | --gene <NAME>) --betas <beta.cg> [options]\n"
       "\n"
       "  Extract a region's betas from a multi-sample beta.cg as long-form TSV:\n"
       "    chrom  beg  end  Probe_ID  beta  sample_name\n"
       "  -- one row per (probe in region) x sample, the plot-ready feed for a\n"
-      "  locus / region view. Commas in the region string are ignored.\n"
+      "  locus / region view. Give an explicit chr:beg-end (commas ok) or a gene\n"
+      "  symbol via --gene, whose span is looked up in the GENCODE gene models.\n"
       "\n"
       "Options:\n"
       "  --betas FILE       Multi-sample beta.cg (required).\n"
+      "  --gene NAME        Resolve the region from a gene symbol (e.g. ADA) rather\n"
+      "                       than a chr:beg-end.\n"
+      "  --gene-models FILE GENCODE genes.bed.gz for --gene (default: the store's).\n"
+      "  --pad BP           Extend the region by BP on each side (default 0).\n"
       "  --platform P       EPIC | EPICv2 | HM450 | MSA -- supplies Probe_IDs/coords.\n"
       "  --index FILE       Ordering .tsv.gz (overrides --platform).\n"
       "  --coords FILE      Probe coordinate .tsv.gz (default: the store's).\n"
@@ -237,6 +254,33 @@ static int usage_fetch(void)
     return 1;
 }
 
+static int usage_deidentify(void)
+{
+    fputs(
+      "Usage: sesame deidentify [options] <prefix|idat> [<out.idat>]\n"
+      "\n"
+      "  Strip the genetic fingerprint from an IDAT: the SNP (rs) probes' bead\n"
+      "  Mean intensities are zeroed (default), or reversibly scrambled with\n"
+      "  --randomize --seed. Everything else is copied byte-for-byte, so the file\n"
+      "  reads identically apart from the SNP beads (ports sesame's deIdentify).\n"
+      "  A <prefix> processes both Grn and Red; a single .idat[.gz] just that file.\n"
+      "  Output defaults to <name>_noid_*.idat (with -r: _reid_).\n"
+      "\n"
+      "Options:\n"
+      "  --randomize        Scramble the SNP means instead of zeroing (reversible).\n"
+      "  -r, --reidentify   Reverse a --randomize (restore); needs the same --seed.\n"
+      "  --seed N           Seed for --randomize / -r.\n"
+      "  --platform P       EPIC | EPICv2 | HM450 | MSA (else from the bead count).\n"
+      "  --index FILE       Ordering .tsv.gz (overrides --platform).\n"
+      "  --out FILE         Output path (single input only).\n"
+      "\n"
+      "  --randomize uses this tool's own PRNG, so a scrambled file round-trips\n"
+      "  with `deidentify -r --seed <same N>`, not with R. Zeroing is\n"
+      "  R-equivalent and irreversible.\n",
+      stderr);
+    return 1;
+}
+
 /* Route `sesame help <cmd>` / `sesame <cmd> -h` to the command's own help. */
 static int route_usage(const char *cmd)
 {
@@ -245,6 +289,7 @@ static int route_usage(const char *cmd)
     if (!strcmp(cmd, "cnv"))          return usage_cnv();
     if (!strcmp(cmd, "vcf"))          return usage_vcf();
     if (!strcmp(cmd, "region"))       return usage_region();
+    if (!strcmp(cmd, "deidentify")) return usage_deidentify();
     if (!strcmp(cmd, "attach-probe")) return usage_attach();
     if (!strcmp(cmd, "idat-dump"))    return usage_idat();
     if (!strcmp(cmd, "fetch"))        return usage_fetch();
@@ -526,13 +571,56 @@ static int pp_parse_output(const char *s, pp_ctx *c)
     return 0;
 }
 
+static int pp_cmp(const void *a, const void *b)
+{ return strcmp(*(char *const *)a, *(char *const *)b); }
+
+static void pp_free_prefixes(char **list, int32_t n)
+{ int32_t i; if (!list) return; for (i = 0; i < n; i++) free(list[i]); free(list); }
+
+/* Append a strdup'd copy of `p` to a growable list. -1 on OOM. */
+static int pp_add(char ***list, int32_t *n, int32_t *cap, const char *p)
+{
+    if (*n >= *cap) {
+        int32_t nc = *cap ? *cap * 2 : 16;
+        char **t = (char **)realloc(*list, (size_t)nc * sizeof(char *));
+        if (!t) return -1;
+        *list = t; *cap = nc;
+    }
+    if (!((*list)[*n] = strdup(p))) return -1;
+    (*n)++;
+    return 0;
+}
+
+/* Recursively add every IDAT prefix under `dir` -- a file path carrying a
+ * _Grn.idat[.gz] suffix -- to the list, as the path minus that suffix. */
+static int pp_scan_dir(const char *dir, char ***list, int32_t *n, int32_t *cap)
+{
+    DIR *d = opendir(dir);
+    struct dirent *de;
+    if (!d) return -1;
+    while ((de = readdir(d)) != NULL) {
+        char full[4096]; struct stat st; size_t fl;
+        if (!strcmp(de->d_name, ".") || !strcmp(de->d_name, "..")) continue;
+        snprintf(full, sizeof full, "%s/%s", dir, de->d_name);
+        if (stat(full, &st) != 0) continue;
+        if (S_ISDIR(st.st_mode)) { pp_scan_dir(full, list, n, cap); continue; }
+        fl = strlen(full);
+        if (fl >= 9 && !strcmp(full + fl - 9, "_Grn.idat"))
+            { full[fl - 9] = '\0'; pp_add(list, n, cap, full); }
+        else if (fl >= 12 && !strcmp(full + fl - 12, "_Grn.idat.gz"))
+            { full[fl - 12] = '\0'; pp_add(list, n, cap, full); }
+    }
+    closedir(d);
+    return 0;
+}
+
 static int cmd_preprocess(int argc, char **argv)
 {
     const char *idxpath = NULL, *platform = NULL, *plat = NULL, *prep = "QCDPB";
     const char *outlist = "beta,intensity,pval,qc", *outdir = ".", *tmpdir = NULL;
     int min_beads = 0, nthreads = 0, raw_signal = 0, i, rc = 1;
     char **prefixes = NULL, **names = NULL;
-    int32_t nsamp = 0, n = 0, qn = 0, bgn = 0;
+    int32_t nsamp = 0, pcap = 0, n = 0, qn = 0, bgn = 0;
     char resolved[4096], path[4096];
     sesame_index_t *ix = NULL;
     uint8_t *qmask = NULL, *bgmask = NULL;
@@ -541,8 +629,6 @@ static int cmd_preprocess(int argc, char **argv)
     pp_ctx ctx; memset(&ctx, 0, sizeof ctx);
     sesame_err_t e;
 
-    prefixes = (char **)malloc((size_t)(argc + 1) * sizeof(char *));
-    if (!prefixes) { fprintf(stderr, "sesame: out of memory\n"); return 1; }
     for (i = 0; i < argc; i++) {
         if (strcmp(argv[i], "--index") == 0 && i+1 < argc) idxpath = argv[++i];
         else if (strcmp(argv[i], "--platform") == 0 && i+1 < argc) platform = argv[++i];
@@ -553,13 +639,25 @@ static int cmd_preprocess(int argc, char **argv)
         else if (strcmp(argv[i], "--min-beads") == 0 && i+1 < argc) min_beads = (int)strtol(argv[++i],NULL,10);
         else if ((strcmp(argv[i],"--threads")==0||strcmp(argv[i],"-t")==0) && i+1<argc) nthreads = (int)strtol(argv[++i],NULL,10);
         else if (strcmp(argv[i], "--raw-signal") == 0) raw_signal = 1;
-        else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) { free(prefixes); usage_preprocess(); return 0; }
+        else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) { pp_free_prefixes(prefixes, nsamp); usage_preprocess(); return 0; }
         else if (argv[i][0] == '-' && argv[i][1] != '\0') {
-            fprintf(stderr, "sesame: unknown option %s\n", argv[i]); free(prefixes); return usage_preprocess();
-        } else prefixes[nsamp++] = argv[i];
+            fprintf(stderr, "sesame: unknown option %s\n", argv[i]); pp_free_prefixes(prefixes, nsamp); return usage_preprocess();
+        } else {
+            struct stat st;
+            if (stat(argv[i], &st) == 0 && S_ISDIR(st.st_mode)) {   /* a directory -> recurse for IDAT pairs */
+                int32_t s0 = nsamp;
+                pp_scan_dir(argv[i], &prefixes, &nsamp, &pcap);
+                if (nsamp - s0 > 1) qsort(prefixes + s0, (size_t)(nsamp - s0), sizeof(char *), pp_cmp);
+            } else if (pp_add(&prefixes, &nsamp, &pcap, argv[i]) != 0) {
+                fprintf(stderr, "sesame: out of memory\n"); pp_free_prefixes(prefixes, nsamp); return 1;
+            }
+        }
     }
-    if (nsamp == 0) { free(prefixes); return usage_preprocess(); }
-    if (pp_parse_output(outlist, &ctx) != 0) { free(prefixes); return 1; }
+    if (nsamp == 0) {
+        fprintf(stderr, "sesame: no IDAT prefixes given (a prefix, or a directory to search)\n");
+        pp_free_prefixes(prefixes, nsamp); return usage_preprocess();
+    }
+    if (pp_parse_output(outlist, &ctx) != 0) { pp_free_prefixes(prefixes, nsamp); return 1; }
     if (tmpdir) setenv("TMPDIR", tmpdir, 1);
     mkdir(outdir, 0777);                              /* ok if it already exists */
 
@@ -657,7 +755,7 @@ static int cmd_preprocess(int argc, char **argv)
 out:
     betas_matrix_free(&mB); betas_matrix_free(&mM); betas_matrix_free(&mU);
     betas_matrix_free(&mT); betas_matrix_free(&mP);
-    free(qcres); free(names); free(qmask); free(bgmask); free(prefixes);
+    free(qcres); free(names); free(qmask); free(bgmask); pp_free_prefixes(prefixes, nsamp);
     sesame_index_close(ix);
     return rc;
 }
@@ -1115,37 +1213,57 @@ out:
     return rc;
 }
 
+/* Is `val` one of the comma-separated names in `csv`? (for cnv --exclude) */
+static int csv_has(const char *csv, const char *val)
+{
+    size_t vl = strlen(val);
+    const char *p = csv;
+    if (!csv) return 0;
+    while (*p) {
+        const char *c = strchr(p, ',');
+        size_t len = c ? (size_t)(c - p) : strlen(p);
+        if (len == vl && strncmp(p, val, vl) == 0) return 1;
+        if (!c) break;
+        p = c + 1;
+    }
+    return 0;
+}
+
 static int cmd_cnv(int argc, char **argv)
 {
-    const char *target = NULL, *normals = NULL, *idxpath = NULL, *platform = NULL;
-    const char *coords = NULL, *genome = "hg38", *outpath = NULL;
-    int tilewidth = 50000, min_probes = 20, mode = 0, i, rc = 1;   /* 0=seg 1=bin 2=probe */
+    const char *normals = NULL, *idxpath = NULL, *platform = NULL;
+    const char *coords = NULL, *genome = "hg38", *exclude = NULL;
+    const char *pos[3] = { NULL, NULL, NULL };
+    const char *target, *segout, *detout;
+    int tilewidth = 50000, min_probes = 20, probes = 0, npos = 0, i, rc = 1;
     char store[4096], resolved[4096], cbuf[4096], nbuf[4096], sbuf[4096], gbuf[4096];
     sesame_index_t *ix = NULL;
     sesame_cnv_t *res = NULL;
     int32_t nres = 0, s, k;
-    FILE *out = stdout;
+    FILE *fseg = NULL, *fdet = NULL;
     sesame_err_t e;
 
     for (i = 0; i < argc; i++) {
-        if (strcmp(argv[i], "--target") == 0 && i+1 < argc) target = argv[++i];
-        else if (strcmp(argv[i], "--normals") == 0 && i+1 < argc) normals = argv[++i];
+        if (strcmp(argv[i], "--normals") == 0 && i+1 < argc) normals = argv[++i];
         else if (strcmp(argv[i], "--index") == 0 && i+1 < argc) idxpath = argv[++i];
         else if (strcmp(argv[i], "--platform") == 0 && i+1 < argc) platform = argv[++i];
         else if (strcmp(argv[i], "--coords") == 0 && i+1 < argc) coords = argv[++i];
         else if (strcmp(argv[i], "--genome") == 0 && i+1 < argc) genome = argv[++i];
         else if (strcmp(argv[i], "--tilewidth") == 0 && i+1 < argc) tilewidth = (int)strtol(argv[++i], NULL, 10);
         else if (strcmp(argv[i], "--min-probes") == 0 && i+1 < argc) min_probes = (int)strtol(argv[++i], NULL, 10);
-        else if (strcmp(argv[i], "--segments") == 0) mode = 0;
-        else if (strcmp(argv[i], "--bins") == 0) mode = 1;
-        else if (strcmp(argv[i], "--probes") == 0) mode = 2;
-        else if (strcmp(argv[i], "--out") == 0 && i+1 < argc) outpath = argv[++i];
+        else if (strcmp(argv[i], "--exclude") == 0 && i+1 < argc) exclude = argv[++i];
+        else if (strcmp(argv[i], "--probes") == 0) probes = 1;
         else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) { usage_cnv(); return 0; }
         else if (argv[i][0] == '-' && argv[i][1] != '\0') { fprintf(stderr, "sesame: unknown option %s\n", argv[i]); return usage_cnv(); }
-        else if (!target) target = argv[i];
-        else { fprintf(stderr, "sesame: unexpected argument %s\n", argv[i]); return usage_cnv(); }
+        else if (npos < 3) pos[npos++] = argv[i];
+        else { fprintf(stderr, "sesame: cnv takes exactly three positional args\n"); return usage_cnv(); }
     }
-    if (!target) { fprintf(stderr, "sesame: cnv needs --target <total_intensity.cg>\n"); return usage_cnv(); }
+    if (npos != 3) {
+        fprintf(stderr, "sesame: cnv needs <target.cg> <segments.tsv> <%s.tsv>\n",
+                probes ? "probes" : "bins");
+        return usage_cnv();
+    }
+    target = pos[0]; segout = pos[1]; detout = pos[2];
     if (tilewidth < 1 || min_probes < 1) { fprintf(stderr, "sesame: --tilewidth and --min-probes must be positive\n"); return 1; }
 
     /* Defaults for normals/coords/index come from the store, keyed on platform. */
@@ -1181,34 +1299,43 @@ static int cmd_cnv(int argc, char **argv)
         fprintf(stderr, "sesame: %s\n", e.msg); goto out;
     }
 
-    if (outpath && !(out = fopen(outpath, "w"))) {
-        fprintf(stderr, "sesame: cannot write %s\n", outpath); goto out;
-    }
-    if (mode == 2) {
-        fputs("sample\tProbe_ID\tchrom\tpos\tlog2ratio\n", out);
+    /* Always write the CBS segments; the detail file is per-bin (default) or
+     * per-probe (--probes). Both are required positional outputs. cinderplot
+     * reads the two files as separate layers (points + segment step). */
+    if (!(fseg = fopen(segout, "w"))) { fprintf(stderr, "sesame: cannot write %s\n", segout); goto out; }
+    fputs("sample\tchrom\tstart\tend\tnbin\tseg.mean\n", fseg);
+    for (s = 0; s < nres; s++)
+        for (k = 0; k < res[s].n_seg; k++) {
+            if (csv_has(exclude, res[s].seg_chrom[k])) continue;
+            fprintf(fseg, "%s\t%s\t%d\t%d\t%d\t%.6g\n", res[s].sample, res[s].seg_chrom[k],
+                    res[s].seg_start[k], res[s].seg_end[k], res[s].seg_nbin[k], res[s].seg_mean[k]);
+        }
+
+    if (!(fdet = fopen(detout, "w"))) { fprintf(stderr, "sesame: cannot write %s\n", detout); goto out; }
+    if (probes) {
+        fputs("sample\tProbe_ID\tchrom\tpos\tlog2ratio\n", fdet);
         for (s = 0; s < nres; s++)
-            for (k = 0; k < res[s].n_probe; k++)
-                fprintf(out, "%s\t%s\t%s\t%d\t%.6g\n", res[s].sample, res[s].probe_id[k],
+            for (k = 0; k < res[s].n_probe; k++) {
+                if (csv_has(exclude, res[s].chrom[k])) continue;
+                fprintf(fdet, "%s\t%s\t%s\t%d\t%.6g\n", res[s].sample, res[s].probe_id[k],
                         res[s].chrom[k], res[s].pos[k], res[s].log2ratio[k]);
-    } else if (mode == 1) {
-        fputs("sample\tchrom\tstart\tend\tnprobes\tlog2ratio\n", out);
-        for (s = 0; s < nres; s++)
-            for (k = 0; k < res[s].n_bin; k++)
-                fprintf(out, "%s\t%s\t%d\t%d\t%d\t%.6g\n", res[s].sample, res[s].bin_chrom[k],
-                        res[s].bin_start[k], res[s].bin_end[k], res[s].bin_nprobe[k], res[s].bin_log2ratio[k]);
+            }
     } else {
-        fputs("sample\tchrom\tstart\tend\tnbin\tseg.mean\n", out);
+        fputs("sample\tchrom\tstart\tend\tnprobes\tlog2ratio\n", fdet);
         for (s = 0; s < nres; s++)
-            for (k = 0; k < res[s].n_seg; k++)
-                fprintf(out, "%s\t%s\t%d\t%d\t%d\t%.6g\n", res[s].sample, res[s].seg_chrom[k],
-                        res[s].seg_start[k], res[s].seg_end[k], res[s].seg_nbin[k], res[s].seg_mean[k]);
+            for (k = 0; k < res[s].n_bin; k++) {
+                if (csv_has(exclude, res[s].bin_chrom[k])) continue;
+                fprintf(fdet, "%s\t%s\t%d\t%d\t%d\t%.6g\n", res[s].sample, res[s].bin_chrom[k],
+                        res[s].bin_start[k], res[s].bin_end[k], res[s].bin_nprobe[k], res[s].bin_log2ratio[k]);
+            }
     }
     for (s = 0; s < nres; s++)
         fprintf(stderr, "sesame: cnv %s -- %d probes on %d normals, %d bins, %d segments\n",
                 res[s].sample, res[s].n_used, res[s].n_normal, res[s].n_bin, res[s].n_seg);
     rc = 0;
 out:
-    if (out && out != stdout) fclose(out);
+    if (fseg) fclose(fseg);
+    if (fdet) fclose(fdet);
     sesame_cnv_free_array(res, nres);
     sesame_index_close(ix);
     return rc;
@@ -1284,8 +1411,9 @@ static int cmd_region(int argc, char **argv)
 {
     const char *regstr = NULL, *betapath = NULL, *idxpath = NULL, *platform = NULL;
     const char *coords = NULL, *genome = "hg38", *outpath = NULL;
-    char store[4096], resolved[4096], cbuf[4096], chrom[64] = "";
-    long beg = 0, end = 0;
+    const char *gene = NULL, *genesbed = NULL;
+    long beg = 0, end = 0, pad = 0;
+    char store[4096], resolved[4096], cbuf[4096], gbuf[4096], chrom[64] = "";
     sesame_index_t *ix = NULL;
     FILE *out = stdout;
     int i, rc = 1;
@@ -1293,6 +1421,9 @@ static int cmd_region(int argc, char **argv)
 
     for (i = 0; i < argc; i++) {
         if (strcmp(argv[i], "--betas") == 0 && i+1 < argc) betapath = argv[++i];
+        else if (strcmp(argv[i], "--gene") == 0 && i+1 < argc) gene = argv[++i];
+        else if (strcmp(argv[i], "--gene-models") == 0 && i+1 < argc) genesbed = argv[++i];
+        else if (strcmp(argv[i], "--pad") == 0 && i+1 < argc) pad = strtol(argv[++i], NULL, 10);
         else if (strcmp(argv[i], "--index") == 0 && i+1 < argc) idxpath = argv[++i];
         else if (strcmp(argv[i], "--platform") == 0 && i+1 < argc) platform = argv[++i];
         else if (strcmp(argv[i], "--coords") == 0 && i+1 < argc) coords = argv[++i];
@@ -1303,9 +1434,27 @@ static int cmd_region(int argc, char **argv)
         else if (!regstr) regstr = argv[i];
         else { fprintf(stderr, "sesame: region takes one <chr:beg-end>\n"); return usage_region(); }
     }
-    if (!regstr || !betapath) { fprintf(stderr, "sesame: region needs <chr:beg-end> and --betas <beta.cg>\n"); return usage_region(); }
+    if (!betapath || (!regstr && !gene) || (regstr && gene)) {
+        fprintf(stderr, "sesame: region needs --betas and exactly one of <chr:beg-end> or --gene <NAME>\n");
+        return usage_region();
+    }
 
-    {                                            /* parse chr:beg-end (commas allowed) */
+    sesame_store_dir(store, sizeof store);
+
+    if (gene) {                                  /* resolve a gene symbol -> span */
+        if (!genesbed) {
+            if (sesame_genome_locate(genome, "genes.bed.gz", gbuf, sizeof gbuf) != 0) {
+                fprintf(stderr, "sesame: no gene models for %s in the store\n"
+                    "  fix: sesame fetch genome %s   (or pass --gene-models <genes.bed.gz>)\n",
+                    genome, genome);
+                return 1;
+            }
+            genesbed = gbuf;
+        }
+        if (sesame_gene_span(genesbed, gene, chrom, sizeof chrom, &beg, &end, &e) != SESAME_OK) {
+            fprintf(stderr, "sesame: %s\n", e.msg); return 1;
+        }
+    } else {                                     /* parse chr:beg-end (commas allowed) */
         char tmp[256], *colon, *dash, *p;
         snprintf(tmp, sizeof tmp, "%s", regstr);
         colon = strchr(tmp, ':'); dash = colon ? strchr(colon + 1, '-') : NULL;
@@ -1315,6 +1464,7 @@ static int cmd_region(int argc, char **argv)
         for (p = colon + 1; *p; p++) if (*p >= '0' && *p <= '9') beg = beg*10 + (*p - '0');
         for (p = dash + 1;  *p; p++) if (*p >= '0' && *p <= '9') end = end*10 + (*p - '0');
     }
+    if (pad) { beg -= pad; if (beg < 0) beg = 0; end += pad; }
     if (end < beg) { fprintf(stderr, "sesame: region end < beg\n"); return 1; }
 
     if (!idxpath) {
@@ -1325,7 +1475,6 @@ static int cmd_region(int argc, char **argv)
         }
         idxpath = resolved;
     }
-    sesame_store_dir(store, sizeof store);
     if (!coords) {
         if (!platform) { fprintf(stderr, "sesame: region needs --coords or --platform\n"); return 1; }
         snprintf(cbuf, sizeof cbuf, "%s/%s/%s.%s.coord.tsv.gz", store, platform, platform, genome);
@@ -1460,6 +1609,91 @@ static int cmd_idat_dump(int argc, char **argv)
     return 0;
 }
 
+/* Default output path: insert `_<tag>` before _Grn/_Red (or the extension),
+ * mirroring R's deIdentify naming (<name>_noid_Grn.idat). */
+static void deid_outname(const char *in, const char *tag, char *out, size_t n)
+{
+    char stem[4096]; size_t l;
+    snprintf(stem, sizeof stem, "%s", in);
+    l = strlen(stem);
+    if (l >= 8 && !strcmp(stem + l - 8, ".idat.gz")) stem[l - 8] = '\0';
+    else if (l >= 5 && !strcmp(stem + l - 5, ".idat")) stem[l - 5] = '\0';
+    l = strlen(stem);
+    if (l >= 4 && !strcmp(stem + l - 4, "_Grn")) { stem[l - 4] = '\0'; snprintf(out, n, "%s_%s_Grn.idat", stem, tag); }
+    else if (l >= 4 && !strcmp(stem + l - 4, "_Red")) { stem[l - 4] = '\0'; snprintf(out, n, "%s_%s_Red.idat", stem, tag); }
+    else snprintf(out, n, "%s_%s.idat", stem, tag);
+}
+
+static int cmd_deidentify(int argc, char **argv)
+{
+    const char *input = NULL, *outpath = NULL, *idxpath = NULL, *platform = NULL, *tag;
+    const char *files[2];
+    char grn[4096], red[4096], resolved[4096], out[4096];
+    int randomize = 0, reidentify = 0, nf = 0, i, rc = 1;
+    long long seed = 0;
+    sesame_index_t *ix = NULL;
+    sesame_err_t e;
+
+    for (i = 0; i < argc; i++) {
+        if (strcmp(argv[i], "--index") == 0 && i+1 < argc) idxpath = argv[++i];
+        else if (strcmp(argv[i], "--platform") == 0 && i+1 < argc) platform = argv[++i];
+        else if (strcmp(argv[i], "--out") == 0 && i+1 < argc) outpath = argv[++i];
+        else if (strcmp(argv[i], "--seed") == 0 && i+1 < argc) seed = strtoll(argv[++i], NULL, 10);
+        else if (strcmp(argv[i], "--randomize") == 0) randomize = 1;
+        else if (strcmp(argv[i], "-r") == 0 || strcmp(argv[i], "--reidentify") == 0) reidentify = 1;
+        else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) { usage_deidentify(); return 0; }
+        else if (argv[i][0] == '-' && argv[i][1] != '\0') { fprintf(stderr, "sesame: unknown option %s\n", argv[i]); return usage_deidentify(); }
+        else if (!input) input = argv[i];
+        else if (!outpath) outpath = argv[i];
+        else { fprintf(stderr, "sesame: too many arguments\n"); return usage_deidentify(); }
+    }
+    tag = reidentify ? "reid" : "noid";
+    if (!input) { fprintf(stderr, "sesame: deidentify needs an IDAT prefix or file\n"); return usage_deidentify(); }
+    if (reidentify && seed == 0) { fprintf(stderr, "sesame: -r (reidentify) needs --seed <N> (the deidentify seed)\n"); return usage_deidentify(); }
+
+    {   /* resolve the IDAT file(s): a .idat[.gz] is one file, else a prefix pair */
+        size_t il = strlen(input);
+        int is_idat = (il >= 5 && !strcmp(input + il - 5, ".idat")) ||
+                      (il >= 8 && !strcmp(input + il - 8, ".idat.gz"));
+        if (is_idat) files[nf++] = input;
+        else {
+            if (resolve_idat(input, "Grn", grn, sizeof grn) == 0) files[nf++] = grn;
+            if (resolve_idat(input, "Red", red, sizeof red) == 0) files[nf++] = red;
+            if (nf == 0) { fprintf(stderr, "sesame: no IDATs found for prefix %s\n", input); return 1; }
+        }
+    }
+    if (outpath && nf != 1) { fprintf(stderr, "sesame: --out/<out> only with a single .idat input\n"); return 1; }
+
+    if (!idxpath) {                                   /* platform -> ordering (rs M/U) */
+        if (!platform) {
+            sesame_idat_t *g0 = NULL; int32_t beads;
+            if (sesame_idat_read(files[0], &g0, &e) != SESAME_OK) { fprintf(stderr, "sesame: %s\n", e.msg); return 1; }
+            beads = g0->n; platform = sesame_platform_from_beads(beads); sesame_idat_free(g0);
+            if (!platform) { fprintf(stderr, "sesame: cannot identify platform from %d beads; pass --platform or --index\n", beads); return 1; }
+            fprintf(stderr, "sesame: detected %s\n", platform);
+        }
+        if (sesame_index_locate(platform, resolved, sizeof resolved) != 0) {
+            char help[1024]; sesame_index_missing_help(platform, help, sizeof help);
+            fprintf(stderr, "sesame: %s\n", help); return 1;
+        }
+        idxpath = resolved;
+    }
+    if (!(ix = sesame_index_open(idxpath, &e))) { fprintf(stderr, "sesame: %s\n", e.msg); return 1; }
+
+    for (i = 0; i < nf; i++) {
+        int r;
+        if (outpath) snprintf(out, sizeof out, "%s", outpath);
+        else deid_outname(files[i], tag, out, sizeof out);
+        r = reidentify ? sesame_reidentify(files[i], out, ix, (uint64_t)seed, &e)
+                       : sesame_deidentify(files[i], out, ix, randomize, (uint64_t)seed, &e);
+        if (r != SESAME_OK) { fprintf(stderr, "sesame: %s\n", e.msg); goto out; }
+    }
+    rc = 0;
+out:
+    sesame_index_close(ix);
+    return rc;
+}
+
 int main(int argc, char **argv)
 {
     if (argc < 2) return usage();
@@ -1478,6 +1712,8 @@ int main(int argc, char **argv)
         return cmd_cnv(argc - 2, argv + 2);
     if (strcmp(argv[1], "vcf") == 0)
         return cmd_vcf(argc - 2, argv + 2);
+    if (strcmp(argv[1], "deidentify") == 0)
+        return cmd_deidentify(argc - 2, argv + 2);
     if (strcmp(argv[1], "region") == 0)
         return cmd_region(argc - 2, argv + 2);
     if (strcmp(argv[1], "attach-probe") == 0)

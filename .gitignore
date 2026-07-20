@@ -9,3 +9,8 @@ normexp_test
 cbs_test
 mu2cg
 pipeline_dump
+
+# Platform data (ordering tables, masks, CNV normals) and bootstrap outputs.
+# These ship via GitHub Releases (index-<platform>-v<n> tags), never in git.
+/data/
+/testdata/
