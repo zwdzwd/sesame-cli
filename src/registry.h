@@ -19,10 +19,10 @@ typedef struct {
 } sesame_reg_t;
 
 static const sesame_reg_t SESAME_REGISTRY[] = {
-    { "EPIC", 1051815, "EPIC.ordering.tsv.gz", "16f82f57d563ab4f7ed4aa5c3d95d576f06f9dcd2ebf4126c9741d78384c6db6" },
-    { "EPICv2", 1105209, "EPICv2.ordering.tsv.gz", "111ba5f527027f00480b8d6fb9a932e34b2d723f137e765fe2ee8d1dfd33bbf4" },
-    { "HM450", 622399, "HM450.ordering.tsv.gz", "804a56c6d90f6ba80a65e21a6b4a67530af88eb87b453cade4fa4e17f437176e" },
-    { "MSA", 384497, "MSA.ordering.tsv.gz", "d1dd7dcead09cdba4bd7a076cd6eef0eb3a70bbe5babccf977ded194fb4fd600" },
+    { "EPIC", 1051815, "EPIC.ordering.tsv.gz", "a50d593bb904ab30e7602fb62ff404fa4d639bf951712dda4899eb8d543c6c8c" },
+    { "EPICv2", 1105209, "EPICv2.ordering.tsv.gz", "06139afa41798e1655b7a237903869352b67aaebc8c7be33a1410046500ed842" },
+    { "HM450", 622399, "HM450.ordering.tsv.gz", "6fd4845dae5c668f16b1fd0343b8e3eb7500507856384cccf4f9fc1a84871500" },
+    { "MSA", 384497, "MSA.ordering.tsv.gz", "68198ff2da93346a3d43e5191f0eb7b1db636859780bd794e2a3776eded3175b" },
     { NULL, 0, NULL, NULL }
 };
 

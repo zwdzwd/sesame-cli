@@ -7,13 +7,13 @@
  *    NaN with the mean of up to `max_neighbors` nearest non-missing probes
  *    within `max_dist` bp, searched in the 5'->3' direction of the probe's
  *    strand (R resizes each missing range start-anchored + strand-aware, then
- *    findOverlaps -- strand-specific, '*' matching either -- against the
- *    non-missing probes). Ties at the neighbor cutoff are all kept (slice_min
- *    with_ties). Unmapped probes (manifest seqnames '*') are LEFT NA: R places
- *    them all at a shared 0 position so they "neighbour" each other and get the
- *    mean of all unmapped betas -- a meaningless artifact we decline to copy.
- *    imputeBetas (the celltype-reference median path) needs a shipped reference
- *    panel and is not ported.
+ *    findOverlaps -- strand-specific -- against the non-missing probes). Ties at
+ *    the neighbor cutoff are all kept (slice_min with_ties). Uses the store's
+ *    coord table, which equals sesameData's manifest coords for every mapQ>=1
+ *    probe, so mapped probes match R; the two disagree only on mapQ=0 (multi-
+ *    mapping) probes. Unmapped probes are LEFT NA rather than copy R's artifact
+ *    of placing them all at a shared 0 position and averaging. imputeBetas (the
+ *    celltype-reference median path) needs a shipped reference panel; not ported.
  *
  * SPDX-License-Identifier: AGPL-3.0-or-later
  * Copyright (C) 2026-present Wanding Zhou
@@ -72,11 +72,17 @@ static int coord_cmp(const void *x, const void *y)
     return a->idx < b->idx ? -1 : a->idx > b->idx ? 1 : 0;
 }
 
-/* Load the mapped-coordinate table (chrm, beg, end, strand -- 1-based inclusive,
- * as sesameData_getManifestGRanges) positional in the ordering. cid[i] is a
- * small chromosome id (-1 if unmapped), beg[i]/end[i] the mapped range, plus[i]
- * non-zero if '+' strand. */
-/* strand code: 0 = '-', 1 = '+', 2 = '*' (unstranded; overlaps either strand). */
+/* Load the probe coordinate table (CpG_chrm, CpG_beg, strand, mapQ -- the same
+ * <plat>.<genome>.coord.tsv.gz `region` uses), positional in the ordering. cid[i]
+ * is a small chromosome id (-1 if unmapped), beg[i]/end[i] the 1-based inclusive
+ * CpG range (CpG_beg is 0-based, so beg = CpG_beg+1, end = CpG_beg+2 -- the
+ * range GRanges reports), strnd[i] the strand code (0 '-', 1 '+', 2 other).
+ *
+ * This is the confidently-mapped position for every mapQ>=1 probe -- identical
+ * to sesameData_getManifestGRanges there, so neighbour selection matches R. The
+ * two annotations disagree only on mapQ=0 (multi-/non-mapping) probes, which
+ * impute to noise either way. */
+/* strand code: 0 = '-', 1 = '+', 2 = other/unstranded. */
 static int load_coords_strand(const char *path, int32_t np, int32_t *cid,
                               long *beg, long *end, uint8_t *strnd, sesame_err_t *err)
 {
@@ -91,10 +97,11 @@ static int load_coords_strand(const char *path, int32_t np, int32_t *cid,
         if (row >= np) { row++; continue; }
         tok[nt++] = p;
         while (*p && nt < 4) { if (*p == '\t') { *p = '\0'; tok[nt++] = p+1; } p++; }
-        if (nt < 4 || tok[0][0]=='\0' || !strcmp(tok[0],"NA") || !strcmp(tok[0],"*")) {
+        if (nt < 3 || tok[0][0]=='\0' || !strcmp(tok[0],"NA") || !strcmp(tok[0],"*")) {
             cid[row]=-1; beg[row]=-1; end[row]=-1; strnd[row]=2;
         } else {
             int32_t k, found = -1;
+            long cb = strtol(tok[1], NULL, 10);        /* CpG_beg, 0-based */
             for (k = 0; k < nchrom; k++) if (!strcmp(names[k], tok[0])) { found = k; break; }
             if (found < 0) {
                 if (nchrom == ncap) {
@@ -106,9 +113,9 @@ static int load_coords_strand(const char *path, int32_t np, int32_t *cid,
                 snprintf(names[nchrom], 64, "%s", tok[0]); found = nchrom++;
             }
             cid[row] = found;
-            beg[row] = strtol(tok[1], NULL, 10);
-            end[row] = strtol(tok[2], NULL, 10);
-            strnd[row] = (tok[3][0]=='-') ? 0 : (tok[3][0]=='+') ? 1 : 2;
+            beg[row] = cb + 1;                          /* 1-based start */
+            end[row] = cb + 2;                          /* CpG spans two bases */
+            strnd[row] = (tok[2][0]=='-') ? 0 : (tok[2][0]=='+') ? 1 : 2;
         }
         row++;
     }

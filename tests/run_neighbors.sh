@@ -1,12 +1,13 @@
 #!/bin/sh
 # imputeBetasByGenomicNeighbors: `impute --method neighbors` fills each missing
 # MAPPED probe with the mean of its nearest same-strand non-missing genomic
-# neighbours (manifest-mapped coords). Compared to R's imputeBetasByGenomicNeighbors
-# on C's own betas: every MAPPED missing probe must match (imputed-or-not, value
-# within float32), C must never impute one R leaves NA, and the only probes R
-# imputes that C does not must be UNMAPPED ('*') -- which C deliberately leaves NA
-# (R's shared-0-position artifact). Needs a store with the ordering + mapcoord
-# asset, yame, pipeline_dump, R, and an IDAT.
+# neighbours, using the store's coord table. Since the coord table matches
+# sesameData's manifest for every mapQ>=1 probe but not for mapQ=0 ones, we do
+# NOT compare to R's imputeBetasByGenomicNeighbors directly (that reads the
+# manifest); instead we replicate R's exact algorithm -- resize/findOverlaps/
+# slice_min -- on a GRanges built from the SAME coord table, so any difference is
+# a C algorithm bug, not a coordinate-source difference. Every mapped probe must
+# match (imputed-or-not, value within float32); unmapped probes stay NA.
 set -eu
 
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -26,40 +27,50 @@ command -v Rscript >/dev/null 2>&1 || { echo "SKIP neighbors: no Rscript"; exit 
 
 plat=EPICv2
 ord="$store/$plat/$plat.ordering.tsv.gz"
-mc="$store/$plat/$plat.hg38.mapcoord.tsv.gz"
+co="$store/$plat/$plat.hg38.coord.tsv.gz"
 pfx="$idats/$plat/206909630040_R03C01"
 [ -f "$ord" ] || { echo "SKIP neighbors: no $ord"; exit 0; }
-[ -f "$mc" ]  || { echo "SKIP neighbors: no $mc (run export_manifest_coords.R)"; exit 0; }
+[ -f "$co" ]  || { echo "SKIP neighbors: no $co"; exit 0; }
 if [ ! -f "$pfx"_Grn.idat ] && [ ! -f "$pfx"_Grn.idat.gz ]; then
     echo "SKIP neighbors: no IDAT $pfx"; exit 0; fi
 
 SESAME_INDEX_DIR="$store" "$bin" preprocess --platform $plat --output beta \
     --out "$work/pp" "$pfx" 2>/dev/null
 SESAME_INDEX_DIR="$store" "$dump" --prep QCDPB --what beta "$pfx" 2>/dev/null > "$work/src.txt"
-"$bin" impute --method neighbors --platform $plat --coords "$mc" \
+"$bin" impute --method neighbors --platform $plat --coords "$co" \
     "$work/pp/beta.cg" "$work/out.cg" 2>/dev/null
 "$yame" unpack "$work/out.cg" 2>/dev/null > "$work/vals.txt"
 zcat < "$ord" | tail -n +2 | cut -f1 > "$work/ids.txt"
 paste "$work/ids.txt" "$work/vals.txt" > "$work/c.txt"
 
-if Rscript --vanilla - "$plat" "$work/src.txt" "$work/c.txt" <<'PY'
-suppressMessages(library(sesame)); suppressMessages(library(GenomicRanges))
-a <- commandArgs(TRUE); plat<-a[1]
-sv <- read.table(a[2], colClasses=c("character","numeric")); b<-setNames(sv$V2, sv$V1)
-ri <- imputeBetasByGenomicNeighbors(b, plat)
-cc <- read.table(a[3], colClasses=c("character","numeric")); ci<-setNames(cc$V2, cc$V1)
-mft <- sesameData_getManifestGRanges(plat)
-mapped <- setNames(as.character(seqnames(mft)) != "*", names(mft))
-miss <- names(b)[is.na(b)]; miss <- miss[miss %in% names(ci) & miss %in% names(ri)]
-mm <- miss[mapped[miss]]                          # mapped missing probes
-conly <- sum(!is.na(ci[miss]) & is.na(ri[miss]))  # C imputes, R doesn't (must be 0)
-ron   <- miss[is.na(ci[miss]) & !is.na(ri[miss])] # R imputes, C doesn't
-ron_unmapped_only <- all(!mapped[ron])
-dm <- abs(ri[mm]-ci[mm]); dm <- dm[!is.na(dm)]
-mapped_namis <- sum(xor(is.na(ri[mm]), is.na(ci[mm])))
-cat(sprintf("neighbors: mapped-miss=%d max|diff|=%.2e mapped-NAmis=%d Conly=%d Ronly=%d(all-unmapped=%s)\n",
-    length(mm), if(length(dm))max(dm)else 0, mapped_namis, conly, length(ron), ron_unmapped_only))
-if ((length(dm) && max(dm) > 2e-3) || mapped_namis != 0 || conly != 0 || !ron_unmapped_only) {
-    cat("FAIL: neighbors diverges on mapped probes\n"); quit(status=1) }
+if Rscript --vanilla - "$co" "$work/ids.txt" "$work/src.txt" "$work/c.txt" <<'PY'
+suppressMessages({library(GenomicRanges); library(dplyr)})
+a <- commandArgs(TRUE)
+ids <- readLines(a[2])
+co  <- read.table(gzfile(a[1]), header=TRUE, sep="\t", stringsAsFactors=FALSE)   # CpG_chrm CpG_beg strand mapQ
+sv  <- read.table(a[3], colClasses=c("character","numeric")); b <- setNames(sv$V2, sv$V1)
+cc  <- read.table(a[4], colClasses=c("character","numeric")); ci <- setNames(cc$V2, cc$V1)
+b <- b[ids]
+mapped <- !(is.na(co$CpG_chrm) | co$CpG_chrm %in% c("NA","*",""))
+# GRanges from coord: 1-based [CpG_beg+1, CpG_beg+2], as the C loader derives.
+mft <- GRanges(co$CpG_chrm[mapped],
+               IRanges(as.integer(co$CpG_beg[mapped])+1L, as.integer(co$CpG_beg[mapped])+2L),
+               strand=co$strand[mapped]); names(mft) <- ids[mapped]
+mm  <- mft[names(mft) %in% names(which(is.na(b)))]
+nm  <- mft[names(mft) %in% names(which(!is.na(b)))]
+idx <- findOverlaps(resize(mm, 10000), nm)
+gm  <- mm[queryHits(idx)]; gn <- nm[subjectHits(idx)]
+df  <- tibble(cg=names(gm), beg_m=start(gm), end_m=end(gm),
+              cg_n=names(gn), beg_n=start(gn), end_n=end(gn))
+df$dist  <- pmax(df$beg_m - df$end_n - 1, df$beg_n - df$end_m - 1)
+df$betas <- b[df$cg_n]
+res <- summarise(slice_min(group_by(df, cg), n=3, order_by=dist), mb=mean(betas), .groups="drop")
+exp <- b; exp[res$cg] <- res$mb                       # reference imputation on coord
+mmm <- ids[mapped]; mmm <- mmm[is.na(b[mmm])]          # mapped missing probes
+d   <- abs(exp[mmm]-ci[mmm]); d <- d[!is.na(d)]
+namis <- sum(xor(is.na(exp[mmm]), is.na(ci[mmm])))
+cat(sprintf("ok   neighbors: mapped-miss=%d max|diff|=%.2e NA-mismatch=%d\n",
+            length(mmm), if(length(d))max(d)else 0, namis))
+if ((length(d) && max(d) > 2e-3) || namis != 0) { cat("FAIL: neighbors diverges from the coord-algorithm reference\n"); quit(status=1) }
 PY
 then echo; echo "passed 1, failed 0"; else echo; echo "passed 0, failed 1"; exit 1; fi

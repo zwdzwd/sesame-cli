@@ -247,8 +247,9 @@ static int usage_impute(void)
       "  neighbors  imputeBetasByGenomicNeighbors: replace each missing probe with\n"
       "             the mean of its nearest non-missing genomic neighbours.\n"
       "    --platform P       EPIC | EPICv2 | HM450 | MSA (for the coord table).\n"
-      "    --coords FILE      Mapped-coordinate .tsv.gz (default: the store's\n"
-      "                         <P>.<genome>.mapcoord.tsv.gz -- the manifest mapping).\n"
+      "    --coords FILE      Probe coordinate .tsv.gz (default: the store's\n"
+      "                         <P>.<genome>.coord.tsv.gz). Matches R for mapQ>=1\n"
+      "                         probes; differs only on mapQ=0 (multi-mapping) ones.\n"
       "    --genome BUILD     Genome build (default hg38).\n"
       "    --max-neighbors N  Up to N nearest neighbours (default 3).\n"
       "    --max-dist BP      Search window in bp (default 10000).\n",
@@ -1692,7 +1693,7 @@ static int cmd_impute(int argc, char **argv)
         if (!coords) {
             if (!platform) { fprintf(stderr, "sesame: impute --method neighbors needs --coords or --platform\n"); goto out; }
             sesame_store_dir(store, sizeof store);
-            snprintf(cbuf, sizeof cbuf, "%s/%s/%s.%s.mapcoord.tsv.gz", store, platform, platform, genome);
+            snprintf(cbuf, sizeof cbuf, "%s/%s/%s.%s.coord.tsv.gz", store, platform, platform, genome);
             coords = cbuf;
         }
         if (sesame_impute_neighbors(mat, nprobe, nsamp, coords, max_neighbors, max_dist, &e) != SESAME_OK) {
