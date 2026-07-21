@@ -12,7 +12,7 @@
 #define SESAME_H
 
 /* Keep in sync with conda-recipe/meta.yaml and the git release tag. */
-#define SESAME_VERSION "0.1.0"
+#define SESAME_VERSION "0.2.0"
 
 #include <stdint.h>
 #include <stddef.h>
@@ -206,7 +206,8 @@ sesame_sigdf_t *sesame_sigdf_dup(const sesame_sigdf_t *sdf);
 
 /* --------------------------------------------------------------- prep ---
  *
- * prepSesame steps. Order matters (R/open.R:30-35). Only C is implemented.
+ * prepSesame steps. Order matters (R/open.R:30-35). Q, C, D, E, P, B are all
+ * implemented; detectionPnegEcdf is exposed separately (preprocess --detection).
  */
 
 /* Q -- load the recommended quality mask for a platform as a 0/1 vector aligned
@@ -409,7 +410,8 @@ int sesame_read_cg_total(const char *path, double **mat_out, int32_t *nprobe_out
  *
  * The sesameQC panel (R sesameQC_calcStats), computed from a *raw* SigDF. Each
  * metric is one field, tagged I (integer count) or D (real) for formatting. The
- * groups mirror R/QC.R: detection, numProbes, intensity, channel, dyeBias, betas.
+ * groups mirror R/QC.R: detection, numProbes, intensity, channel, dyeBias (incl.
+ * GCT, bisConversionControl), betas.
  *
  * Two faithful-but-noted differences (see NUMERICS.md):
  *  - the detection group runs pOOBAH internally, so it carries the same mask

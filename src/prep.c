@@ -1,6 +1,6 @@
 /* prep.c -- preprocessing steps (the prepSesame codes).
  *
- * Implemented: Q, C, D, P, B (the full QCDPB pipeline).
+ * Implemented: Q, C, D, E, P, B (the full QCDPB pipeline, plus E = dyeBiasL).
  *
  * SPDX-License-Identifier: AGPL-3.0-or-later
  *

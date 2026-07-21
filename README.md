@@ -85,7 +85,7 @@ sesame preprocess   [options] <prefix|dir> [...]       # IDAT -> YAME .cg (+ qc.
 sesame dml          --betas <beta.cg|matrix.tsv> (--formula .. --meta .. | --design ..)
 sesame cnv          [--probes] [--platform P] <target.cg> <segments.tsv> <bins|probes.tsv>
 sesame vcf          <prefix> [--platform P] --snp <snp.tsv.gz>     # SNP genotypes -> VCF
-sesame liftover     --to <platform> --platform <src> <in.cg> <out.cg>  # cross-platform betas (mLiftOver)
+sesame mliftover    --to <platform> --platform <src> <in.cg> <out.cg>  # cross-platform betas (mLiftOver)
 sesame impute       --method <mean|neighbors> <in.cg> <out.cg>    # fill NA betas
 sesame region       (<chr:beg-end>|--gene NAME) --betas <beta.cg> # region betas -> long-form TSV
 sesame deidentify   [--randomize|-r --seed N] <prefix|idat>        # strip SNP fingerprint from IDAT

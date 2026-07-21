@@ -306,6 +306,35 @@ overlapping `rs`) — the ~99% bulk that carry no known variant and essentially
 always call 0/0 — keeping the rs and channel-switching probes (883 of 127,572 on
 EPICv2). The default emits the full set, matching R.
 
+## 0.2.0 ports — fidelity and the one divergence
+
+Each was validated against R with a differential test (`tests/run_*.sh`):
+
+| feature | interface | R oracle | result |
+|---|---|---|---|
+| `dyeBiasL` | prep code `E` | `dyeBiasL(inferInfiniumIChannel(sdf))` | bit-identical (≤1 ULP), EPICv2+MSA. Only Inf-II betas move (per-channel scaling leaves Inf-I `M/(M+U)` invariant). |
+| `detectionPnegEcdf` | `preprocess --detection pneg` | `detectionPnegEcdf(sdf, return.pval=TRUE)` | ≤1 ULP on every real probe. C additionally emits `p=1` for all-NA control probes R's SigDF omits. |
+| `betasCollapseToPfx` | `preprocess --collapse` | `betasCollapseToPfx(betas)` | exact (prefix set, NA pattern, values) — validated on C's own betas so the `.cg` float32 rounding is the only residual. |
+| `mLiftOver` | `sesame mliftover` | `mLiftOver(betas, target, source)` | exact both directions (EPICv2↔EPIC): identical target set, order, NA pattern, and first-match choice. |
+| `imputeBetasMatrixByMean` | `impute --method mean` | `imputeBetasMatrixByMean(mx, axis)` | exact (axis=probe 0.0; axis=sample float32). |
+| `bisConversionControl` (GCT) | `qc.tsv` `GCT` column | `bisConversionControl(sdf)` | ~1e-10 on EPIC/HM450 (the platforms whose `probeInfo` carries the Type-I extension lists; NA elsewhere, as in R). |
+
+**imputeBetasByGenomicNeighbors** (`impute --method neighbors`) is the one with a
+noted divergence. The algorithm matches R exactly — strand-aware, start-anchored
+`resize` + **strand-specific** `findOverlaps` + `slice_min` with ties — verified
+against a reference replication of R's algorithm on identical coordinates
+(`tests/run_neighbors.sh`, 50,024 mapped EPICv2 probes, ≤ float32). Two points:
+
+- **Coordinate source.** R reads `sesameData_getManifestGRanges`; the CLI reads the
+  store's `<plat>.<genome>.coord.tsv.gz`. These are the same mapping for **every
+  mapQ≥1 probe** and disagree only on **mapQ=0** (multi-/non-mapping) probes, which
+  impute to noise regardless. So mapped, confidently-placed probes match R; the
+  ~4% of imputed probes that don't all trace to a mapQ=0 probe in the probe or its
+  neighbourhood.
+- **Unmapped probes are left NA.** R places all unmapped probes at a shared
+  position 0 so they "neighbour" each other and receive the mean of all unmapped
+  betas — a meaningless artifact the CLI declines to reproduce.
+
 ## Observations about the R implementation (not divergences)
 
 **Ordering files are sorted by Probe_ID under R's *locale* collation, not byte

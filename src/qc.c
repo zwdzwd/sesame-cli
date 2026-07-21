@@ -1,6 +1,7 @@
 /* qc.c -- the sesameQC panel (R sesameQC_calcStats), computed from a raw SigDF.
  *
- * Groups mirror R/QC.R: detection, numProbes, intensity, channel, dyeBias, betas.
+ * Groups mirror R/QC.R: detection, numProbes, intensity, channel, dyeBias (incl.
+ * the GCT bisulfite-conversion metric), betas.
  * Two faithful-but-noted differences live here (see NUMERICS.md):
  *   - detection runs pOOBAH internally (same mask lineage as P), and num_dtna
  *     counts probes with no signal in *either* channel -- the D2 fix means R's

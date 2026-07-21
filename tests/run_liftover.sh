@@ -19,8 +19,8 @@ trap 'rm -rf "$work"' EXIT
 
 [ -x "$bin" ]  || { echo "FAIL: $bin not built"; exit 1; }
 [ -x "$dump" ] || { echo "FAIL: $dump not built (make pipeline_dump)"; exit 1; }
-[ -x "$yame" ] || { echo "SKIP liftover: no $yame"; exit 0; }
-command -v Rscript >/dev/null 2>&1 || { echo "SKIP liftover: no Rscript"; exit 0; }
+[ -x "$yame" ] || { echo "SKIP mLiftOver: no $yame"; exit 0; }
+command -v Rscript >/dev/null 2>&1 || { echo "SKIP mLiftOver: no Rscript"; exit 0; }
 
 find_ord() {   # echo the first existing ordering for platform $1
     for c in "$store/$1/$1.ordering.tsv.gz" "$root/testdata/$1.ordering.tsv.gz"; do
@@ -39,7 +39,7 @@ run_pair() {
 
     "$bin" preprocess --platform "$sp" --index "$so" --output beta --prep "" \
         --out "$work/pp" "$pfx" 2>/dev/null
-    "$bin" liftover --to "$tp" --platform "$sp" --index "$so" --index-to "$to" \
+    "$bin" mliftover --to "$tp" --platform "$sp" --index "$so" --index-to "$to" \
         "$work/pp/beta.cg" "$work/out.cg" 2>/dev/null
     "$yame" unpack "$work/out.cg" 2>/dev/null > "$work/vals.txt"
     zcat < "$to" | tail -n +2 | cut -f1 > "$work/tids.txt"
@@ -58,7 +58,7 @@ namis <- sum(xor(is.na(rl[ids]), is.na(cL[ids])))
 d <- abs(rl[ids]-cL[ids]); d <- d[!is.na(d)]; mx <- if(length(d)) max(d) else 0
 cat(sprintf("ok   %-6s -> %-6s: %d probes, set-diff=%d NAmis=%d max|diff|=%.2e\n",
             sp, tp, length(ids), ro+co, namis, mx))
-if (ro+co != 0 || namis != 0 || mx > 2e-3) { cat("FAIL: liftover diverges\n"); quit(status=1) }
+if (ro+co != 0 || namis != 0 || mx > 2e-3) { cat("FAIL: mLiftOver diverges\n"); quit(status=1) }
 PY
     then PASS=$((PASS+1)); else sed 's/^/    /' "$work/r.err" | head -4; FAIL=$((FAIL+1)); fi
 }

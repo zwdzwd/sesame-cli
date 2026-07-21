@@ -38,7 +38,7 @@ static int usage(void)
       "  cnv            Copy number: log2 ratio vs a normal panel + CBS segmentation\n"
       "  vcf            Genotype the SNP probes into a VCF (formatVCF)\n"
       "  region         Extract a region's betas as long-form TSV for plotting\n"
-      "  liftover       Lift a beta.cg to another platform (EPICv2<->EPIC<->HM450)\n"
+      "  mliftover      Lift a beta.cg to another platform (EPICv2<->EPIC<->HM450)\n"
       "  impute         Fill missing betas (matrix mean or genomic neighbours)\n"
       "\n"
       "Inspect / convert\n"
@@ -213,7 +213,7 @@ static int usage_region(void)
 static int usage_liftover(void)
 {
     fputs(
-      "Usage: sesame liftover --to <platform> [options] <in.cg> <out.cg>\n"
+      "Usage: sesame mliftover --to <platform> [options] <in.cg> <out.cg>\n"
       "\n"
       "  Lift a beta.cg from one Infinium platform to another (mLiftOver), by a\n"
       "  probe-ID prefix join: EPICv2/MSA carry a _suffix that EPIC/HM450/HM27 lack,\n"
@@ -223,7 +223,8 @@ static int usage_liftover(void)
       "\n"
       "Options:\n"
       "  --to P             Target platform: EPIC | EPICv2 | HM450 | MSA (required).\n"
-      "  --platform P       Source platform (required, sets the join direction).\n"
+      "  --platform P       Source platform (sets the join direction; inferred from\n"
+      "                       --index's filename if omitted).\n"
       "  --index FILE       Source ordering .tsv.gz (default: the store's).\n"
       "  --index-to FILE    Target ordering .tsv.gz (default: the store's).\n"
       "\n"
@@ -343,7 +344,7 @@ static int route_usage(const char *cmd)
     if (!strcmp(cmd, "cnv"))          return usage_cnv();
     if (!strcmp(cmd, "vcf"))          return usage_vcf();
     if (!strcmp(cmd, "region"))       return usage_region();
-    if (!strcmp(cmd, "liftover"))     return usage_liftover();
+    if (!strcmp(cmd, "mliftover"))    return usage_liftover();
     if (!strcmp(cmd, "impute"))       return usage_impute();
     if (!strcmp(cmd, "deidentify")) return usage_deidentify();
     if (!strcmp(cmd, "attach-probe")) return usage_attach();
@@ -1604,22 +1605,22 @@ static int cmd_liftover(int argc, char **argv)
         else if (argv[i][0] == '-' && argv[i][1] != '\0') { fprintf(stderr, "sesame: unknown option %s\n", argv[i]); return usage_liftover(); }
         else if (!inpath) inpath = argv[i];
         else if (!outpath) outpath = argv[i];
-        else { fprintf(stderr, "sesame: liftover takes <in.cg> <out.cg>\n"); return usage_liftover(); }
+        else { fprintf(stderr, "sesame: mliftover takes <in.cg> <out.cg>\n"); return usage_liftover(); }
     }
     if (!inpath || !outpath || !tgt_plat) {
-        fprintf(stderr, "sesame: liftover needs --to <platform>, <in.cg> and <out.cg>\n");
+        fprintf(stderr, "sesame: mliftover needs --to <platform>, <in.cg> and <out.cg>\n");
         return usage_liftover();
     }
 
     if (!src_idx) {
-        if (!src_plat) { fprintf(stderr, "sesame: liftover needs --platform or --index for the source\n"); return 1; }
+        if (!src_plat) { fprintf(stderr, "sesame: mliftover needs --platform or --index for the source\n"); return 1; }
         if (sesame_index_locate(src_plat, sres, sizeof sres) != 0) {
             char h[1024]; sesame_index_missing_help(src_plat, h, sizeof h);
             fprintf(stderr, "sesame: %s\n", h); return 1;
         }
         src_idx = sres;
     } else if (!src_plat) src_plat = platform_from_basename(src_idx);
-    if (!src_plat) { fprintf(stderr, "sesame: liftover needs --platform for the source (sets the join direction)\n"); return 1; }
+    if (!src_plat) { fprintf(stderr, "sesame: mliftover needs --platform for the source (sets the join direction)\n"); return 1; }
 
     if (!tgt_idx) {
         if (sesame_index_locate(tgt_plat, tres, sizeof tres) != 0) {
@@ -1937,7 +1938,7 @@ int main(int argc, char **argv)
         return cmd_deidentify(argc - 2, argv + 2);
     if (strcmp(argv[1], "region") == 0)
         return cmd_region(argc - 2, argv + 2);
-    if (strcmp(argv[1], "liftover") == 0)
+    if (strcmp(argv[1], "mliftover") == 0)
         return cmd_liftover(argc - 2, argv + 2);
     if (strcmp(argv[1], "impute") == 0)
         return cmd_impute(argc - 2, argv + 2);

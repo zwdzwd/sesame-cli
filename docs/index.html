@@ -27,7 +27,19 @@
   h1 b{font-weight:800}
   .badge{margin-left:9px;font-size:.72rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
      color:var(--accent);background:var(--accent-soft);border:1px solid var(--line);padding:2px 8px;border-radius:20px;vertical-align:middle}
+  .badge.ver{margin-left:6px;color:var(--muted);background:transparent;text-transform:none;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
   .expand{color:var(--muted);margin:8px 0 12px;font-size:.9rem;max-width:78ch}
+  /* install: the command itself is the button — click to copy */
+  .install{display:inline-flex;align-items:stretch;gap:0;border:1px solid var(--accent);border-radius:6px;overflow:hidden;margin:2px 0 12px}
+  #copy{font:inherit;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.76rem;cursor:pointer;border:0;
+     color:var(--code-fg);background:var(--code-bg);padding:.28em .55em;line-height:1.1;display:inline-flex;align-items:center;gap:.45em;white-space:nowrap}
+  #copy:hover{filter:brightness(1.15)}
+  #copy:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  #copy .ico::before{content:"⧉";opacity:.7}
+  #copy.done .ico::before{content:"✓";opacity:1;color:var(--ok)}
+  .install .ana{display:inline-flex;align-items:center;padding:.28em .5em;font-size:.78em;text-decoration:none;
+     color:var(--accent);background:var(--accent-soft);border-left:1px solid var(--accent)}
+  .install .ana:hover{filter:brightness(.97)}
   .links{font-size:.85rem;color:var(--muted)}
   .links a{font-weight:600}.links span{opacity:.4;margin:0 8px}
   /* masonry: up to 3 command cards per row on desktop */
@@ -63,6 +75,14 @@
   .full h3{font-size:.8rem;margin:12px 0 6px;color:var(--fg);font-weight:700}
   .cols{display:grid;grid-template-columns:1fr 1fr;gap:14px 18px}
   @media(max-width:720px){.cols{grid-template-columns:1fr}}
+  /* citation list */
+  .cite{list-style:none;padding:0;margin:0;display:grid;grid-template-columns:1fr 1fr;gap:10px 20px}
+  @media(max-width:720px){.cite{grid-template-columns:1fr}}
+  .cite li{font-size:.83rem;color:var(--muted);line-height:1.42;padding-left:12px;border-left:2px solid var(--accent-soft)}
+  .cite .what{color:var(--accent);font-weight:700}
+  .cite i{color:var(--fg)}
+  .cite a{color:var(--accent);text-decoration:none;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9em}
+  .cite a:hover{text-decoration:underline}
   /* gallery: uniform limited cards; figure keeps its aspect; zoom for the full image */
   h2.galh{font-size:1.1rem;margin:26px 0 12px;letter-spacing:-.01em}
   h2.galh .m{color:var(--muted);font-weight:400;font-size:.85rem}
@@ -98,11 +118,16 @@
 <div class="wrap">
 
 <header>
-  <h1><b>SE</b>nsible <b>S</b>tep-wise <b>A</b>nalysis of DNA <b>ME</b>thylation</h1> <span class="badge">cli</span>
+  <h1><b>SE</b>nsible <b>S</b>tep-wise <b>A</b>nalysis of DNA <b>ME</b>thylation</h1> <span class="badge">cli</span><span class="badge ver">v0.2.0</span>
   <p class="expand">Infinium analysis made simpler and faster.</p>
+  <div class="install">
+    <button id="copy" data-cmd="conda install -c zhou-lab -c conda-forge sesame-cli"
+            title="Copy to clipboard"><span class="ico"></span>conda install -c zhou-lab -c conda-forge sesame-cli</button>
+    <a class="ana" href="https://anaconda.org/zhou-lab/sesame-cli"
+       title="anaconda.org/zhou-lab/sesame-cli" rel="noopener">↗</a>
+  </div>
   <p class="links">
     <a href="https://github.com/zwdzwd/sesame-cli">GitHub</a><span>·</span>
-    <a href="https://anaconda.org/zhou-lab/sesame-cli">conda</a><span>·</span>
     <a href="https://bioconductor.org/packages/sesame">R / Bioconductor</a><span>·</span>
     <a href="https://github.com/zhou-lab/YAME">YAME</a><span>·</span>
     <a href="https://github.com/zhou-lab/cinderplot">cinderplot</a><span>·</span>
@@ -114,11 +139,7 @@
 
   <section class="card">
     <h2>Install &amp; fetch <span class="m">— then fully offline</span></h2>
-    <pre><code><span class="cm"># conda — installs the `sesame` binary</span>
-conda install -c zhou-lab \
-  -c conda-forge sesame-cli
-
-<span class="cm"># or build from source</span>
+    <pre><code><span class="cm"># build from source (conda install is up top)</span>
 git clone --recurse-submodules \
   https://github.com/zwdzwd/sesame-cli
 cd sesame-cli &amp;&amp; make
@@ -165,6 +186,11 @@ sesame <span class="sub">preprocess</span> --output beta --out out/ \
 sample    frac_dt  frac_dt_cg  frac_dt_rs
 sampleA   0.978    0.979       1.00
 sampleB   0.994    0.995       1.00</code></pre>
+    <p style="margin-top:11px"><b>More knobs:</b> <code class="inl">--prep QCEPB</code> swaps in
+      linear dye bias (<code class="inl">E</code> = dyeBiasL); <code class="inl">--collapse</code>
+      averages EPICv2/MSA replicate probes to their cg-prefix (betasCollapseToPfx);
+      <code class="inl">--detection pneg</code> emits the negative-control-ECDF detection p;
+      and <code class="inl">GCT</code> (bisulfite conversion) joins qc.tsv on EPIC/HM450.</p>
     <figure>
       <div class="shot" tabindex="0">
         <img src="figures/beta_density.png" alt="Bimodal distribution of GM12878 beta values">
@@ -262,6 +288,23 @@ cinderplot 'out/bins.tsv
     </figure>
   </section>
 
+  <section class="card">
+    <h2>Betas utilities <span class="m">— mliftover · impute</span></h2>
+    <p>Post-process a <code class="inl">beta.cg</code> → <code class="inl">beta.cg</code>,
+      positional to the platform ordering.</p>
+    <pre><code><span class="cm"># lift betas across platforms (mLiftOver)</span>
+sesame <span class="sub">mliftover</span> --to EPIC --platform EPICv2 \
+  beta.cg beta.EPIC.cg
+
+<span class="cm"># fill NA betas (mean / genomic neighbours)</span>
+sesame <span class="sub">impute</span> --method mean beta.cg out.cg
+sesame <span class="sub">impute</span> --method neighbors \
+  --platform EPICv2 beta.cg out.cg</code></pre>
+    <p style="margin-top:11px"><b>mliftover</b> prefix-joins to the target ordering
+      (EPICv2↔EPIC↔HM450); <b>impute</b> fills NAs by the probe's cross-sample mean,
+      or the nearest same-strand genomic neighbours (imputeBetas*).</p>
+  </section>
+
 </div>
 
 <section class="full">
@@ -303,6 +346,28 @@ present  EPICv2  HM450  MSA   ·   genome hg38</code></pre>
   </div>
 </section>
 
+<section class="full">
+  <h2>Citation <span class="m">— the methods sesame-cli reimplements</span></h2>
+  <p>sesame-cli is a C reimplementation of the SeSAMe method family. Please cite the
+    work behind the parts you use:</p>
+  <ul class="cite">
+    <li><span class="what">SeSAMe / pOOBAH</span> — Zhou, Triche, Laird &amp; Shen.
+      <i>Nucleic Acids Research</i> 2018. <a href="https://doi.org/10.1093/nar/gky691">10.1093/nar/gky691</a></li>
+    <li><span class="what">noob background</span> — Triche, Weisenberger, Van Den Berg, Laird &amp; Siegmund.
+      <i>Nucleic Acids Research</i> 2013. <a href="https://doi.org/10.1093/nar/gkt090">10.1093/nar/gkt090</a></li>
+    <li><span class="what">mLiftOver</span> — Chen &amp; Zhou.
+      <i>Bioinformatics</i> 2024. <a href="https://doi.org/10.1093/bioinformatics/btae423">10.1093/bioinformatics/btae423</a></li>
+    <li><span class="what">MSA array</span> — Goldberg <i>et al.</i>
+      <i>Cell Genomics</i> 2025. <a href="https://doi.org/10.1016/j.xgen.2025.100929">10.1016/j.xgen.2025.100929</a></li>
+    <li><span class="what">ELBAR / low-input</span> — Lee <i>et al.</i>
+      <i>Nucleic Acids Research</i> 2024. <a href="https://doi.org/10.1093/nar/gkae127">10.1093/nar/gkae127</a></li>
+    <li><span class="what">Comparative epigenomes (KYCG)</span> — Ding, Kaur, Horvath &amp; Zhou.
+      <i>Briefings in Bioinformatics</i> 2023. <a href="https://doi.org/10.1093/bib/bbac617">10.1093/bib/bbac617</a></li>
+    <li><span class="what">MM285 mouse array</span> — Zhou <i>et al.</i>
+      <i>Cell Genomics</i> 2022. <a href="https://doi.org/10.1016/j.xgen.2022.100144">10.1016/j.xgen.2022.100144</a></li>
+  </ul>
+</section>
+
 <footer>
   Betas are bit-identical to R where it counts; every intentional divergence is quantified in
   <a href="https://github.com/zwdzwd/sesame-cli/blob/main/NUMERICS.md">NUMERICS.md</a>.
@@ -322,6 +387,13 @@ present  EPICv2  HM450  MSA   ·   genome hg38</code></pre>
       });
     });
   }
+  // header install box: click the command to copy it (⧉ -> ✓)
+  var ci=document.getElementById('copy');
+  if(ci)ci.addEventListener('click',function(){
+    var cmd=ci.getAttribute('data-cmd'),done=function(){ci.classList.add('done');setTimeout(function(){ci.classList.remove('done');},1400);};
+    if(navigator.clipboard){navigator.clipboard.writeText(cmd).then(done,done);}
+    else{var t=document.createElement('textarea');t.value=cmd;document.body.appendChild(t);t.select();try{document.execCommand('copy');}catch(e){}document.body.removeChild(t);done();}
+  });
   // copy button on card / storage code blocks (top-right inside)
   document.querySelectorAll('pre').forEach(function(pre){
     if(pre.closest('.code'))return;                       // gallery overlays handled below
