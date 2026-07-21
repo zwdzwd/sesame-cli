@@ -246,7 +246,7 @@ Extra `preprocess` options: `--collapse` averages EPICv2/MSA replicate probes to
 their cg-prefix in the beta output (`betasCollapseToPfx`; axis → `beta.cg.probes`);
 `--detection pneg` emits the negative-control-ECDF detection p (`detectionPnegEcdf`)
 in `pval.cg` instead of pOOBAH. The `qc.tsv` panel adds `GCT`
-(`bisConversionControl`) on EPIC/HM450.
+(`bisConversionControl`) on every platform (annotation v8.1+).
 
 Pass any subset in any order (`--prep CD` for channel + dye bias, `--prep ""` for
 raw betas). `Q`, `P`, and `B` read the `.cm` mask, so the platform must be in the

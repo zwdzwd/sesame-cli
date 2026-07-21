@@ -317,7 +317,7 @@ Each was validated against R with a differential test (`tests/run_*.sh`):
 | `betasCollapseToPfx` | `preprocess --collapse` | `betasCollapseToPfx(betas)` | exact (prefix set, NA pattern, values) — validated on C's own betas so the `.cg` float32 rounding is the only residual. |
 | `mLiftOver` | `sesame mliftover` | `mLiftOver(betas, target, source)` | exact both directions (EPICv2↔EPIC): identical target set, order, NA pattern, and first-match choice. |
 | `imputeBetasMatrixByMean` | `impute --method mean` | `imputeBetasMatrixByMean(mx, axis)` | exact (axis=probe 0.0; axis=sample float32). |
-| `bisConversionControl` (GCT) | `qc.tsv` `GCT` column | `bisConversionControl(sdf)` | ~1e-10 on EPIC/HM450 (the platforms whose `probeInfo` carries the Type-I extension lists; NA elsewhere, as in R). |
+| `bisConversionControl` (GCT) | `qc.tsv` `GCT` column | the GCT formula on the store's ext lists | arithmetic exact (~1e-10) on all platforms; **not** bit-vs-R's `probeInfo` — see note. |
 
 **imputeBetasByGenomicNeighbors** (`impute --method neighbors`) is the one with a
 noted divergence. The algorithm matches R exactly — strand-aware, start-anchored
@@ -334,6 +334,21 @@ against a reference replication of R's algorithm on identical coordinates
 - **Unmapped probes are left NA.** R places all unmapped probes at a shared
   position 0 so they "neighbour" each other and receive the mean of all unmapped
   betas — a meaningless artifact the CLI declines to reproduce.
+
+**GCT extension lists (`typeI_ext`) — a curation-lineage difference, like the Q
+mask.** The GCT ratio is `mean(green of extension-C Type-I probes) / mean(green of
+extension-A/T)`. R's `bisConversionControl` reads the extension classes from
+sesameData's `probeInfo$typeI.extC/extT` — a curated subset available only for
+EPIC/HM450. sesame-cli reads the annotation pipeline's `<plat>.typeI_ext.tsv.gz`,
+generated **uniformly for every platform** and deliberately slightly broader (on
+EPIC it classifies ~3,463 more Type-I extension probes than `probeInfo`, almost
+all additive). The **arithmetic is exact** — validated to ~1e-10 against the GCT
+formula recomputed in R on the *same* lists (`tests/run_gct.sh`, all four
+platforms) — but because the input set differs, GCT is **not** bit-identical to
+`bisConversionControl` (≈7.6e-3 on EPIC/HM450). This is the same class of
+data-version/curation difference as the Q mask above, not an arithmetic one, and
+it is what lets GCT be defined for EPICv2/MSA at all (where R has no built-in
+lists).
 
 ## Observations about the R implementation (not divergences)
 

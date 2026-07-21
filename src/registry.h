@@ -8,7 +8,7 @@
 #define SESAME_REGISTRY_H
 
 #define SESAME_BASE_URL     "https://github.com/zhou-lab/InfiniumAnnotation/raw"
-#define SESAME_DEFAULT_TAG  "v8"
+#define SESAME_DEFAULT_TAG  "v8.1"
 #define SESAME_SUMS_FILE    "SHA256SUMS"
 
 typedef struct {
@@ -19,10 +19,10 @@ typedef struct {
 } sesame_reg_t;
 
 static const sesame_reg_t SESAME_REGISTRY[] = {
-    { "EPIC", 1051815, "EPIC.ordering.tsv.gz", "a50d593bb904ab30e7602fb62ff404fa4d639bf951712dda4899eb8d543c6c8c" },
-    { "EPICv2", 1105209, "EPICv2.ordering.tsv.gz", "06139afa41798e1655b7a237903869352b67aaebc8c7be33a1410046500ed842" },
-    { "HM450", 622399, "HM450.ordering.tsv.gz", "6fd4845dae5c668f16b1fd0343b8e3eb7500507856384cccf4f9fc1a84871500" },
-    { "MSA", 384497, "MSA.ordering.tsv.gz", "68198ff2da93346a3d43e5191f0eb7b1db636859780bd794e2a3776eded3175b" },
+    { "EPIC", 1051815, "EPIC.ordering.tsv.gz", "b97d9481f07b5f39dc6424b55d686ba9baac66b80e6bfd11615a1db9ebb3b629" },
+    { "EPICv2", 1105209, "EPICv2.ordering.tsv.gz", "3a0eb8523b1a1de3194846afaeff72d9ee907edae271952e34809b1f7dce5e30" },
+    { "HM450", 622399, "HM450.ordering.tsv.gz", "8ea679ca36fb0c0b1d4acce2843c9534b2a3dfca2656cd182187178d47dcac8a" },
+    { "MSA", 384497, "MSA.ordering.tsv.gz", "16e0e3204cec42935a690860c849b8d259f29d9e634164e68f395607948a7c40" },
     { NULL, 0, NULL, NULL }
 };
 

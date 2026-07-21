@@ -453,8 +453,9 @@ typedef struct {
  * (optional, positional to the ordering, length extn) carries the Type-I
  * extension-base class per probe -- 1 = extension-C, 2 = extension-A/T, 0 = none
  * -- for the GCT bisulfite-conversion metric; pass NULL (extn 0) to leave GCT
- * NaN (e.g. EPICv2/MSA, where R also has no built-in extension lists). Does not
- * modify sdf. */
+ * NaN (no ext asset). The lists come from the annotation's <plat>.typeI_ext, a
+ * uniform superset of R's probeInfo curation (see NUMERICS.md). Does not modify
+ * sdf. */
 int sesame_qc_calc(const sesame_sigdf_t *sdf, const uint8_t *bgmask, int32_t bn,
                    const uint8_t *ext, int32_t extn,
                    sesame_qc_t *out, sesame_err_t *err);
