@@ -76,9 +76,9 @@
   .cols{display:grid;grid-template-columns:1fr 1fr;gap:14px 18px}
   @media(max-width:720px){.cols{grid-template-columns:1fr}}
   /* citation list */
-  .cite{list-style:none;padding:0;margin:0;display:grid;grid-template-columns:1fr 1fr;gap:10px 20px}
-  @media(max-width:720px){.cite{grid-template-columns:1fr}}
-  .cite li{font-size:.83rem;color:var(--muted);line-height:1.42;padding-left:12px;border-left:2px solid var(--accent-soft)}
+  .cite{list-style:none;padding:0;margin:0;column-count:2;column-gap:26px}
+  @media(max-width:720px){.cite{column-count:1}}
+  .cite li{font-size:.83rem;color:var(--muted);line-height:1.42;padding-left:12px;border-left:2px solid var(--accent-soft);break-inside:avoid;margin:0 0 11px}
   .cite .what{color:var(--accent);font-weight:700}
   .cite i{color:var(--fg)}
   .cite a{color:var(--accent);text-decoration:none;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9em}
@@ -347,21 +347,23 @@ present  EPICv2  HM450  MSA   ·   genome hg38</code></pre>
 </section>
 
 <section class="full">
-  <h2>Citation <span class="m">— the methods sesame-cli reimplements</span></h2>
+  <h2>Citation <span class="m">— the SeSAMe papers</span></h2>
   <p>sesame-cli is a C reimplementation of the SeSAMe method family. Please cite the
     work behind the parts you use:</p>
   <ul class="cite">
+    <li><span class="what">Infinium annotation &amp; masking</span> — Zhou, Laird &amp; Shen.
+      <i>Nucleic Acids Research</i> 2017. <a href="https://doi.org/10.1093/nar/gkw967">10.1093/nar/gkw967</a></li>
     <li><span class="what">SeSAMe / pOOBAH</span> — Zhou, Triche, Laird &amp; Shen.
       <i>Nucleic Acids Research</i> 2018. <a href="https://doi.org/10.1093/nar/gky691">10.1093/nar/gky691</a></li>
-    <li><span class="what">noob background</span> — Triche, Weisenberger, Van Den Berg, Laird &amp; Siegmund.
-      <i>Nucleic Acids Research</i> 2013. <a href="https://doi.org/10.1093/nar/gkt090">10.1093/nar/gkt090</a></li>
     <li><span class="what">mLiftOver</span> — Chen &amp; Zhou.
       <i>Bioinformatics</i> 2024. <a href="https://doi.org/10.1093/bioinformatics/btae423">10.1093/bioinformatics/btae423</a></li>
+    <li><span class="what">KnowYourCG (KYCG)</span> — Goldberg <i>et al.</i>
+      <i>Science Advances</i> 2025. <a href="https://doi.org/10.1126/sciadv.adw3027">10.1126/sciadv.adw3027</a></li>
     <li><span class="what">MSA array</span> — Goldberg <i>et al.</i>
       <i>Cell Genomics</i> 2025. <a href="https://doi.org/10.1016/j.xgen.2025.100929">10.1016/j.xgen.2025.100929</a></li>
     <li><span class="what">ELBAR / low-input</span> — Lee <i>et al.</i>
       <i>Nucleic Acids Research</i> 2024. <a href="https://doi.org/10.1093/nar/gkae127">10.1093/nar/gkae127</a></li>
-    <li><span class="what">Comparative epigenomes (KYCG)</span> — Ding, Kaur, Horvath &amp; Zhou.
+    <li><span class="what">Cross-species analysis</span> — Ding, Kaur, Horvath &amp; Zhou.
       <i>Briefings in Bioinformatics</i> 2023. <a href="https://doi.org/10.1093/bib/bbac617">10.1093/bib/bbac617</a></li>
     <li><span class="what">MM285 mouse array</span> — Zhou <i>et al.</i>
       <i>Cell Genomics</i> 2022. <a href="https://doi.org/10.1016/j.xgen.2022.100144">10.1016/j.xgen.2022.100144</a></li>
