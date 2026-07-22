@@ -8,15 +8,15 @@
 <style>
   :root{
     --bg:#fbfcfe;--fg:#1b2030;--muted:#5b6472;--line:#e5e8ee;--soft:#f1f3f8;--card:#ffffff;
-    --accent:#6b21a8;--accent-2:#9333ea;--accent-soft:#f3e8ff;--code-bg:#0e1424;--code-fg:#e7ecf7;--cm:#7d8aa8;--ok:#22c55e;
+    --accent:#6b21a8;--accent-2:#9333ea;--accent-soft:#f3e8ff;--on-accent:#ffffff;--code-bg:#0e1424;--code-fg:#e7ecf7;--cm:#7d8aa8;--ok:#22c55e;
     --shadow:0 1px 2px rgba(20,25,45,.04),0 6px 20px rgba(20,25,45,.05);
   }
   @media (prefers-color-scheme:dark){:root{
     --bg:#0c111c;--fg:#e7ecf7;--muted:#95a0b4;--line:#212a3b;--soft:#141b29;--card:#121826;
-    --accent:#c084fc;--accent-2:#d8b4fe;--accent-soft:#2a1e40;--code-bg:#080d18;--code-fg:#dde5f4;--cm:#6b7688;--ok:#4ade80;
+    --accent:#c084fc;--accent-2:#d8b4fe;--accent-soft:#2a1e40;--on-accent:#12081f;--code-bg:#080d18;--code-fg:#dde5f4;--cm:#6b7688;--ok:#4ade80;
     --shadow:0 1px 2px rgba(0,0,0,.25),0 8px 26px rgba(0,0,0,.30);}}
-  :root[data-theme=light]{--bg:#fbfcfe;--fg:#1b2030;--muted:#5b6472;--line:#e5e8ee;--soft:#f1f3f8;--card:#fff;--accent:#6b21a8;--accent-2:#9333ea;--accent-soft:#f3e8ff;--code-bg:#0e1424;--code-fg:#e7ecf7;--cm:#7d8aa8;--ok:#22c55e;--shadow:0 1px 2px rgba(20,25,45,.04),0 6px 20px rgba(20,25,45,.05);}
-  :root[data-theme=dark]{--bg:#0c111c;--fg:#e7ecf7;--muted:#95a0b4;--line:#212a3b;--soft:#141b29;--card:#121826;--accent:#c084fc;--accent-2:#d8b4fe;--accent-soft:#2a1e40;--code-bg:#080d18;--code-fg:#dde5f4;--cm:#6b7688;--ok:#4ade80;--shadow:0 1px 2px rgba(0,0,0,.25),0 8px 26px rgba(0,0,0,.30);}
+  :root[data-theme=light]{--bg:#fbfcfe;--fg:#1b2030;--muted:#5b6472;--line:#e5e8ee;--soft:#f1f3f8;--card:#fff;--accent:#6b21a8;--accent-2:#9333ea;--accent-soft:#f3e8ff;--on-accent:#fff;--code-bg:#0e1424;--code-fg:#e7ecf7;--cm:#7d8aa8;--ok:#22c55e;--shadow:0 1px 2px rgba(20,25,45,.04),0 6px 20px rgba(20,25,45,.05);}
+  :root[data-theme=dark]{--bg:#0c111c;--fg:#e7ecf7;--muted:#95a0b4;--line:#212a3b;--soft:#141b29;--card:#121826;--accent:#c084fc;--accent-2:#d8b4fe;--accent-soft:#2a1e40;--on-accent:#12081f;--code-bg:#080d18;--code-fg:#dde5f4;--cm:#6b7688;--ok:#4ade80;--shadow:0 1px 2px rgba(0,0,0,.25),0 8px 26px rgba(0,0,0,.30);}
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;line-height:1.5;-webkit-font-smoothing:antialiased}
   .wrap{max-width:1520px;margin:0 auto;padding:0 22px 44px}
@@ -28,18 +28,33 @@
   .badge{margin-left:9px;font-size:.72rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
      color:var(--accent);background:var(--accent-soft);border:1px solid var(--line);padding:2px 8px;border-radius:20px;vertical-align:middle}
   .badge.ver{margin-left:6px;color:var(--muted);background:transparent;text-transform:none;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  /* title row: heading, badges, install box and cite button on one wrapping line */
+  .titlerow{display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px}
+  .titlerow .badge,.titlerow .badge.ver{margin-left:0}
   .expand{color:var(--muted);margin:8px 0 12px;font-size:.9rem;max-width:78ch}
   /* install: the command itself is the button — click to copy */
-  .install{display:inline-flex;align-items:stretch;gap:0;border:1px solid var(--accent);border-radius:6px;overflow:hidden;margin:2px 0 12px}
-  #copy{font:inherit;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.76rem;cursor:pointer;border:0;
-     color:var(--code-fg);background:var(--code-bg);padding:.28em .55em;line-height:1.1;display:inline-flex;align-items:center;gap:.45em;white-space:nowrap}
-  #copy:hover{filter:brightness(1.15)}
-  #copy:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-  #copy .ico::before{content:"⧉";opacity:.7}
-  #copy.done .ico::before{content:"✓";opacity:1;color:var(--ok)}
-  .install .ana{display:inline-flex;align-items:center;padding:.28em .5em;font-size:.78em;text-decoration:none;
+  .install{display:inline-flex;align-items:stretch;gap:0;border:1px solid var(--accent);border-radius:6px;overflow:hidden;margin-left:4px}
+  #install-btn{font:inherit;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.74rem;cursor:pointer;border:0;
+     color:var(--on-accent);background:var(--accent);padding:.42em .7em;line-height:1.15;display:inline-flex;align-items:center;gap:.5em;white-space:nowrap}
+  #install-btn:hover{filter:brightness(1.08)}
+  #install-btn:focus-visible{outline:2px solid var(--fg);outline-offset:2px}
+  #install-btn .ico::before{content:"⧉";opacity:.75}
+  #install-btn.done .ico::before{content:"✓";opacity:1}
+  .install .ana{display:inline-flex;align-items:center;padding:.42em .55em;font-size:.72rem;text-decoration:none;
      color:var(--accent);background:var(--accent-soft);border-left:1px solid var(--accent)}
   .install .ana:hover{filter:brightness(.97)}
+  /* cite: a paired button — the label opens the paper, the stub copies the PMID */
+  .citebtn{display:inline-flex;align-items:stretch;border:1px solid var(--accent);border-radius:6px;overflow:hidden}
+  .citebtn a,.citebtn button{font:inherit;font-size:.74rem;line-height:1.15;padding:.42em .7em;
+     display:inline-flex;align-items:center;gap:.45em;white-space:nowrap;text-decoration:none;border:0;cursor:pointer}
+  .citebtn .paper{color:var(--on-accent);background:var(--accent);font-weight:600}
+  .citebtn .paper:hover{filter:brightness(1.08);text-decoration:none}
+  /* min-width keeps the button from resizing when the label flips to "copied" */
+  .citebtn .pmid{color:var(--accent);background:var(--accent-soft);min-width:5.2em;justify-content:center;
+     border-left:1px solid var(--accent);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  .citebtn .pmid:hover{filter:brightness(.97)}
+  .citebtn .pmid.done{color:var(--on-accent);background:var(--accent)}
+  .citebtn a:focus-visible,.citebtn button:focus-visible{outline:2px solid var(--fg);outline-offset:-2px}
   .links{font-size:.85rem;color:var(--muted)}
   .links a{font-weight:600}.links span{opacity:.4;margin:0 8px}
   /* masonry: up to 3 command cards per row on desktop */
@@ -118,14 +133,24 @@
 <div class="wrap">
 
 <header>
-  <h1><b>SE</b>nsible <b>S</b>tep-wise <b>A</b>nalysis of DNA <b>ME</b>thylation</h1> <span class="badge">cli</span><span class="badge ver">v0.2.0</span>
-  <p class="expand">Infinium analysis made simpler and faster.</p>
-  <div class="install">
-    <button id="copy" data-cmd="conda install -c zhou-lab -c conda-forge sesame-cli"
-            title="Copy to clipboard"><span class="ico"></span>conda install -c zhou-lab -c conda-forge sesame-cli</button>
-    <a class="ana" href="https://anaconda.org/zhou-lab/sesame-cli"
-       title="anaconda.org/zhou-lab/sesame-cli" rel="noopener">↗</a>
+  <div class="titlerow">
+    <h1><b>SE</b>nsible <b>S</b>tep-wise <b>A</b>nalysis of DNA <b>ME</b>thylation</h1>
+    <span class="badge">cli</span><span class="badge ver">v0.2.0</span>
+    <span class="install">
+      <button id="install-btn" type="button"
+              data-cmd="conda install -c zhou-lab -c conda-forge sesame-cli"
+              title="Copy to clipboard"><span class="ico"></span>conda install -c zhou-lab -c conda-forge sesame-cli</button>
+      <a class="ana" href="https://anaconda.org/zhou-lab/sesame-cli"
+         title="anaconda.org/zhou-lab/sesame-cli" rel="noopener">↗</a>
+    </span>
+    <span class="citebtn">
+      <a class="paper" href="https://doi.org/10.1093/nar/gky691" rel="noopener"
+         title="Zhou, Triche, Laird &amp; Shen. SeSAMe. Nucleic Acids Res 2018;46(20):e123">Cite ↗</a>
+      <button class="pmid" type="button" data-pmid="30085201"
+              title="Copy PMID to clipboard">PMID</button>
+    </span>
   </div>
+  <p class="expand">Infinium analysis made simpler and faster.</p>
   <p class="links">
     <a href="https://github.com/zwdzwd/sesame-cli">GitHub</a><span>·</span>
     <a href="https://bioconductor.org/packages/sesame">R / Bioconductor</a><span>·</span>
@@ -390,12 +415,29 @@ present  EPICv2  HM450  MSA   ·   genome hg38</code></pre>
       });
     });
   }
+  // clipboard, with a file:// and older-browser fallback
+  function copy(text,done){
+    if(navigator.clipboard){navigator.clipboard.writeText(text).then(done,done);return;}
+    var t=document.createElement('textarea');t.value=text;document.body.appendChild(t);t.select();
+    try{document.execCommand('copy');}catch(e){}
+    document.body.removeChild(t);done();
+  }
   // header install box: click the command to copy it (⧉ -> ✓)
-  var ci=document.getElementById('copy');
-  if(ci)ci.addEventListener('click',function(){
-    var cmd=ci.getAttribute('data-cmd'),done=function(){ci.classList.add('done');setTimeout(function(){ci.classList.remove('done');},1400);};
-    if(navigator.clipboard){navigator.clipboard.writeText(cmd).then(done,done);}
-    else{var t=document.createElement('textarea');t.value=cmd;document.body.appendChild(t);t.select();try{document.execCommand('copy');}catch(e){}document.body.removeChild(t);done();}
+  var ib=document.getElementById('install-btn');
+  if(ib)ib.addEventListener('click',function(){
+    copy(ib.getAttribute('data-cmd'),function(){
+      ib.classList.add('done');setTimeout(function(){ib.classList.remove('done');},1400);
+    });
+  });
+  // header cite button: the stub copies the PMID
+  document.querySelectorAll('.citebtn .pmid').forEach(function(b){
+    var label=b.textContent;
+    b.addEventListener('click',function(){
+      copy(b.getAttribute('data-pmid'),function(){
+        b.textContent='copied';b.classList.add('done');
+        setTimeout(function(){b.textContent=label;b.classList.remove('done');},1200);
+      });
+    });
   });
   // copy button on card / storage code blocks (top-right inside)
   document.querySelectorAll('pre').forEach(function(pre){
