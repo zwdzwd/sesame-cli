@@ -39,6 +39,28 @@ jobs:
       - name: Build package
         run: conda build -c conda-forge --output-folder "$RUNNER_TEMP/bld" conda-recipe/
 
+      # The runner's own glibc is far newer than what users have. If the recipe
+      # ever stops pinning the 2.17 sysroot, the binary silently picks up
+      # symbols from the runner's glibc and dies at startup on normal machines
+      # (this is exactly how 0.2.0 build 0 shipped broken). Fail the build here
+      # instead of finding out from a bug report.
+      - name: Check glibc floor (linux-64)
+        if: matrix.name == 'linux-64'
+        run: |
+          pkg=$(ls "$RUNNER_TEMP"/bld/linux-64/sesame-cli-*.conda)
+          work=$(mktemp -d); cd "$work"
+          python -c "import zipfile,sys; zipfile.ZipFile(sys.argv[1]).extractall('.')" "$pkg"
+          tar -xf pkg-*.tar.zst
+          max=$(objdump -T bin/sesame | grep -oE 'GLIBC_[0-9.]+' | sort -uV | tail -1)
+          echo "highest glibc symbol version required: $max"
+          # sort -V puts the higher of the two last; if that is not 2.17, the
+          # binary needs something newer than the pinned sysroot provides.
+          if [ "$(printf '%s\nGLIBC_2.17\n' "$max" | sort -V | tail -1)" != "GLIBC_2.17" ]; then
+            echo "::error::binary requires $max, above the pinned GLIBC_2.17 floor" >&2
+            objdump -T bin/sesame | grep -E 'GLIBC_2\.(1[89]|[2-9][0-9])' >&2 || true
+            exit 1
+          fi
+
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:

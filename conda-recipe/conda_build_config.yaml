@@ -1,0 +1,21 @@
+# Pin the C standard library the package is built against.
+#
+# Without this, `{{ compiler('c') }}` pulls conda-forge's gcc_linux-64, whose
+# dependency on `sysroot_linux-64` is UNVERSIONED -- the solver picks the newest
+# sysroot available (2.39 as of this writing). Building against glibc 2.39
+# headers makes the binary require symbols that do not exist on older systems:
+# with -D_GNU_SOURCE, glibc >= 2.38 redirects strtol/strtoll to
+# __isoc23_strtol/__isoc23_strtoll, so the shipped 0.2.0 linux-64 binary failed
+# on every host with glibc < 2.38 (RHEL 9 = 2.34, Ubuntu 22.04 = 2.35) with
+#   sesame: /lib64/libc.so.6: version `GLIBC_2.38' not found
+#
+# 2.17 (CentOS 7) is conda-forge's own pin, so the binary runs on effectively
+# any Linux still in service. Pairing this with `{{ stdlib('c') }}` in meta.yaml
+# also stamps a `__glibc >=2.17` run constraint into the package, so conda
+# refuses to install on an incompatible host instead of failing at exec time.
+c_stdlib:
+  - sysroot                    # [linux]
+  - macosx_deployment_target   # [osx]
+c_stdlib_version:
+  - "2.17"                     # [linux]
+  - "11.0"                     # [osx]

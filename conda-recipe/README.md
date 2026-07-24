@@ -67,4 +67,29 @@ git tag -a v0.1.0 -m "sesame-cli 0.1.0" && git push origin v0.1.0
 - **Dependencies.** Only zlib and libcurl (both from conda-forge, with
   `run_exports` that pin the runtime automatically). Make sure conda-forge is on
   your channel list when building.
-```
+- **glibc floor (do not remove).** `conda_build_config.yaml` pins
+  `c_stdlib_version` to **2.17** on Linux (11.0 on macOS), and `meta.yaml` lists
+  `{{ stdlib('c') }}`. Without the pin, `{{ compiler('c') }}` pulls
+  `gcc_linux-64`, whose `sysroot_linux-64` dependency is unversioned, so the
+  solver takes the newest sysroot (2.39) and the binary ends up needing symbols
+  no ordinary machine has — that is how 0.2.0 build 0 shipped a linux-64 package
+  that died with ``version `GLIBC_2.38' not found`` on RHEL 9 and Ubuntu 22.04.
+  CI now fails the build if any required symbol is above `GLIBC_2.17`. Check a
+  binary by hand with:
+
+  ```sh
+  objdump -T $(which sesame) | grep -oE 'GLIBC_[0-9.]+' | sort -uV | tail -1
+  ```
+
+- **Republishing a fixed build of an existing version.** Bump `number:` under
+  `build:` in `meta.yaml` (not `version:`), then move the tag so CI rebuilds and
+  uploads — the publish step's guard only requires tag == recipe version, and it
+  uploads with `--force`:
+
+  ```sh
+  git tag -f -a v0.2.0 -m "sesame-cli 0.2.0 (build 1)" && git push -f origin v0.2.0
+  ```
+
+  Conda prefers the higher build number, so clients get the fixed package. Also
+  delete the broken artifact from anaconda.org so it can never be selected:
+  `anaconda remove zhou-lab/sesame-cli/0.2.0/linux-64/sesame-cli-0.2.0-h9bf148f_0.conda`
