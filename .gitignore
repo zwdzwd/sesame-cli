@@ -14,6 +14,11 @@ pipeline_dump
 /TODO.md
 
 # Platform data (ordering tables, masks, CNV normals) and bootstrap outputs.
-# These ship via GitHub Releases (index-<platform>-v<n> tags), never in git.
+# Never in git: annotation comes from zhou-lab/InfiniumAnnotation via
+# `yame fetch` into the shared store, and the CNV normal panel is built
+# locally with `make cnv-normals`.
 /data/
 /testdata/
+
+## byte-compiled CI helpers (tools/check_glibc_floor.py)
+__pycache__/
