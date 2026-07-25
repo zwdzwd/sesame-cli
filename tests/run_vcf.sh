@@ -9,7 +9,10 @@ set -eu
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 root=$(dirname "$here")
 bin="$root/sesame"
-store=${SESAME_INDEX_DIR:-$root/data}
+## The shared store yame fetch fills; per-platform assets sit under its
+## InfiniumAnnotation/ key, so $store/$plat/... stays the same shape.
+yhome=${YAME_DATA_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/yame}
+store=$yhome/InfiniumAnnotation
 idats=${SESAME_TEST_IDATS:-$HOME/repo/InfiniumTestIDATs}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT

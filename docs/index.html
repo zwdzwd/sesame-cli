@@ -170,11 +170,11 @@ git clone --recurse-submodules \
   https://github.com/zwdzwd/sesame-cli
 cd sesame-cli &amp;&amp; make
 
-<span class="cm"># one-time: annotation into a local store</span>
-sesame <span class="sub">fetch</span> EPICv2
-sesame <span class="sub">fetch</span> genome hg38</code></pre>
+<span class="cm"># one-time: annotation into the shared store (yame downloads)</span>
+yame <span class="sub">fetch</span> InfiniumAnnotation/EPICv2
+yame <span class="sub">fetch</span> genomes/hg38</code></pre>
     <p style="margin-top:11px">…builds a local, digest-verified store
-      (<code class="inl">~/.cache/sesame</code> or <code class="inl">$SESAME_INDEX_DIR</code>) —
+      (<code class="inl">$YAME_DATA_HOME</code>, default <code class="inl">~/.local/share/yame</code>) —
       offline from here on:</p>
     <pre><code>EPICv2/  <span class="cm"># probe annotation</span>
 ├ EPICv2.ordering.tsv.gz
@@ -364,10 +364,10 @@ address    mean  sd   nbeads
 10600322   287   34   9</code></pre>
     </div>
     <div>
-      <h3>Where is the store?</h3>
-      <pre><code>$ sesame <span class="sub">index-info</span>
-store    ~/.cache/sesame  (tag index-EPICv2-v1)
-present  EPICv2  HM450  MSA   ·   genome hg38</code></pre>
+      <h3>Which yame, which tags?</h3>
+      <pre><code>$ sesame <span class="sub">version</span>
+sesame 0.2.0 (yame v1.29; InfiniumAnnotation v8.1, genomes v3)
+store   ~/.local/share/yame</code></pre>
     </div>
   </div>
 </section>

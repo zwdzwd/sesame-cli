@@ -58,17 +58,18 @@ static int is_recommended(const char *name, const char *const *rec)
     return 0;
 }
 
-/* Locate the platform's .cm mask in the store: <store>/<platform>/ *.cm
- * (ending in ".cm", not ".cm.idx"). 0 on success. */
+/* Locate the platform's .cm mask in the store: the one file in the platform's
+ * asset directory ending in ".cm" (not ".cm.idx"). Scanned rather than named
+ * because the file carries its genome build (MM285.mm10.mask.cm), which the
+ * caller does not have here. 0 on success. */
 static int find_cm(const char *platform, char *out, size_t n)
 {
-    char store[4096], pdir[4096];
+    char pdir[4096];
     DIR *d;
     struct dirent *de;
     int found = 0;
 
-    sesame_store_dir(store, sizeof store);
-    snprintf(pdir, sizeof pdir, "%s/%s", store, platform);
+    sesame_asset_dir(platform, pdir, sizeof pdir);
     if (!(d = opendir(pdir))) return -1;
     while ((de = readdir(d))) {
         size_t L = strlen(de->d_name);
@@ -99,10 +100,11 @@ static int mask_union(const char *platform, const char *const *names,
     if (!names)
         return sesame__fail(err, SESAME_ERR_UNSUPPORTED,
             "no mask set for platform '%s'", platform);
-    if (find_cm(platform, cm, sizeof cm) != 0)
-        return sesame__fail(err, SESAME_ERR_IO,
-            "no .cm mask for %s in the store -- run: sesame fetch %s",
-            platform, platform);
+    if (find_cm(platform, cm, sizeof cm) != 0) {
+        char help[1024];
+        sesame_asset_missing_help(platform, "mask (.cm)", help, sizeof help);
+        return sesame__fail(err, SESAME_ERR_IO, "%s", help);
+    }
 
     /* All tracks come back in index order; union the ones we want. The file is
      * small, so reading every block is cheap. */

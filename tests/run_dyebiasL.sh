@@ -13,7 +13,10 @@ set -eu
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 root=$(dirname "$here")
 dump="$root/pipeline_dump"
-store=${SESAME_INDEX_DIR:-$root/data}
+## The shared store yame fetch fills; per-platform assets sit under its
+## InfiniumAnnotation/ key, so $store/$plat/... stays the same shape.
+yhome=${YAME_DATA_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/yame}
+store=$yhome/InfiniumAnnotation
 idats=${SESAME_TEST_IDATS:-$HOME/repo/InfiniumTestIDATs}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -30,7 +33,7 @@ run_one() {
     if [ ! -f "$pfx"_Grn.idat ] && [ ! -f "$pfx"_Grn.idat.gz ]; then
         echo "SKIP $plat E: no IDAT $pfx"; return; fi
 
-    SESAME_INDEX_DIR="$store" "$dump" --prep CE --what beta "$pfx" \
+    YAME_DATA_HOME="$yhome" "$dump" --prep CE --what beta "$pfx" \
         2>/dev/null > "$work/c_CE.txt"
 
     if Rscript --vanilla - "$plat" "$pfx" "$work/c_CE.txt" <<'PY' 2>"$work/r.err"

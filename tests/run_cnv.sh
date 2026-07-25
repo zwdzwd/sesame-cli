@@ -10,7 +10,10 @@ set -eu
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 root=$(dirname "$here")
 bin="$root/sesame"
-store=${SESAME_INDEX_DIR:-$root/data}
+## The shared store yame fetch fills; per-platform assets sit under its
+## InfiniumAnnotation/ key, so $store/$plat/... stays the same shape.
+yhome=${YAME_DATA_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/yame}
+store=$yhome/InfiniumAnnotation
 idats=${SESAME_TEST_IDATS:-$HOME/repo/InfiniumTestIDATs}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -22,8 +25,8 @@ plat=EPICv2
 ord="$store/$plat/$plat.ordering.tsv.gz"
 crd="$store/$plat/$plat.hg38.coord.tsv.gz"
 nrm="$store/$plat/$plat.cnvnormals.cg"
-seq="$store/genome/hg38/seqinfo.tsv.gz"
-gap="$store/genome/hg38/gaps.tsv.gz"
+seq="$yhome/genomes/hg38/seqinfo.tsv.gz"
+gap="$yhome/genomes/hg38/gaps.tsv.gz"
 pfx="$idats/$plat/206909630042_R08C01"
 for f in "$ord" "$crd" "$nrm" "$seq" "$gap"; do
     [ -f "$f" ] || { echo "SKIP cnv: missing $f (fetch $plat + genome hg38, make cnv-normals)"; exit 0; }
@@ -31,7 +34,7 @@ done
 if [ ! -f "$pfx"_Grn.idat ] && [ ! -f "$pfx"_Grn.idat.gz ]; then
     echo "SKIP cnv: no IDAT $pfx"; exit 0; fi
 
-export SESAME_INDEX_DIR="$store"
+export YAME_DATA_HOME="$yhome"
 
 # target total intensity (raw), then C's CNV probe signals
 "$bin" preprocess --prep "" --raw-signal --output total_intensity --out "$work" "$pfx" 2>/dev/null

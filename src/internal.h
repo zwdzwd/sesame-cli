@@ -13,9 +13,6 @@
  * sesame__fail(...)`. Never longjmps, never writes to stderr. */
 int sesame__fail(sesame_err_t *err, int code, const char *fmt, ...);
 
-/* SHA-256 hex digest of a file; out must hold 65 bytes. 0 on success. */
-int sesame__sha256_file(const char *path, char out[65]);
-
 /* --- numerics: each replicates a specific R semantic exactly --- */
 
 /* Copy non-NaN values of x into out (>= n); returns the count. Mirrors R's
@@ -87,9 +84,6 @@ int32_t sesame__cbs(const double *x, int32_t n, int32_t min_width, double alpha,
                     double trimmed_sd, double undo_sd,
                     int32_t *seg_end, int32_t max_seg);
 double sesame__trimmed_sd(const double *x, int32_t n, double trim);
-
-/* <dir of the binary>/data if it exists; 0 on success. */
-int sesame__exe_data_dir(char *out, size_t n);
 
 /* Registry lookup (registry.h must be included by the TU that uses the type). */
 struct sesame_reg_t;

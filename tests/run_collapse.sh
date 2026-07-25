@@ -13,7 +13,10 @@ root=$(dirname "$here")
 bin="$root/sesame"
 dump="$root/pipeline_dump"
 yame="$root/YAME/yame"
-store=${SESAME_INDEX_DIR:-$root/data}
+## The shared store yame fetch fills; per-platform assets sit under its
+## InfiniumAnnotation/ key, so $store/$plat/... stays the same shape.
+yhome=${YAME_DATA_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/yame}
+store=$yhome/InfiniumAnnotation
 idats=${SESAME_TEST_IDATS:-$HOME/repo/InfiniumTestIDATs}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -32,8 +35,8 @@ run_one() {
     if [ ! -f "$pfx"_Grn.idat ] && [ ! -f "$pfx"_Grn.idat.gz ]; then
         echo "SKIP $plat collapse: no IDAT $pfx"; return; fi
 
-    SESAME_INDEX_DIR="$store" "$dump" --prep "" --what beta "$pfx" 2>/dev/null > "$work/raw.txt"
-    SESAME_INDEX_DIR="$store" "$bin" preprocess --platform "$plat" --output beta \
+    YAME_DATA_HOME="$yhome" "$dump" --prep "" --what beta "$pfx" 2>/dev/null > "$work/raw.txt"
+    YAME_DATA_HOME="$yhome" "$bin" preprocess --platform "$plat" --output beta \
         --prep "" --collapse --out "$work/pp" "$pfx" 2>/dev/null
     "$yame" unpack "$work/pp/beta.cg" 2>/dev/null > "$work/vals.txt"
     paste "$work/pp/beta.cg.probes" "$work/vals.txt" > "$work/c.txt"

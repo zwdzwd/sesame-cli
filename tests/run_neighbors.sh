@@ -15,7 +15,10 @@ root=$(dirname "$here")
 bin="$root/sesame"
 dump="$root/pipeline_dump"
 yame="$root/YAME/yame"
-store=${SESAME_INDEX_DIR:-$root/data}
+## The shared store yame fetch fills; per-platform assets sit under its
+## InfiniumAnnotation/ key, so $store/$plat/... stays the same shape.
+yhome=${YAME_DATA_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/yame}
+store=$yhome/InfiniumAnnotation
 idats=${SESAME_TEST_IDATS:-$HOME/repo/InfiniumTestIDATs}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -34,9 +37,9 @@ pfx="$idats/$plat/206909630040_R03C01"
 if [ ! -f "$pfx"_Grn.idat ] && [ ! -f "$pfx"_Grn.idat.gz ]; then
     echo "SKIP neighbors: no IDAT $pfx"; exit 0; fi
 
-SESAME_INDEX_DIR="$store" "$bin" preprocess --platform $plat --output beta \
+YAME_DATA_HOME="$yhome" "$bin" preprocess --platform $plat --output beta \
     --out "$work/pp" "$pfx" 2>/dev/null
-SESAME_INDEX_DIR="$store" "$dump" --prep QCDPB --what beta "$pfx" 2>/dev/null > "$work/src.txt"
+YAME_DATA_HOME="$yhome" "$dump" --prep QCDPB --what beta "$pfx" 2>/dev/null > "$work/src.txt"
 "$bin" impute --method neighbors --platform $plat --coords "$co" \
     "$work/pp/beta.cg" "$work/out.cg" 2>/dev/null
 "$yame" unpack "$work/out.cg" 2>/dev/null > "$work/vals.txt"

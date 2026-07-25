@@ -13,7 +13,10 @@ root=$(dirname "$here")
 bin="$root/sesame"
 dump="$root/pipeline_dump"
 unit="$root/normexp_test"
-store=${SESAME_INDEX_DIR:-$root/data}
+## The shared store yame fetch fills; per-platform assets sit under its
+## InfiniumAnnotation/ key, so $store/$plat/... stays the same shape.
+yhome=${YAME_DATA_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/yame}
+store=$yhome/InfiniumAnnotation
 idats=${SESAME_TEST_IDATS:-$HOME/repo/InfiniumTestIDATs}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -30,8 +33,8 @@ run_one() {
         echo "SKIP $plat B: no IDAT $pfx"; return; fi
 
     # raw and noob betas, so the oracle can isolate B on raw-identical probes
-    SESAME_INDEX_DIR="$store" "$dump" --prep "" --what beta "$pfx" 2>/dev/null > "$work/c_raw.txt"
-    SESAME_INDEX_DIR="$store" "$dump" --prep B --what beta "$pfx" 2>/dev/null > "$work/c_noob.txt"
+    YAME_DATA_HOME="$yhome" "$dump" --prep "" --what beta "$pfx" 2>/dev/null > "$work/c_raw.txt"
+    YAME_DATA_HOME="$yhome" "$dump" --prep B --what beta "$pfx" 2>/dev/null > "$work/c_noob.txt"
 
     if Rscript --vanilla "$here/compare_noob.R" "$plat" "$pfx" \
          "$work/c_noob.txt" "$unit" "$work/c_raw.txt" 2>"$work/r.err"; then

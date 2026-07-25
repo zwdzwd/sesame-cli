@@ -8,7 +8,7 @@
 # What it CAN pin exactly is that sesame reads and unions the .cm correctly and
 # aligns it to the ordering.
 #
-# Needs: the `yame` binary on PATH, and a fetched store with the platform's .cm
+# Needs: the submodule `yame` binary, and a fetched store with the platform's .cm
 # (e.g. data/MSA/). Skips cleanly if either is missing.
 set -eu
 
@@ -16,13 +16,20 @@ here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 root=$(dirname "$here")
 bin="$root/sesame"
 dump="$root/pipeline_dump"
-store=${SESAME_INDEX_DIR:-$root/data}
+## The shared store yame fetch fills; per-platform assets sit under its
+## InfiniumAnnotation/ key, so $store/$plat/... stays the same shape.
+yhome=${YAME_DATA_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/yame}
+store=$yhome/InfiniumAnnotation
 idats=${SESAME_TEST_IDATS:-$HOME/repo/InfiniumTestIDATs}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
 [ -x "$bin" ] || { echo "FAIL: $bin not built"; exit 1; }
-command -v yame >/dev/null 2>&1 || { echo "SKIP Q: yame not on PATH"; exit 0; }
+## The submodule build, not whatever `yame` is on PATH -- a stale one in a
+## shared bin would silently compare against a different mask lineage.
+yame="$root/YAME/yame"
+[ -x "$yame" ] || make -C "$root/YAME" >/dev/null 2>&1 || true
+[ -x "$yame" ] || { echo "SKIP Q: could not build $yame"; exit 0; }
 
 # platform  sample-prefix  <recommended track names...>
 run_one() {
@@ -35,8 +42,8 @@ run_one() {
 
     # expected: ordering Probe_IDs where the yame union of the given tracks is set
     printf '%s\n' "$@" > "$work/names.txt"
-    gzcat "$store/$plat/$plat.ordering.tsv.gz" | tail -n +2 | cut -f1 > "$work/ids.txt"
-    yame unpack -l "$work/names.txt" "$cm" > "$work/tab.txt" 2>/dev/null
+    gzip -dc "$store/$plat/$plat.ordering.tsv.gz" | tail -n +2 | cut -f1 > "$work/ids.txt"
+    "$yame" unpack -l "$work/names.txt" "$cm" > "$work/tab.txt" 2>/dev/null
     python3 - "$work/ids.txt" "$work/tab.txt" "$work/expected.txt" <<'PY'
 import sys
 ids=[l.rstrip("\n") for l in open(sys.argv[1])]
@@ -48,7 +55,7 @@ open(sys.argv[3],"w").write("\n".join(sorted(exp))+"\n")
 PY
 
     # actual: probes sesame masks (NA) under prep=Q
-    SESAME_INDEX_DIR="$store" "$dump" --prep Q --what beta "$pfx" 2>/dev/null \
+    YAME_DATA_HOME="$yhome" "$dump" --prep Q --what beta "$pfx" 2>/dev/null \
       | python3 -c "import sys; print('\n'.join(sorted(l.split('\t')[0] for l in sys.stdin if l.rstrip('\n').split('\t')[1]=='NA')))" \
       > "$work/actual.txt"
 

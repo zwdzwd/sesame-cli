@@ -8,7 +8,10 @@ here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 root=$(dirname "$here")
 bin="$root/sesame"
 dump="$root/pipeline_dump"
-store=${SESAME_INDEX_DIR:-$root/data}
+## The shared store yame fetch fills; per-platform assets sit under its
+## InfiniumAnnotation/ key, so $store/$plat/... stays the same shape.
+yhome=${YAME_DATA_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/yame}
+store=$yhome/InfiniumAnnotation
 idats=${SESAME_TEST_IDATS:-$HOME/repo/InfiniumTestIDATs}
 yame="$root/YAME/yame"
 work=$(mktemp -d)
@@ -24,8 +27,8 @@ if [ ! -f "$pfx"_Grn.idat ] && [ ! -f "$pfx"_Grn.idat.gz ]; then
 
 name=$(basename "$pfx")
 # raw-signal reference (double), and the two .cg via preprocess (raw signal)
-SESAME_INDEX_DIR="$store" "$dump" --prep "" --what total "$pfx" 2>/dev/null > "$work/tot.tsv"
-SESAME_INDEX_DIR="$store" "$bin" preprocess --prep "" --raw-signal \
+YAME_DATA_HOME="$yhome" "$dump" --prep "" --what total "$pfx" 2>/dev/null > "$work/tot.tsv"
+YAME_DATA_HOME="$yhome" "$bin" preprocess --prep "" --raw-signal \
     --output intensity,total_intensity --out "$work" "$pfx" 2>/dev/null
 
 "$yame" unpack -f -1 "$work/intensity.cg"       2>/dev/null > "$work/mu.txt"    # M<TAB>U (fmt3)

@@ -6,6 +6,13 @@
  */
 #include "sesame.h"
 #include "../src/internal.h"
+#include "../src/registry.h"   /* the asset tags this build expects */
+
+/* Set by the Makefile from `yame-config --version`. A build that bypasses the
+ * Makefile still compiles; it just cannot name the yame it linked. */
+#ifndef SESAME_YAME_VERSION
+#define SESAME_YAME_VERSION "unknown"
+#endif
 
 #include <dirent.h>
 #include <fcntl.h>
@@ -26,6 +33,9 @@ static int usage(void)
       "\n"
       "Program: sesame -- standalone Infinium DNA methylation toolkit\n"
       "Version: " SESAME_VERSION "\n"
+      "Built:   against YAME " SESAME_YAME_VERSION
+                 " -- InfiniumAnnotation " SESAME_DEFAULT_TAG
+                 ", genomes " SESAME_GENOME_TAG "\n"
       "Source:  https://github.com/zwdzwd/sesame-cli\n"
       "\n"
       "Usage:   sesame <command> [options]\n"
@@ -47,8 +57,8 @@ static int usage(void)
       "  deidentify     Remove the genetic fingerprint (SNP probes) from an IDAT\n"
       "\n"
       "Data store\n"
-      "  fetch          Download ordering / genome annotation (the only network path)\n"
-      "  index-info     Show the store location and available platforms\n"
+      "  Annotation is fetched by yame, not by sesame: `yame fetch` fills the\n"
+      "  shared store at $YAME_DATA_HOME that every tool in the suite reads.\n"
       "\n"
       "Other\n"
       "  version        Print the version and exit\n"
@@ -94,7 +104,7 @@ static int usage_preprocess(void)
       "  pval.cg  fmt4 det. p   qc.tsv  per-sample QC\n"
       "\n"
       "If --index is omitted the platform is detected from the bead count and the\n"
-      "ordering is looked up in $SESAME_INDEX_DIR, ., ./data, then the cache.\n",
+      "ordering is looked up in the shared store ($YAME_DATA_HOME), then ./.\n",
       stderr);
     return 1;
 }
@@ -292,23 +302,6 @@ static int usage_idat(void)
     return 1;
 }
 
-static int usage_fetch(void)
-{
-    fputs(
-      "Usage: sesame fetch [<platform>] [--force]\n"
-      "       sesame fetch genome [<build>] [--force]\n"
-      "\n"
-      "  Download a <platform> ordering (default: all published), or a genome\n"
-      "  build's annotation (default: hg38), at the pinned tag. Every file is\n"
-      "  verified against its digest; one already present and matching is skipped.\n"
-      "  This is the ONLY path that touches the network. Never prompts.\n"
-      "\n"
-      "Options:\n"
-      "  --force            Re-download even if present and matching.\n",
-      stderr);
-    return 1;
-}
-
 static int usage_deidentify(void)
 {
     fputs(
@@ -349,7 +342,6 @@ static int route_usage(const char *cmd)
     if (!strcmp(cmd, "deidentify")) return usage_deidentify();
     if (!strcmp(cmd, "attach-probe")) return usage_attach();
     if (!strcmp(cmd, "idat-dump"))    return usage_idat();
-    if (!strcmp(cmd, "fetch"))        return usage_fetch();
     return usage();
 }
 
@@ -363,88 +355,6 @@ static int resolve_idat(const char *prefix, const char *chan,
     snprintf(out, outsz, "%s_%s.idat.gz", prefix, chan);
     if ((f = fopen(out, "rb"))) { fclose(f); return 0; }
     return -1;
-}
-
-static int cmd_fetch(int argc, char **argv)
-{
-    const char *platform = NULL, *genome = NULL;
-    int force = 0, want_genome = 0, i;
-    char path[4096];
-    sesame_err_t e;
-
-    for (i = 0; i < argc; i++) {
-        if (strcmp(argv[i], "--force") == 0) force = 1;
-        else if (strcmp(argv[i], "genome") == 0) want_genome = 1;
-        else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) { usage_fetch(); return 0; }
-        else if (argv[i][0] == '-' && argv[i][1] != '\0') return usage_fetch();
-        else if (want_genome && !genome) genome = argv[i];
-        else platform = argv[i];
-    }
-
-    if (want_genome) {                    /* sesame fetch genome [<build>] */
-        if (sesame_fetch_genome(genome ? genome : "hg38", force, &e) != SESAME_OK) {
-            fprintf(stderr, "sesame: %s\n", e.msg);
-            return 1;
-        }
-    } else if (platform) {
-        if (sesame_fetch_index(platform, force, path, sizeof path, &e) != SESAME_OK) {
-            fprintf(stderr, "sesame: %s\n", e.msg);
-            return 1;
-        }
-    } else if (sesame_fetch_all(force, &e) != SESAME_OK) {
-        fprintf(stderr, "sesame: %s\n", e.msg);
-        return 1;
-    }
-    return 0;
-}
-
-/* ANSI only when stdout is a terminal, and never when NO_COLOR is set
- * (no-color.org). Piping index-info into grep must stay plain. */
-static int use_color(void)
-{
-    const char *nc = getenv("NO_COLOR");
-    if (nc && *nc) return 0;
-    return isatty(STDOUT_FILENO);
-}
-#define C(code) (use_color() ? (code) : "")
-#define C_RESET C("\x1b[0m")
-#define C_BOLD  C("\x1b[1m")
-#define C_DIM   C("\x1b[2m")
-#define C_GRN   C("\x1b[32m")
-#define C_YEL   C("\x1b[33m")
-
-static int cmd_index_info(int argc, char **argv)
-{
-    char dir[4096], path[4096], exe[4096];
-    static const char *plats[] = { "EPIC", "EPICv2", "HM450", "MSA", NULL };
-    const char *e = getenv("SESAME_INDEX_DIR");
-    (void)argc; (void)argv;
-
-    sesame_store_dir(dir, sizeof dir);
-
-    printf("%sstore%s  %s%s%s\n", C_BOLD, C_RESET, C_BOLD, dir, C_RESET);
-    if (e && *e)
-        printf("       %sfrom SESAME_INDEX_DIR%s\n", C_DIM, C_RESET);
-    else if (sesame__exe_data_dir(exe, sizeof exe) == 0)
-        printf("       %sSESAME_INDEX_DIR unset - using data/ beside the binary%s\n",
-               C_DIM, C_RESET);
-    else
-        printf("       %sSESAME_INDEX_DIR unset - using the XDG store%s\n",
-               C_DIM, C_RESET);
-
-    printf("%stag%s    %s%s%s   %spinned by this build%s\n",
-           C_BOLD, C_RESET, C_GRN, sesame_default_tag(), C_RESET,
-           C_DIM, C_RESET);
-
-    printf("\n%s%-9s %s%s\n", C_BOLD, "PLATFORM", "RESOLVED", C_RESET);
-    for (int i = 0; plats[i]; i++) {
-        if (sesame_index_locate(plats[i], path, sizeof path) == 0)
-            printf("%-9s %s\n", plats[i], path);
-        else
-            printf("%-9s %smissing%s  %s(sesame fetch)%s\n",
-                   plats[i], C_YEL, C_RESET, C_DIM, C_RESET);
-    }
-    return 0;
 }
 
 /* --------------------------------------------------------------- betas ---
@@ -758,10 +668,10 @@ static int cmd_preprocess(int argc, char **argv)
         if (sesame_background_mask(plat, &bgmask, &bgn, &e) != SESAME_OK) { fprintf(stderr, "sesame: %s\n", e.msg); goto out; }
     }
     if (ctx.want_qc && plat) {                 /* GCT ext codes (optional) */
-        char sdir[4096], epath[4096];
-        sesame_store_dir(sdir, sizeof sdir);
-        snprintf(epath, sizeof epath, "%s/%s/%s.typeI_ext.tsv.gz", sdir, plat, plat);
-        if (sesame_load_ext_codes(epath, n, &ext, &e) == SESAME_OK) extn = n;
+        char efile[256], epath[4096];
+        snprintf(efile, sizeof efile, "%s.typeI_ext.tsv.gz", plat);
+        if (sesame_asset_locate(plat, efile, epath, sizeof epath) == 0 &&
+            sesame_load_ext_codes(epath, n, &ext, &e) == SESAME_OK) extn = n;
         else ext = NULL;                       /* absent -> GCT NaN, no error */
     }
 
@@ -1368,19 +1278,39 @@ static int cmd_cnv(int argc, char **argv)
         idxpath = resolved;
     }
     if (!normals) {
+        /* The normal panel is NOT part of the InfiniumAnnotation release, so
+         * `yame fetch` does not supply it -- build one with `make cnv-normals`
+         * or point --normals at your own. */
+        char nfile[256];
         if (!platform) { fprintf(stderr, "sesame: cnv needs --normals or --platform\n"); return 1; }
-        snprintf(nbuf, sizeof nbuf, "%s/%s/%s.cnvnormals.cg", store, platform, platform);
+        snprintf(nfile, sizeof nfile, "%s.cnvnormals.cg", platform);
+        if (sesame_asset_locate(platform, nfile, nbuf, sizeof nbuf) != 0) {
+            fprintf(stderr,
+                "sesame: no normal panel for %s\n"
+                "  searched: %s/InfiniumAnnotation/%s/%s\n"
+                "  the panel is not published with the annotation -- pass\n"
+                "  --normals <file>, or build one with `make cnv-normals`\n",
+                platform, store, platform, nfile);
+            return 1;
+        }
         normals = nbuf;
     }
     if (!coords) {
+        char cfile[256];
         if (!platform) { fprintf(stderr, "sesame: cnv needs --coords or --platform\n"); return 1; }
-        snprintf(cbuf, sizeof cbuf, "%s/%s/%s.%s.coord.tsv.gz", store, platform, platform, genome);
+        snprintf(cfile, sizeof cfile, "%s.%s.coord.tsv.gz", platform, genome);
+        if (sesame_asset_locate(platform, cfile, cbuf, sizeof cbuf) != 0) {
+            char help[1024];
+            sesame_asset_missing_help(platform, cfile, help, sizeof help);
+            fprintf(stderr, "sesame: %s\n", help); return 1;
+        }
         coords = cbuf;
     }
     if (sesame_genome_locate(genome, "seqinfo.tsv.gz", sbuf, sizeof sbuf) != 0 ||
         sesame_genome_locate(genome, "gaps.tsv.gz", gbuf, sizeof gbuf) != 0) {
-        fprintf(stderr, "sesame: no genome info for %s in the store\n"
-            "  fix: sesame fetch genome %s\n", genome, genome);
+        char help[1024];
+        sesame_genome_missing_help(genome, help, sizeof help);
+        fprintf(stderr, "sesame: %s\n", help);
         return 1;
     }
 
@@ -1437,7 +1367,7 @@ static int cmd_vcf(int argc, char **argv)
     const char *prefix = NULL, *idxpath = NULL, *platform = NULL, *snp = NULL;
     const char *genome = "hg38", *outpath = NULL;
     int min_beads = 0, variants_only = 0, i, rc = 1;
-    char store[4096], resolved[4096], snpbuf[4096];
+    char resolved[4096], snpbuf[4096];
     sesame_index_t *ix = NULL;
     sesame_sigdf_t *sdf = NULL;
     FILE *out = stdout;
@@ -1458,7 +1388,6 @@ static int cmd_vcf(int argc, char **argv)
     }
     if (!prefix) { fprintf(stderr, "sesame: vcf needs an IDAT <prefix>\n"); return usage_vcf(); }
 
-    sesame_store_dir(store, sizeof store);
     if (idxpath) {
         if (!(ix = sesame_index_open(idxpath, &e))) { fprintf(stderr, "sesame: %s\n", e.msg); return 1; }
     } else {
@@ -1478,8 +1407,14 @@ static int cmd_vcf(int argc, char **argv)
     }
 
     if (!snp) {                                      /* default: the store's snp table */
+        char sfile[256];
         if (!platform) { fprintf(stderr, "sesame: vcf needs --snp <file> or --platform\n"); goto out; }
-        snprintf(snpbuf, sizeof snpbuf, "%s/%s/%s.%s.snp.tsv.gz", store, platform, platform, genome);
+        snprintf(sfile, sizeof sfile, "%s.%s.snp.tsv.gz", platform, genome);
+        if (sesame_asset_locate(platform, sfile, snpbuf, sizeof snpbuf) != 0) {
+            char help[1024];
+            sesame_asset_missing_help(platform, sfile, help, sizeof help);
+            fprintf(stderr, "sesame: %s\n", help); goto out;
+        }
         snp = snpbuf;
     }
 
@@ -1504,7 +1439,7 @@ static int cmd_region(int argc, char **argv)
     const char *coords = NULL, *genome = "hg38", *outpath = NULL;
     const char *gene = NULL, *genesbed = NULL;
     long beg = 0, end = 0, pad = 0;
-    char store[4096], resolved[4096], cbuf[4096], gbuf[4096], chrom[64] = "";
+    char resolved[4096], cbuf[4096], gbuf[4096], chrom[64] = "";
     sesame_index_t *ix = NULL;
     FILE *out = stdout;
     int i, rc = 1;
@@ -1530,14 +1465,13 @@ static int cmd_region(int argc, char **argv)
         return usage_region();
     }
 
-    sesame_store_dir(store, sizeof store);
-
     if (gene) {                                  /* resolve a gene symbol -> span */
         if (!genesbed) {
             if (sesame_genome_locate(genome, "genes.bed.gz", gbuf, sizeof gbuf) != 0) {
-                fprintf(stderr, "sesame: no gene models for %s in the store\n"
-                    "  fix: sesame fetch genome %s   (or pass --gene-models <genes.bed.gz>)\n",
-                    genome, genome);
+                char help[1024];
+                sesame_genome_missing_help(genome, help, sizeof help);
+                fprintf(stderr, "sesame: no gene models -- %s\n"
+                        "  (or pass --gene-models <genes.bed.gz>)\n", help);
                 return 1;
             }
             genesbed = gbuf;
@@ -1567,8 +1501,14 @@ static int cmd_region(int argc, char **argv)
         idxpath = resolved;
     }
     if (!coords) {
+        char cfile[256];
         if (!platform) { fprintf(stderr, "sesame: region needs --coords or --platform\n"); return 1; }
-        snprintf(cbuf, sizeof cbuf, "%s/%s/%s.%s.coord.tsv.gz", store, platform, platform, genome);
+        snprintf(cfile, sizeof cfile, "%s.%s.coord.tsv.gz", platform, genome);
+        if (sesame_asset_locate(platform, cfile, cbuf, sizeof cbuf) != 0) {
+            char help[1024];
+            sesame_asset_missing_help(platform, cfile, help, sizeof help);
+            fprintf(stderr, "sesame: %s\n", help); return 1;
+        }
         coords = cbuf;
     }
     if (!(ix = sesame_index_open(idxpath, &e))) { fprintf(stderr, "sesame: %s\n", e.msg); return 1; }
@@ -1659,7 +1599,7 @@ static int cmd_impute(int argc, char **argv)
     const char *platform = NULL, *coords = NULL, *genome = "hg38", *axis = "probe";
     int max_neighbors = 3, i, rc = 1;
     long max_dist = 10000;
-    char store[4096], cbuf[4096];
+    char cbuf[4096];
     double *mat = NULL; char **names = NULL;
     int32_t nprobe = 0, nsamp = 0;
     sesame_err_t e;
@@ -1692,9 +1632,14 @@ static int cmd_impute(int argc, char **argv)
         if (sesame_impute_mean(mat, nprobe, nsamp, ax, &e) != SESAME_OK) { fprintf(stderr, "sesame: %s\n", e.msg); goto out; }
     } else if (strcmp(method, "neighbors") == 0) {
         if (!coords) {
+            char cfile[256];
             if (!platform) { fprintf(stderr, "sesame: impute --method neighbors needs --coords or --platform\n"); goto out; }
-            sesame_store_dir(store, sizeof store);
-            snprintf(cbuf, sizeof cbuf, "%s/%s/%s.%s.coord.tsv.gz", store, platform, platform, genome);
+            snprintf(cfile, sizeof cfile, "%s.%s.coord.tsv.gz", platform, genome);
+            if (sesame_asset_locate(platform, cfile, cbuf, sizeof cbuf) != 0) {
+                char help[1024];
+                sesame_asset_missing_help(platform, cfile, help, sizeof help);
+                fprintf(stderr, "sesame: %s\n", help); goto out;
+            }
             coords = cbuf;
         }
         if (sesame_impute_neighbors(mat, nprobe, nsamp, coords, max_neighbors, max_dist, &e) != SESAME_OK) {
@@ -1944,12 +1889,16 @@ int main(int argc, char **argv)
         return cmd_impute(argc - 2, argv + 2);
     if (strcmp(argv[1], "attach-probe") == 0)
         return cmd_attach_probe(argc - 2, argv + 2);
-    if (strcmp(argv[1], "fetch") == 0)
-        return cmd_fetch(argc - 2, argv + 2);
-    if (strcmp(argv[1], "index-info") == 0)
-        return cmd_index_info(argc - 2, argv + 2);
     if (strcmp(argv[1], "version") == 0 || strcmp(argv[1], "--version") == 0) {
-        puts("sesame " SESAME_VERSION);
+        /* Name the yame this binary was built against. yame fills the store
+         * sesame reads, and its catalog fixes the annotation tags, so the three
+         * belong on one line -- that is the whole compatibility statement. */
+        char store[4096];
+        sesame_store_dir(store, sizeof store);
+        printf("sesame %s (yame %s; InfiniumAnnotation %s, genomes %s)\n",
+               SESAME_VERSION, SESAME_YAME_VERSION,
+               SESAME_DEFAULT_TAG, SESAME_GENOME_TAG);
+        printf("store   %s\n", store);
         return 0;
     }
     return usage();

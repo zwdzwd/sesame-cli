@@ -31,7 +31,7 @@ static const sesame_reg_t SESAME_REGISTRY[] = {
  * tag. Layout: <base>/<tag>/<genome>/{SHA256SUMS, seqinfo.tsv.gz, gaps.tsv.gz,
  * cytoband.tsv.gz}. Trust anchor = sha256(<genome>/SHA256SUMS) at the tag. */
 #define SESAME_GENOME_BASE_URL  "https://github.com/zhou-lab/genomes/raw"
-#define SESAME_GENOME_TAG       "v2"
+#define SESAME_GENOME_TAG       "v3"
 
 typedef struct {
     const char *genome;
@@ -39,9 +39,9 @@ typedef struct {
 } sesame_genome_reg_t;
 
 static const sesame_genome_reg_t SESAME_GENOME_REGISTRY[] = {
-    { "hg38", "b64b320984c6d1d29dc1e15dd1a8a2ce109442eea703eba013d11ffb1eb8e975" },
-    { "mm10", "0b9aed8b19ed9ead8d8c61b9bf5050e11f4c5278bf701d46b439857407142035" },
-    { "mm39", "8f7bab6aa49cc2612b82d0f3b6e749eaff41d6ea925e8aff20b42269b47b9902" },
+    { "hg38", "1d3cd57e1e6a5bfd504730b925d167ccd444d051ea004e0d09853618fa770507" },
+    { "mm10", "0f3ea46ec5ed2408eb9e0579db074fce1f6aba60049b8d11e6e0ab37d5a1c539" },
+    { "mm39", "50c5eb9a405d110182c75edfd87d5fff40345888cd86bd4bf5166573efac9727" },
     { NULL, NULL }
 };
 

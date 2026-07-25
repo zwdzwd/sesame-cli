@@ -35,10 +35,19 @@ requirements:
     # listed for clarity.
     - zlib
     - libcurl
+    # sesame no longer downloads anything -- `yame fetch` fills the shared store
+    # it reads, so yame is a real runtime dependency now. The floor is the yame
+    # this was built against: that is the one whose catalog fixes the annotation
+    # tags compiled into src/registry.h.
+    - yame >=1.29
 
 test:
   commands:
     - sesame version
+    # the version line must name the yame it was built against
+    - sesame version | grep -q "yame v"
+    # and the help must send people to yame for data, not to a sesame fetch
+    - sesame help 2>&1 | grep -q "yame fetch"
 
 about:
   home: https://github.com/zwdzwd/sesame-cli
@@ -55,7 +64,8 @@ about:
     methylation (DML), and copy-number segmentation (log2 ratios, genome bins,
     and circular binary segmentation). The IDAT reader and un-preprocessed betas
     are bit-identical to the R package; other steps match to documented
-    tolerances (see NUMERICS.md). Platform annotations are fetched on demand.
+    tolerances (see NUMERICS.md). Platform annotations come from the shared
+    store filled by `yame fetch`; sesame-cli itself never touches the network.
     The only runtime dependencies are zlib and libcurl.
   dev_url: https://github.com/zwdzwd/sesame-cli
 

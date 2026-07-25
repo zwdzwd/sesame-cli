@@ -52,13 +52,17 @@ cp sesame ~/.local/bin/         # put it on PATH
 ```
 
 The binary is `sesame`. At runtime it needs only zlib and libcurl (YAME/htslib
-are linked statically); the `yame` tool need not be installed.
+are linked statically). You also want the [`yame`](https://github.com/zhou-lab/YAME)
+binary on `PATH`: sesame does not download anything, so `yame fetch` is how the
+annotation it reads gets there. `sesame version` names the yame release this
+build expects.
 
 ## Quickstart
 
 ```sh
-# 1. one-time: fetch a platform's annotation (ordering + mask + coords) into the store
-sesame fetch EPICv2
+# 1. one-time: fetch a platform's annotation (ordering + mask + coords + SNP)
+#    with yame, which owns downloading for the whole tool suite
+yame fetch InfiniumAnnotation/EPICv2
 
 # 2. preprocess a cohort (default QCDPB) -> one indexed .cg per output + qc.tsv
 #    each arg is an IDAT prefix, or a directory searched recursively for pairs
@@ -70,13 +74,17 @@ sesame dml --betas out/beta.cg --index EPICv2.ordering.tsv.gz \
            --meta samples.tsv --formula '~ group + age' > dml.tsv
 
 # 3b. copy number for a tumor sample (writes segments + bins)
-sesame fetch genome hg38
+yame fetch genomes/hg38
 sesame preprocess --prep "" --raw-signal --output total_intensity --out t/ tumor
-sesame cnv --platform EPICv2 t/total_intensity.cg out/segments.tsv out/bins.tsv
+sesame cnv --platform EPICv2 --normals EPICv2.cnvnormals.cg \
+           t/total_intensity.cg out/segments.tsv out/bins.tsv
 ```
 
-Everything is offline except `sesame fetch`. Annotation is downloaded once,
-verified against a digest compiled into the build, and reused.
+sesame is entirely offline -- it has no network code at all. `yame fetch` is
+the one download path, and it fills a store every tool in the suite reads, so a
+file fetched once serves sesame, kycg and yame alike. `sesame version` names
+the yame this binary was built against and the annotation tags that come with
+it.
 
 ## Commands
 
@@ -90,10 +98,8 @@ sesame impute       --method <mean|neighbors> <in.cg> <out.cg>    # fill NA beta
 sesame region       (<chr:beg-end>|--gene NAME) --betas <beta.cg> # region betas -> long-form TSV
 sesame deidentify   [--randomize|-r --seed N] <prefix|idat>        # strip SNP fingerprint from IDAT
 sesame attach-probe [--platform P] <file.cg|.cm|.tsv>  # label a positional file with Probe_IDs
-sesame fetch        [<platform>] | genome [<build>]    # download annotation into the store
-sesame index-info                                      # store location + pinned tag + platforms
 sesame idat-dump    [--head N] [--tsv] <file.idat[.gz]># inspect a raw IDAT
-sesame version
+sesame version                                         # version, yame + annotation tags, store
 ```
 
 ---
@@ -169,9 +175,10 @@ sesame cnv --platform EPICv2 t/total_intensity.cg out/segments.tsv out/bins.tsv
 sesame cnv --platform EPICv2 --probes t/total_intensity.cg out/segments.tsv out/probes.tsv
 ```
 
-`--normals`, `--coords`, and the ordering default to the fetched store for
-`--platform` (`<store>/<P>/<P>.cnvnormals.cg`, `<P>.hg38.coord.tsv.gz`); genome
-tiling comes from `sesame fetch genome <--genome>` (default hg38). Both output
+`--coords` and the ordering default to the store for `--platform`
+(`<store>/InfiniumAnnotation/<P>/<P>.hg38.coord.tsv.gz`); genome tiling comes
+from `yame fetch genomes/<--genome>` (default hg38). `--normals` is
+user-supplied -- the normal panel is not published with the annotation. Both output
 files carry a leading `sample` column — segments: chrom/start/end/nbin/seg.mean;
 bins: chrom/start/end/nprobes/log2ratio; probes: Probe_ID/chrom/pos/log2ratio.
 The fit + log2 matches R's `lm` to ~1e-5 on identical inputs; CBS recovers 97% of
@@ -218,13 +225,10 @@ silent misalignment.
 **`idat-dump`** — inspect a raw `.idat`/`.idat.gz`: a summary header, or `--tsv`
 for `addr<TAB>mean<TAB>sd<TAB>nbeads` (`--head N` limits rows).
 
-**`index-info`** — print the store location, the pinned annotation tag, and which
-platforms are present locally versus still need fetching.
-
-**`fetch`** — download a platform's annotation (ordering + `.cm` mask + per-probe
-`coord.tsv.gz`), or a genome build's `seqinfo/gaps/cytoband`, into the store,
-verifying every file against a compiled-in digest. **The only command that touches
-the network**, and it never prompts. See [the store](#data-files-and-the-store).
+**`version`** — the sesame version, the yame it was built against, the
+annotation tags that come with that yame, and the store path in use. There is
+no `fetch` subcommand: annotation is downloaded by `yame fetch`. See
+[the store](#data-files-and-the-store).
 
 ---
 
@@ -288,35 +292,59 @@ library path so they stay bit-exact against R.
 
 ## Data files and the store
 
-Ordering tables, masks, and per-probe coordinates live in
+Ordering tables, masks, per-probe coordinates and SNP tables live in
 [`zhou-lab/InfiniumAnnotation`](https://github.com/zhou-lab/InfiniumAnnotation),
-one folder per platform, versioned by **git tag** (this build pins **v7**, at which
-all four platforms are published). `sesame fetch <platform>` mirrors that folder
-into the local **store**:
+one folder per platform, versioned by **git tag**. **sesame does not download
+them** — [`yame`](https://github.com/zhou-lab/YAME) owns fetching for the whole
+tool suite, and `yame fetch InfiniumAnnotation/EPICv2` mirrors that folder into
+the shared **store**:
 
 ```
-<store>/EPICv2/SHA256SUMS               byte-identical copy of the remote
-<store>/EPICv2/EPICv2.ordering.tsv.gz
-<store>/EPICv2/EPICv2.hg38.mask.cm(.idx)
-<store>/EPICv2/EPICv2.hg38.coord.tsv.gz
+<store>/InfiniumAnnotation/EPICv2/SHA256SUMS          byte-identical copy of the remote
+<store>/InfiniumAnnotation/EPICv2/EPICv2.ordering.tsv.gz
+<store>/InfiniumAnnotation/EPICv2/EPICv2.hg38.mask.cm(.idx)
+<store>/InfiniumAnnotation/EPICv2/EPICv2.hg38.coord.tsv.gz
+<store>/InfiniumAnnotation/EPICv2/EPICv2.hg38.snp.tsv.gz
+<store>/genomes/hg38/seqinfo.tsv.gz  gaps  cytoband  genes.bed.gz(.tbi)
 ```
 
-so `cd <store>/EPICv2 && shasum -a 256 -c SHA256SUMS` verifies it by hand. Fetch
-pulls `SHA256SUMS` first, checks it against a digest compiled into the build (a
-hard trust anchor), then verifies every file; anything already present with the
-right digest is skipped. Genome-level annotation is separate —
-`sesame fetch genome hg38` pulls `seqinfo/gaps/cytoband` from
-[`zhou-lab/genomes`](https://github.com/zhou-lab/genomes) into `<store>/genome/hg38/`
-the same way (hg38, mm10, mm39 published).
+so `cd <store>/InfiniumAnnotation/EPICv2 && shasum -a 256 -c SHA256SUMS`
+verifies it by hand. The path is keyed by the upstream repo and the platform
+rather than by which tool asked, which is what makes one download serve
+sesame, kycg and yame at once. Genome-level annotation comes the same way from
+[`zhou-lab/genomes`](https://github.com/zhou-lab/genomes) via `yame fetch
+genomes/hg38` (hg38, mm10, mm39 published); it drives CNV binning, the CNV
+ideogram, and `region --gene`.
 
-**Store location**, resolved in order: `$SESAME_INDEX_DIR` → `<dir of the
-binary>/data` (a checkout is found from any cwd) → `$XDG_CACHE_HOME/sesame` /
-`~/Library/Caches/sesame` / `~/.cache/sesame`. **Ordering lookup:** `--index
-<path>` → `<store>/<platform>/…ordering.tsv.gz` → `./…ordering.tsv.gz`.
+**Store location:** `$YAME_DATA_HOME`, else
+`${XDG_DATA_HOME:-~/.local/share}/yame` — one variable for the whole suite,
+because a shared store only dedupes if every tool agrees where it is. It is the
+*data* tier rather than a cache tier on purpose: these are large references that
+should survive somebody clearing `~/.cache`. **Asset lookup:** `--index` /
+`--coords` / `--normals` / `--snp` → `<store>/InfiniumAnnotation/<platform>/` →
+`./`.
 
-**sesame never downloads implicitly and never prompts** — a prompt would hang a
-Nextflow job or Docker build silently. If an index is missing you get an error
-naming the exact `fetch` command to run.
+**sesame has no network code at all** — it never downloads, never prompts (a
+prompt would hang a Nextflow job or Docker build silently), and never falls back
+to the network when an asset is absent. You get an error naming the exact `yame
+fetch` to run and the annotation tag this build expects.
+
+One asset is deliberately not published: the CNV normal panel
+(`<platform>.cnvnormals.cg`). Build one with `make cnv-normals`, or pass your
+own with `cnv --normals`.
+
+**Versions travel together.** `sesame version` prints the yame this binary was
+built against and the annotation tags that come with it, e.g.
+
+```
+sesame 0.2.0 (yame v1.29; InfiniumAnnotation v8.1, genomes v3)
+store   /home/you/.local/share/yame
+```
+
+The tags are not sesame's own: they come from yame's shared catalog
+(`YAME/tools/registry/TAGS`), so every tool in the suite pins the same
+annotation generation and `src/registry.h` is regenerated from it with `make
+registry`. Use a `yame` at least as new as the one named there.
 
 ## Configuration
 
@@ -324,10 +352,9 @@ Flags plus a few environment variables; no config file.
 
 | variable | effect |
 |---|---|
-| `SESAME_INDEX_DIR` | the store — where `fetch` writes and indices/masks are looked up |
-| `XDG_CACHE_HOME` | fallback store root when `SESAME_INDEX_DIR` is unset and no `data/` sits beside the binary |
+| `YAME_DATA_HOME` | the shared store — where `yame fetch` writes and sesame looks up orderings, masks, coordinates and SNP tables |
+| `XDG_DATA_HOME` | fallback store root (`$XDG_DATA_HOME/yame`) when `YAME_DATA_HOME` is unset |
 | `TMPDIR` | where a batch's temp-file-backed result matrix is created |
-| `NO_COLOR` | disable ANSI color in `index-info` (also auto-off when stdout is not a TTY) |
 | `SESAME_TEST_IDATS` | test IDAT directory for `make test` (default `~/repo/InfiniumTestIDATs`) |
 
 ## Exit status

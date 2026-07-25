@@ -86,57 +86,39 @@ typedef struct sesame_index_t sesame_index_t;
  * sesameData's idatSignature. */
 const char *sesame_platform_from_beads(int32_t beads);
 
-/* The annotation tag this build pins, and whose digests it can verify. */
-const char *sesame_default_tag(void);
-
-/* The index store -- where fetch writes, and where the active-version links
- * live. One variable, since the store is managed (see sesame_index_activate),
- * not a cache:
- *   $SESAME_INDEX_DIR | <dir of the binary>/data | $XDG_CACHE_HOME/sesame
- *                     | ~/Library/Caches/sesame (macOS) | ~/.cache/sesame
- * The binary-relative default means a checkout is found from any cwd, while an
- * installed binary (no data/ beside it) falls through to the XDG store.
+/* The shared asset store, read-only as far as sesame is concerned -- `yame
+ * fetch` fills it. One variable for the whole suite, because a store only
+ * dedupes if every tool agrees where it is:
+ *   $YAME_DATA_HOME | ${XDG_DATA_HOME:-~/.local/share}/yame
  * Returns out. */
 const char *sesame_store_dir(char *out, size_t n);
 
-/* Finds an existing index for platform. 0 and fills out on success, -1 if
- * absent. Never downloads, never prompts. */
+/* Finds a per-platform asset at <store>/InfiniumAnnotation/<platform>/<file>,
+ * then ./<file>. 0 and fills out on success, -1 if absent. Never downloads,
+ * never prompts. */
+int sesame_asset_locate(const char *platform, const char *file,
+                        char *out, size_t n);
+
+/* The directory those assets live in, whether or not it exists yet -- for
+ * callers that scan it rather than name one file. */
+void sesame_asset_dir(const char *platform, char *out, size_t n);
+
+/* Finds an existing ordering table for platform. 0 and fills out on success,
+ * -1 if absent. */
 int sesame_index_locate(const char *platform, char *out, size_t n);
 
-/* Point <store>/current at <tag> (relative link, atomic rename), selecting that
- * annotation snapshot for every platform at once. */
-int sesame_index_activate(const char *store, const char *tag, sesame_err_t *err);
-
-/* The tag `current` points at. 0 on success. */
-
-/* Fills msg with actionable "no index found, here is how to fix it" text. */
-void sesame_index_missing_help(const char *platform, char *msg, size_t n);
-
-/* Fetch one platform at the pinned tag into the store: pull its SHA256SUMS
- * (verified against a digest compiled into this build), then every file it
- * lists (ordering table + the .cm mask). Files already present with the right
- * digest are skipped. out_path receives the ordering table's path.
- *
- * This and sesame_fetch_all are the ONLY paths that touch the network -- nothing
- * downloads implicitly and nothing ever prompts, so behaviour is identical with
- * or without a TTY. */
-int sesame_fetch_index(const char *platform, int force,
-                       char *out_path, size_t out_n, sesame_err_t *err);
-
-/* Fetch every platform published at the pinned tag. */
-int sesame_fetch_all(int force, sesame_err_t *err);
-
-/* Fetch one genome's genome-level annotation (seqinfo, gaps, cytoband) from the
- * zhou-lab/genomes repo into <store>/genome/<genome>/, mirroring the remote --
- * same SHA256SUMS-anchored, digest-verified, de-duplicated path as
- * sesame_fetch_index. These files drive CNV binning (seqinfo+gaps) and the CNV
- * ideogram (cytoband). Genome-level: shared by every platform of the build. */
-int sesame_fetch_genome(const char *genome, int force, sesame_err_t *err);
-
-/* Finds a fetched genome file (e.g. "seqinfo.tsv.gz") in the store. 0 and fills
- * out on success, -1 if absent. Never downloads. */
+/* Finds a genome-level file (e.g. "seqinfo.tsv.gz") at
+ * <store>/genomes/<genome>/. These drive CNV binning (seqinfo+gaps), the CNV
+ * ideogram (cytoband) and `region --gene` (genes.bed.gz). 0 on success. */
 int sesame_genome_locate(const char *genome, const char *file,
                          char *out, size_t n);
+
+/* Fill msg with actionable "not in the store, here is the yame fetch to run"
+ * text, naming the asset tag this build expects. */
+void sesame_index_missing_help(const char *platform, char *msg, size_t n);
+void sesame_asset_missing_help(const char *platform, const char *file,
+                               char *msg, size_t n);
+void sesame_genome_missing_help(const char *genome, char *msg, size_t n);
 
 sesame_index_t *sesame_index_open(const char *path, sesame_err_t *err);
 void            sesame_index_close(sesame_index_t *ix);
