@@ -20,7 +20,17 @@ CFLAGS  += -DSESAME_HAVE_CURL -D_GNU_SOURCE -std=c11 -Wall -Wextra -Wpedantic -W
 # command-line CFLAGS= override would drop.
 CFLAGS  += $(EXTRA_CFLAGS)
 LDFLAGS += $(EXTRA_LDFLAGS)
-LDLIBS  += -lz -lm -lcurl
+
+# libcurl via curl-config rather than a bare -lcurl. The downloading now lives
+# in libyame.a, so YAME and sesame must resolve to the SAME libcurl: a bare
+# -lcurl picks whatever the linker finds first, which on a conda toolchain is
+# the system one, and it then fails to link against conda's OpenSSL. YAME's
+# Makefile already asks curl-config; asking it here too keeps the two in step.
+CURL_LIBS := $(shell curl-config --libs 2>/dev/null)
+ifeq ($(CURL_LIBS),)
+  CURL_LIBS := -lcurl
+endif
+LDLIBS  += -lz -lm $(CURL_LIBS)
 
 # --- YAME: linked directly for reading .cm masks (both AGPL). Built from the
 #     pinned submodule so the static lib never goes stale. ---
@@ -65,6 +75,14 @@ src/cgwrite.o: src/cgwrite.c include/sesame.h src/internal.h | $(YAME_LIB)
 
 # attach.c also includes YAME headers; same relaxed rule as cgwrite.o.
 src/attach.o: src/attach.c include/sesame.h src/internal.h | $(YAME_LIB)
+	$(CC) -O2 -g -std=gnu11 -Wall -Iinclude $(YAME_INC) $(EXTRA_CFLAGS) -c -o $@ $<
+
+# cache.c and sha256.c now use YAME's shared asset store (assets.h) rather than
+# their own downloader and hash; same relaxed rule as the others.
+src/cache.o: src/cache.c include/sesame.h src/internal.h src/registry.h | $(YAME_LIB)
+	$(CC) -O2 -g -std=gnu11 -Wall -Iinclude $(YAME_INC) $(EXTRA_CFLAGS) -c -o $@ $<
+
+src/sha256.o: src/sha256.c include/sesame.h src/internal.h | $(YAME_LIB)
 	$(CC) -O2 -g -std=gnu11 -Wall -Iinclude $(YAME_INC) $(EXTRA_CFLAGS) -c -o $@ $<
 
 %.o: %.c include/sesame.h src/internal.h src/registry.h
