@@ -83,8 +83,7 @@ sesame cnv --platform EPICv2 --normals EPICv2.cnvnormals.cg \
 sesame is entirely offline -- it has no network code at all. `yame fetch` is
 the one download path, and it fills a store every tool in the suite reads, so a
 file fetched once serves sesame, kycg and yame alike. `sesame version` names
-the yame this binary was built against and the annotation tags that come with
-it.
+the yame this binary was built against and the store it reads.
 
 ## Commands
 
@@ -99,7 +98,7 @@ sesame region       (<chr:beg-end>|--gene NAME) --betas <beta.cg> # region betas
 sesame deidentify   [--randomize|-r --seed N] <prefix|idat>        # strip SNP fingerprint from IDAT
 sesame attach-probe [--platform P] <file.cg|.cm|.tsv>  # label a positional file with Probe_IDs
 sesame idat-dump    [--head N] [--tsv] <file.idat[.gz]># inspect a raw IDAT
-sesame version                                         # version, yame + annotation tags, store
+sesame version                                         # version, the yame it links, the store
 ```
 
 ---
@@ -333,18 +332,21 @@ One asset is deliberately not published: the CNV normal panel
 (`<platform>.cnvnormals.cg`). Build one with `make cnv-normals`, or pass your
 own with `cnv --normals`.
 
-**Versions travel together.** `sesame version` prints the yame this binary was
-built against and the annotation tags that come with it, e.g.
+**Versions travel together.** `sesame version` (and the top of `sesame help`)
+names the yame this binary was built against and the store it will read:
 
 ```
-sesame 0.2.0 (yame v1.29; InfiniumAnnotation v8.1, genomes v3)
-store   /home/you/.local/share/yame
+sesame 0.2.0
+    built against  YAME v1.29
+    store          /home/you/.local/share/yame   ($YAME_DATA_HOME unset; yame fetch fills it)
 ```
 
-The tags are not sesame's own: they come from yame's shared catalog
-(`YAME/tools/registry/TAGS`), so every tool in the suite pins the same
-annotation generation and `src/registry.h` is regenerated from it with `make
-registry`. Use a `yame` at least as new as the one named there.
+sesame links `libyame.a` from a pinned submodule, so that version is a fixed
+fact of the build — and with it the store layout and the annotation tags, which
+come from yame's shared catalog (`YAME/tools/registry/TAGS`) rather than from
+sesame. Every tool in the suite therefore pins the same annotation generation;
+`src/registry.h` is regenerated from that catalog with `make registry`. Use a
+`yame` at least as new as the one named here.
 
 ## Configuration
 

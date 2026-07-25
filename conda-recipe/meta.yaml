@@ -45,7 +45,7 @@ test:
   commands:
     - sesame version
     # the version line must name the yame it was built against
-    - sesame version | grep -q "yame v"
+    - sesame version | grep -q "built against  YAME"
     # and the help must send people to yame for data, not to a sesame fetch
     - sesame help 2>&1 | grep -q "yame fetch"
 

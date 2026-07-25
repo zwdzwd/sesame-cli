@@ -25,6 +25,23 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+/* The two facts worth stating right under the title: the backend this build is
+ * coupled to, and where its store is. sesame links libyame.a from a pinned
+ * submodule, so the YAME version is fixed at build time -- the store layout and
+ * the annotation tags all come from it, and yame is what fills the store that
+ * every ordering, mask, coord and SNP lookup resolves against. */
+static void print_build_info(FILE *out)
+{
+    const char *env = getenv("YAME_DATA_HOME");
+    char store[4096];
+
+    sesame_store_dir(store, sizeof store);
+    fprintf(out, "    built against  YAME %s\n", SESAME_YAME_VERSION);
+    fprintf(out, "    store          %s   %s\n", store,
+            env && *env ? "(from $YAME_DATA_HOME)"
+                        : "($YAME_DATA_HOME unset; yame fetch fills it)");
+}
+
 /* Top-level command index -- kept brief on purpose; each command's own -h
  * (e.g. `sesame preprocess -h`) carries the full option detail. */
 static int usage(void)
@@ -33,10 +50,11 @@ static int usage(void)
       "\n"
       "Program: sesame -- standalone Infinium DNA methylation toolkit\n"
       "Version: " SESAME_VERSION "\n"
-      "Built:   against YAME " SESAME_YAME_VERSION
-                 " -- InfiniumAnnotation " SESAME_DEFAULT_TAG
-                 ", genomes " SESAME_GENOME_TAG "\n"
       "Source:  https://github.com/zwdzwd/sesame-cli\n"
+      "\n",
+      stderr);
+    print_build_info(stderr);
+    fputs(
       "\n"
       "Usage:   sesame <command> [options]\n"
       "\n"
@@ -1890,15 +1908,8 @@ int main(int argc, char **argv)
     if (strcmp(argv[1], "attach-probe") == 0)
         return cmd_attach_probe(argc - 2, argv + 2);
     if (strcmp(argv[1], "version") == 0 || strcmp(argv[1], "--version") == 0) {
-        /* Name the yame this binary was built against. yame fills the store
-         * sesame reads, and its catalog fixes the annotation tags, so the three
-         * belong on one line -- that is the whole compatibility statement. */
-        char store[4096];
-        sesame_store_dir(store, sizeof store);
-        printf("sesame %s (yame %s; InfiniumAnnotation %s, genomes %s)\n",
-               SESAME_VERSION, SESAME_YAME_VERSION,
-               SESAME_DEFAULT_TAG, SESAME_GENOME_TAG);
-        printf("store   %s\n", store);
+        printf("sesame %s\n", SESAME_VERSION);
+        print_build_info(stdout);
         return 0;
     }
     return usage();
