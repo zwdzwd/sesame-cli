@@ -27,10 +27,9 @@
   h1 b{font-weight:800}
   .badge{margin-left:9px;font-size:.72rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
      color:var(--accent);background:var(--accent-soft);border:1px solid var(--line);padding:2px 8px;border-radius:20px;vertical-align:middle}
-  .badge.ver{margin-left:6px;color:var(--muted);background:transparent;text-transform:none;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
   /* title row: heading, badges, install box and cite button on one wrapping line */
   .titlerow{display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px}
-  .titlerow .badge,.titlerow .badge.ver{margin-left:0}
+  .titlerow .badge{margin-left:0}
   .expand{color:var(--muted);margin:8px 0 12px;font-size:.9rem;max-width:78ch}
   /* install: the command itself is the button — click to copy */
   .install{display:inline-flex;align-items:stretch;gap:0;border:1px solid var(--accent);border-radius:6px;overflow:hidden;margin-left:4px}
@@ -135,7 +134,7 @@
 <header>
   <div class="titlerow">
     <h1><b>SE</b>nsible <b>S</b>tep-wise <b>A</b>nalysis of DNA <b>ME</b>thylation</h1>
-    <span class="badge">cli</span><span class="badge ver">v0.2.0</span>
+    <span class="badge">cli</span>
     <span class="install">
       <button id="install-btn" type="button"
               data-cmd="conda install -c zhou-lab -c conda-forge sesame-cli"
@@ -366,8 +365,8 @@ address    mean  sd   nbeads
     <div>
       <h3>Which yame, which store?</h3>
       <pre><code>$ sesame <span class="sub">version</span>
-sesame 0.2.0
-    built against  YAME v1.29
+sesame &lt;version&gt;
+    built against  YAME &lt;version&gt;
     store          ~/.local/share/yame</code></pre>
     </div>
   </div>

@@ -336,8 +336,8 @@ own with `cnv --normals`.
 names the yame this binary was built against and the store it will read:
 
 ```
-sesame 0.2.0
-    built against  YAME v1.29
+sesame <version>
+    built against  YAME <version>
     store          /home/you/.local/share/yame   ($YAME_DATA_HOME unset; yame fetch fills it)
 ```
 
