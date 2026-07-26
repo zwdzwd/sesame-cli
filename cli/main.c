@@ -7,6 +7,7 @@
 #include "sesame.h"
 #include "../src/internal.h"
 #include "../src/registry.h"   /* the asset tags this build expects */
+#include "yame_ui.h"           /* YAME: shared colour + usage rendering */
 
 /* Set by the Makefile from `yame-config --version`. A build that bypasses the
  * Makefile still compiles; it just cannot name the yame it linked. */
@@ -25,6 +26,17 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+/* The help is styled, but only when someone is looking: every colour below
+ * comes from YAME's ui.c, which returns an empty string off a TTY, under
+ * NO_COLOR, or on a dumb terminal. So `sesame 2>&1 | less` stays readable and
+ * the bytes are what they were before any of this. Sharing the helpers with
+ * yame and kycg is also what keeps the three from looking like different
+ * programs. */
+#define H_TITLE  yame_ui_bold()
+#define H_KEY    yame_ui_cyan()
+#define H_NOTE   yame_ui_dim()
+#define H_OFF    yame_ui_reset()
+
 /* The two facts worth stating right under the title: the backend this build is
  * coupled to, and where its store is. sesame links libyame.a from a pinned
  * submodule, so the YAME version is fixed at build time -- the store layout and
@@ -36,314 +48,317 @@ static void print_build_info(FILE *out)
     char store[4096];
 
     sesame_store_dir(store, sizeof store);
-    fprintf(out, "    built against  YAME %s\n", SESAME_YAME_VERSION);
-    fprintf(out, "    store          %s   %s\n", store,
-            env && *env ? "(from $YAME_DATA_HOME)"
-                        : "($YAME_DATA_HOME unset; yame fetch fills it)");
+    fprintf(out, "    %sbuilt against%s  YAME %s\n", H_NOTE, H_OFF,
+            SESAME_YAME_VERSION);
+    fprintf(out, "    %sstore%s          %s   %s%s%s\n", H_NOTE, H_OFF, store,
+            H_NOTE, env && *env ? "(from $YAME_DATA_HOME)"
+                                : "($YAME_DATA_HOME unset; yame fetch fills it)",
+            H_OFF);
+}
+
+/* One row of the command index. The padding sits OUTSIDE the colour span, so
+ * the reset lands right after the name rather than after a run of spaces. */
+static void cmd_row(const char *name, const char *desc)
+{
+    int pad = 13 - (int)strlen(name);
+    if (pad < 1) pad = 1;
+    fprintf(stderr, "    %s%s%s%*s%s\n", H_KEY, name, H_OFF, pad, "", desc);
 }
 
 /* Top-level command index -- kept brief on purpose; each command's own -h
  * (e.g. `sesame preprocess -h`) carries the full option detail. */
 static int usage(void)
 {
-    fputs(
-      "\n"
-      "Program: sesame -- standalone Infinium DNA methylation toolkit\n"
-      "Version: " SESAME_VERSION "\n"
-      "Source:  https://github.com/zwdzwd/sesame-cli\n"
-      "\n",
-      stderr);
+    fprintf(stderr, "\n  %ssesame " SESAME_VERSION "%s  %s-- standalone Infinium "
+            "DNA methylation toolkit%s\n\n", H_TITLE, H_OFF, H_NOTE, H_OFF);
     print_build_info(stderr);
-    fputs(
-      "\n"
-      "Usage:   sesame <command> [options]\n"
-      "\n"
-      "Preprocessing\n"
-      "  preprocess     IDATs -> betas / signal / detection p-value / QC (prep QCDPB)\n"
-      "\n"
-      "Analysis\n"
-      "  dml            Differential methylation: per-probe linear models\n"
-      "  cnv            Copy number: log2 ratio vs a normal panel + CBS segmentation\n"
-      "  vcf            Genotype the SNP probes into a VCF (formatVCF)\n"
-      "  region         Extract a region's betas as long-form TSV for plotting\n"
-      "  mliftover      Lift a beta.cg to another platform (EPICv2<->EPIC<->HM450)\n"
-      "  impute         Fill missing betas (matrix mean or genomic neighbours)\n"
-      "\n"
-      "Inspect / convert\n"
-      "  attach-probe   Prepend Probe_IDs to a positional .cg / .tsv file\n"
-      "  idat-dump      Dump raw IDAT records, or a summary header\n"
-      "  deidentify     Remove the genetic fingerprint (SNP probes) from an IDAT\n"
-      "\n"
-      "Data store\n"
-      "  Annotation is fetched by yame, not by sesame: `yame fetch` fills the\n"
-      "  shared store at $YAME_DATA_HOME that every tool in the suite reads.\n"
-      "\n"
-      "Other\n"
-      "  version        Print the version and exit\n"
-      "  help           Show this help; `sesame <command> -h` for command detail\n"
-      "\n"
-      "Run `sesame <command> -h` for a command's options.\n"
-      "\n",
-      stderr);
+
+    fprintf(stderr, "\n%sUsage%s\n    sesame <command> [options]\n",
+            H_TITLE, H_OFF);
+
+    fprintf(stderr, "\n%sPreprocessing%s\n", H_TITLE, H_OFF);
+    cmd_row("preprocess", "IDATs -> betas / signal / detection p-value / QC (QCDPB)");
+
+    fprintf(stderr, "\n%sAnalysis%s\n", H_TITLE, H_OFF);
+    cmd_row("dml",       "differential methylation: per-probe linear models");
+    cmd_row("cnv",       "copy number: log2 ratio vs a normal panel + CBS");
+    cmd_row("vcf",       "genotype the SNP probes into a VCF (formatVCF)");
+    cmd_row("region",    "a region's betas as long-form TSV, for plotting");
+    cmd_row("mliftover", "lift a beta.cg across platforms (EPICv2/EPIC/HM450)");
+    cmd_row("impute",    "fill missing betas (matrix mean or genomic neighbours)");
+
+    fprintf(stderr, "\n%sInspect / convert%s\n", H_TITLE, H_OFF);
+    cmd_row("attach-probe", "prepend Probe_IDs to a positional .cg / .tsv");
+    cmd_row("idat-dump",    "dump raw IDAT records, or a summary header");
+    cmd_row("deidentify",   "remove the genetic fingerprint (SNP probes)");
+
+    fprintf(stderr, "\n%sOther%s\n", H_TITLE, H_OFF);
+    cmd_row("version", "version, the yame it links, the store");
+    cmd_row("help",    "this help");
+
+    fprintf(stderr, "\n%sData%s\n", H_TITLE, H_OFF);
+    fprintf(stderr, "    %ssesame downloads nothing. %syame fetch%s%s fills the shared "
+            "store\n    every tool in the suite reads.%s\n",
+            H_NOTE, H_KEY, H_OFF, H_NOTE, H_OFF);
+
+    fprintf(stderr, "\n    %ssesame <command> -h%s %sfor a command's options%s\n\n",
+            H_KEY, H_OFF, H_NOTE, H_OFF);
     return 1;
 }
 
 static int usage_preprocess(void)
 {
-    fputs(
-      "Usage: sesame preprocess [options] <prefix|dir> [<prefix|dir> ...]\n"
-      "\n"
-      "  Preprocess Infinium IDATs to methylation levels. Each argument is an IDAT\n"
-      "  prefix (<prefix>_Grn.idat / _Red.idat, .gz ok) OR a directory, searched\n"
-      "  recursively for IDAT pairs (found prefixes are sorted). Apply the --prep\n"
-      "  steps to every sample and write one indexed YAME .cg per requested output,\n"
-      "  over the whole cohort. A failed sample becomes an NA column, exit status 1.\n"
-      "\n"
-      "Options:\n"
-      "  --output LIST      Comma list (default beta,intensity,pval,qc) from:\n"
-      "                       beta, intensity, total_intensity, pval, qc\n"
-      "  --prep STEPS       Prep code (default QCDPB): Q qualityMask, C inferChannel,\n"
-      "                       D dyeBias(NL), E dyeBias(linear), P pOOBAH, B noob.\n"
-      "                       Empty string = raw betas.\n"
-      "  --raw-signal       Take intensity/total from the raw signal, not the prep.\n"
-      "  --detection METHOD pval source: poobah (default) or pneg (negative-control\n"
-      "                       ECDF, detectionPnegEcdf). Masking always uses pOOBAH.\n"
-      "  --collapse         Average replicate probes to their cg-prefix in the beta\n"
-      "                       output (betasCollapseToPfx); axis -> beta.cg.probes.\n"
-      "  --platform P       EPIC | EPICv2 | HM450 | MSA (else from the bead count).\n"
-      "  --index FILE       Ordering .tsv.gz (overrides --platform / detection).\n"
-      "  --min-beads N      Mask probes with < N beads (default 0).\n"
-      "  --out DIR          Output directory (default: current directory).\n"
-      "  --tmp DIR          Scratch dir for the sample-major matrix (default $TMPDIR).\n"
-      "  --threads N, -t N  Worker threads (default: number of CPUs).\n"
-      "\n"
-      "Outputs (written under --out):\n"
-      "  beta.cg  fmt4 betas    intensity.cg  fmt3 M/U    total_intensity.cg  fmt4\n"
-      "  pval.cg  fmt4 det. p   qc.tsv  per-sample QC\n"
-      "\n"
-      "If --index is omitted the platform is detected from the bead count and the\n"
-      "ordering is looked up in the shared store ($YAME_DATA_HOME), then ./.\n",
-      stderr);
+    yame_usage_head("sesame preprocess [options] <prefix|dir> [<prefix|dir> ...]");
+    fputs("\n", stderr);
+    yame_usage_text("Preprocess Infinium IDATs to methylation levels. Each argument is an");
+    yame_usage_text("IDAT prefix (<prefix>_Grn.idat / _Red.idat, .gz ok) OR a directory,");
+    yame_usage_text("searched recursively for pairs (found prefixes are sorted). Applies");
+    yame_usage_text("--prep to every sample and writes one indexed YAME .cg per requested");
+    yame_usage_text("output, over the whole cohort. A failed sample becomes an NA column");
+    yame_usage_text("and the exit status is 1.");
+
+    yame_usage_sec("Options:");
+    yame_usage_opt("--output LIST", "comma list (default beta,intensity,pval,qc) from");
+    yame_usage_cont("beta, intensity, total_intensity, pval, qc");
+    yame_usage_opt("--prep STEPS", "prep code (default QCDPB): Q qualityMask,");
+    yame_usage_cont("C inferChannel, D dyeBias(NL), E dyeBias(linear),");
+    yame_usage_cont("P pOOBAH, B noob. Empty string = raw betas.");
+    yame_usage_opt("--raw-signal", "take intensity/total from the raw signal, not the prep");
+    yame_usage_opt("--detection M", "pval source: poobah (default) or pneg (negative-");
+    yame_usage_cont("control ECDF). Masking always uses pOOBAH.");
+    yame_usage_opt("--collapse", "average replicate probes to their cg-prefix in the");
+    yame_usage_cont("beta output; axis -> beta.cg.probes");
+    yame_usage_opt("--platform P", "EPIC | EPICv2 | HM450 | MSA (else from bead count)");
+    yame_usage_opt("--index FILE", "ordering .tsv.gz (overrides --platform/detection)");
+    yame_usage_opt("--min-beads N", "mask probes with < N beads (default 0)");
+    yame_usage_opt("--out DIR", "output directory (default: current directory)");
+    yame_usage_opt("--tmp DIR", "scratch for the sample-major matrix (default $TMPDIR)");
+    yame_usage_opt("--threads N, -t", "worker threads (default: number of CPUs)");
+
+    yame_usage_sec("Outputs (under --out):");
+    yame_usage_text("beta.cg  fmt4 betas     intensity.cg  fmt3 M/U");
+    yame_usage_text("pval.cg  fmt4 det. p    total_intensity.cg  fmt4");
+    yame_usage_text("qc.tsv   per-sample QC");
+
+    yame_usage_sec("Notes:");
+    yame_usage_text("Without --index the platform comes from the bead count and the");
+    yame_usage_text("ordering from the shared store ($YAME_DATA_HOME), then ./.");
     return 1;
 }
 
 static int usage_dml(void)
 {
-    fputs(
-      "Usage: sesame dml --betas <beta.cg|matrix.tsv>\n"
-      "                  (--formula '~a+b' --meta <s.tsv> | --design <X.tsv>)\n"
-      "                  [--index <ordering.tsv.gz>] [--threads N]\n"
-      "\n"
-      "  Per-probe differential methylation: OLS of each probe's betas on the\n"
-      "  design, with per-coefficient t-tests, a holdout F-test per categorical\n"
-      "  variable, effect sizes, and BH-adjusted p-values (TSV on stdout).\n"
-      "\n"
-      "Options:\n"
-      "  --betas FILE       A preprocess beta.cg (needs --index for Probe_IDs) or a\n"
-      "                       Probe_ID x sample matrix TSV.\n"
-      "  --formula '~a+b'   Model over --meta columns (categoricals auto-dummied).\n"
-      "  --meta FILE        Sample table; its first column matches the sample names.\n"
-      "  --design FILE      A numeric design matrix (for interactions), in place of\n"
-      "                       --formula/--meta.\n"
-      "  --index FILE       Ordering .tsv.gz (required when --betas is a .cg).\n"
-      "  --threads N, -t N  Worker threads (default: number of CPUs).\n",
-      stderr);
+    yame_usage_head("sesame dml --betas <beta.cg|matrix.tsv> [options]");
+    yame_usage_text("(--formula '~a+b' --meta <s.tsv> | --design <X.tsv>)");
+    fputs("\n", stderr);
+    yame_usage_text("Per-probe differential methylation: OLS of each probe's betas on the");
+    yame_usage_text("design, with per-coefficient t-tests, a holdout F-test per");
+    yame_usage_text("categorical variable, effect sizes and BH-adjusted p-values. TSV on");
+    yame_usage_text("stdout, one row per probe.");
+
+    yame_usage_sec("Options:");
+    yame_usage_opt("--betas FILE", "a preprocess beta.cg (needs --index for Probe_IDs)");
+    yame_usage_cont("or a Probe_ID x sample matrix TSV");
+    yame_usage_opt("--formula '~a+b'", "model over --meta columns (categoricals dummied)");
+    yame_usage_opt("--meta FILE", "sample table; first column matches sample names");
+    yame_usage_opt("--design FILE", "numeric design matrix (for interactions), in");
+    yame_usage_cont("place of --formula/--meta");
+    yame_usage_opt("--index FILE", "ordering .tsv.gz (required when --betas is a .cg)");
+    yame_usage_opt("--threads N, -t", "worker threads (default: number of CPUs)");
     return 1;
 }
 
 static int usage_cnv(void)
 {
-    fputs(
-      "Usage: sesame cnv [options] <target.cg> <segments.tsv> <bins.tsv>\n"
-      "       sesame cnv --probes [options] <target.cg> <segments.tsv> <probes.tsv>\n"
-      "\n"
-      "  Copy number: regress the target's per-probe total intensity on a panel of\n"
-      "  normals (OLS), take log2(target/fitted) per probe, bin along the genome\n"
-      "  (median per bin), and segment by circular binary segmentation. The target\n"
-      "  may hold several samples -- one profile each.\n"
-      "\n"
-      "  Writes two required files: the CBS <segments.tsv>, and a detail file that\n"
-      "  is per-bin log2 ratios by default, or per-probe with --probes. cinderplot\n"
-      "  reads the two as separate layers (segment step + points).\n"
-      "\n"
-      "Arguments (all required):\n"
-      "  <target.cg>        Total-intensity .cg (from `preprocess --raw-signal\n"
-      "                       --output total_intensity`); may hold several samples.\n"
-      "  <segments.tsv>     Output: sample chrom start end nbin seg.mean\n"
-      "  <bins.tsv>         Output: sample chrom start end nprobes log2ratio\n"
-      "                       (or <probes.tsv>: sample Probe_ID chrom pos log2ratio)\n"
-      "\n"
-      "Options:\n"
-      "  --probes           Write per-probe rows to the detail file (not per-bin).\n"
-      "  --exclude LIST     Comma list of chromosomes to drop from both outputs\n"
-      "                       (e.g. chrY for a female sample; unreliable on arrays).\n"
-      "  --normals FILE     Normal panel .cg (default: the store's cnvnormals).\n"
-      "  --platform P       EPIC | EPICv2 | HM450 | MSA -- supplies the defaults below.\n"
-      "  --index FILE       Ordering .tsv.gz (overrides --platform).\n"
-      "  --coords FILE      Probe coordinate .tsv.gz (default: the store's).\n"
-      "  --genome BUILD     Genome build (default hg38).\n"
-      "  --tilewidth BP     Genome bin width (default 50000).\n"
-      "  --min-probes N     Drop bins with < N probes (default 20).\n"
-      "\n"
-      "normals/coords/genome default to the fetched store for --platform.\n",
-      stderr);
+    yame_usage_head("sesame cnv [options] <target.cg> <segments.tsv> <bins.tsv>");
+    yame_usage_text("sesame cnv --probes [options] <target.cg> <segments.tsv> <probes.tsv>");
+    fputs("\n", stderr);
+    yame_usage_text("Copy number: regress the target's per-probe total intensity on a");
+    yame_usage_text("panel of normals (OLS), take log2(target/fitted) per probe, bin");
+    yame_usage_text("along the genome (median per bin), and segment by circular binary");
+    yame_usage_text("segmentation. The target may hold several samples -- one profile");
+    yame_usage_text("each. Writes the CBS <segments.tsv> plus a detail file that is");
+    yame_usage_text("per-bin by default, or per-probe with --probes; cinderplot reads the");
+    yame_usage_text("two as separate layers (segment step + points).");
+
+    yame_usage_sec("Arguments (all required):");
+    yame_usage_opt("<target.cg>", "total-intensity .cg, from `preprocess --raw-signal");
+    yame_usage_cont("--output total_intensity`; may hold several samples");
+    yame_usage_opt("<segments.tsv>", "output: sample chrom start end nbin seg.mean");
+    yame_usage_opt("<bins.tsv>", "output: sample chrom start end nprobes log2ratio");
+    yame_usage_cont("(--probes: sample Probe_ID chrom pos log2ratio)");
+
+    yame_usage_sec("Options:");
+    yame_usage_opt("--probes", "write per-probe rows to the detail file, not per-bin");
+    yame_usage_opt("--exclude LIST", "comma list of chromosomes to drop from both outputs");
+    yame_usage_cont("(e.g. chrY for a female sample; unreliable on arrays)");
+    yame_usage_opt("--normals FILE", "normal panel .cg -- NOT shipped with the annotation;");
+    yame_usage_cont("build one with `make cnv-normals` or supply your own");
+    yame_usage_opt("--platform P", "EPIC | EPICv2 | HM450 | MSA; supplies the defaults");
+    yame_usage_opt("--index FILE", "ordering .tsv.gz (overrides --platform)");
+    yame_usage_opt("--coords FILE", "probe coordinate .tsv.gz (default: the store's)");
+    yame_usage_opt("--genome BUILD", "genome build (default hg38)");
+    yame_usage_opt("--tilewidth BP", "genome bin width (default 50000)");
+    yame_usage_opt("--min-probes N", "drop bins with < N probes (default 20)");
+
+    yame_usage_sec("Notes:");
+    yame_usage_text("coords/genome default to the store for --platform; the normal panel");
+    yame_usage_text("does not, since it is not published with the annotation.");
     return 1;
 }
 
 static int usage_vcf(void)
 {
-    fputs(
-      "Usage: sesame vcf <prefix> [options]\n"
-      "\n"
-      "  Genotype the SNP probes into a VCF (sesame formatVCF). Runs on the raw\n"
-      "  signal -- channel inference would erase the Type-I genotype. <prefix> is\n"
-      "  an IDAT pair. Sites-only VCF on stdout.\n"
-      "\n"
-      "Options:\n"
-      "  --platform P       EPIC | EPICv2 | HM450 | MSA (else from the bead count).\n"
-      "  --index FILE       Ordering .tsv.gz (overrides --platform).\n"
-      "  --snp FILE         SNP table (default: the store's <P>.<genome>.snp.tsv.gz).\n"
-      "  --genome BUILD     Genome build (default hg38).\n"
-      "  --variants         Keep only rs and channel-switching probes, dropping the\n"
-      "                       non-switching Infinium-I bulk (unlikely to vary).\n"
-      "  --min-beads N      Mask probes with < N beads (default 0).\n"
-      "  --out FILE, -o     Write here instead of stdout.\n",
-      stderr);
+    yame_usage_head("sesame vcf <prefix> [options]");
+    fputs("\n", stderr);
+    yame_usage_text("Genotype the SNP probes into a VCF (sesame formatVCF). Runs on the");
+    yame_usage_text("raw signal -- channel inference would erase the Type-I genotype.");
+    yame_usage_text("<prefix> is an IDAT pair. Sites-only VCF on stdout.");
+
+    yame_usage_sec("Options:");
+    yame_usage_opt("--platform P", "EPIC | EPICv2 | HM450 | MSA (else from bead count)");
+    yame_usage_opt("--index FILE", "ordering .tsv.gz (overrides --platform)");
+    yame_usage_opt("--snp FILE", "SNP table (default: the store's");
+    yame_usage_cont("<P>.<genome>.snp.tsv.gz)");
+    yame_usage_opt("--genome BUILD", "genome build (default hg38)");
+    yame_usage_opt("--variants", "keep only rs and channel-switching probes, dropping");
+    yame_usage_cont("the non-switching Infinium-I bulk (unlikely to vary)");
+    yame_usage_opt("--min-beads N", "mask probes with < N beads (default 0)");
+    yame_usage_opt("--out FILE, -o", "write here instead of stdout");
     return 1;
 }
 
 static int usage_region(void)
 {
-    fputs(
-      "Usage: sesame region (<chr:beg-end> | --gene <NAME>) --betas <beta.cg> [options]\n"
-      "\n"
-      "  Extract a region's betas from a multi-sample beta.cg as long-form TSV:\n"
-      "    chrom  beg  end  Probe_ID  beta  sample_name\n"
-      "  -- one row per (probe in region) x sample, the plot-ready feed for a\n"
-      "  locus / region view. Give an explicit chr:beg-end (commas ok) or a gene\n"
-      "  symbol via --gene, whose span is looked up in the GENCODE gene models.\n"
-      "\n"
-      "Options:\n"
-      "  --betas FILE       Multi-sample beta.cg (required).\n"
-      "  --gene NAME        Resolve the region from a gene symbol (e.g. ADA) rather\n"
-      "                       than a chr:beg-end.\n"
-      "  --gene-models FILE GENCODE genes.bed.gz for --gene (default: the store's).\n"
-      "  --pad BP           Extend the region by BP on each side (default 0).\n"
-      "  --platform P       EPIC | EPICv2 | HM450 | MSA -- supplies Probe_IDs/coords.\n"
-      "  --index FILE       Ordering .tsv.gz (overrides --platform).\n"
-      "  --coords FILE      Probe coordinate .tsv.gz (default: the store's).\n"
-      "  --genome BUILD     Genome build (default hg38).\n"
-      "  --out FILE, -o     Write here instead of stdout.\n",
-      stderr);
+    yame_usage_head("sesame region <chr:beg-end> --betas <beta.cg> [options]");
+    yame_usage_text("sesame region --gene <NAME> --betas <beta.cg> [options]");
+    fputs("\n", stderr);
+    yame_usage_text("Extract a region's betas from a multi-sample beta.cg as long-form");
+    yame_usage_text("TSV: chrom beg end Probe_ID beta sample_name -- one row per (probe");
+    yame_usage_text("in region) x sample, the plot-ready feed for a locus view. Give an");
+    yame_usage_text("explicit chr:beg-end (commas ok) or a gene symbol via --gene, whose");
+    yame_usage_text("span is looked up in the GENCODE gene models.");
+
+    yame_usage_sec("Options:");
+    yame_usage_opt("--betas FILE", "multi-sample beta.cg (required)");
+    yame_usage_opt("--gene NAME", "resolve the region from a gene symbol (e.g. ADA)");
+    yame_usage_cont("rather than a chr:beg-end");
+    yame_usage_opt("--gene-models F", "GENCODE genes.bed.gz for --gene (default: store)");
+    yame_usage_opt("--pad BP", "extend the region by BP on each side (default 0)");
+    yame_usage_opt("--platform P", "EPIC | EPICv2 | HM450 | MSA; Probe_IDs and coords");
+    yame_usage_opt("--index FILE", "ordering .tsv.gz (overrides --platform)");
+    yame_usage_opt("--coords FILE", "probe coordinate .tsv.gz (default: the store's)");
+    yame_usage_opt("--genome BUILD", "genome build (default hg38)");
+    yame_usage_opt("--out FILE, -o", "write here instead of stdout");
     return 1;
 }
 
 static int usage_liftover(void)
 {
-    fputs(
-      "Usage: sesame mliftover --to <platform> [options] <in.cg> <out.cg>\n"
-      "\n"
-      "  Lift a beta.cg from one Infinium platform to another (mLiftOver), by a\n"
-      "  probe-ID prefix join: EPICv2/MSA carry a _suffix that EPIC/HM450/HM27 lack,\n"
-      "  stripped on the modern side when crossing families; each target probe takes\n"
-      "  the first prefix-matched source beta (NA if none). The output is positional\n"
-      "  to the TARGET ordering -- a valid target-platform beta.cg.\n"
-      "\n"
-      "Options:\n"
-      "  --to P             Target platform: EPIC | EPICv2 | HM450 | MSA (required).\n"
-      "  --platform P       Source platform (sets the join direction; inferred from\n"
-      "                       --index's filename if omitted).\n"
-      "  --index FILE       Source ordering .tsv.gz (default: the store's).\n"
-      "  --index-to FILE    Target ordering .tsv.gz (default: the store's).\n"
-      "\n"
-      "  The empirical liftOver quality mappings and impute=TRUE are not ported.\n",
-      stderr);
+    yame_usage_head("sesame mliftover --to <platform> [options] <in.cg> <out.cg>");
+    fputs("\n", stderr);
+    yame_usage_text("Lift a beta.cg from one Infinium platform to another (mLiftOver), by");
+    yame_usage_text("a probe-ID prefix join: EPICv2/MSA carry a _suffix that");
+    yame_usage_text("EPIC/HM450/HM27 lack, stripped on the modern side when crossing");
+    yame_usage_text("families; each target probe takes the first prefix-matched source");
+    yame_usage_text("beta (NA if none). The output is positional to the TARGET ordering");
+    yame_usage_text("-- a valid target-platform beta.cg.");
+
+    yame_usage_sec("Options:");
+    yame_usage_opt("--to P", "target platform: EPIC | EPICv2 | HM450 | MSA");
+    yame_usage_cont("(required)");
+    yame_usage_opt("--platform P", "source platform, setting the join direction");
+    yame_usage_cont("(inferred from --index's filename if omitted)");
+    yame_usage_opt("--index FILE", "source ordering .tsv.gz (default: the store's)");
+    yame_usage_opt("--index-to FILE", "target ordering .tsv.gz (default: the store's)");
+
+    yame_usage_sec("Notes:");
+    yame_usage_text("The empirical liftOver quality mappings and impute=TRUE are not");
+    yame_usage_text("ported.");
     return 1;
 }
 
 static int usage_impute(void)
 {
-    fputs(
-      "Usage: sesame impute --method <mean|neighbors> [options] <in.cg> <out.cg>\n"
-      "\n"
-      "  Fill missing (NA) beta values in a beta.cg (imputeBetas*). Output is\n"
-      "  positional to the same ordering.\n"
-      "\n"
-      "  mean       imputeBetasMatrixByMean: replace each NA with a mean.\n"
-      "    --axis probe   mean of the probe across samples (default; R axis=1).\n"
-      "    --axis sample  mean of the sample across probes (R axis=2).\n"
-      "\n"
-      "  neighbors  imputeBetasByGenomicNeighbors: replace each missing probe with\n"
-      "             the mean of its nearest non-missing genomic neighbours.\n"
-      "    --platform P       EPIC | EPICv2 | HM450 | MSA (for the coord table).\n"
-      "    --coords FILE      Probe coordinate .tsv.gz (default: the store's\n"
-      "                         <P>.<genome>.coord.tsv.gz). Matches R for mapQ>=1\n"
-      "                         probes; differs only on mapQ=0 (multi-mapping) ones.\n"
-      "    --genome BUILD     Genome build (default hg38).\n"
-      "    --max-neighbors N  Up to N nearest neighbours (default 3).\n"
-      "    --max-dist BP      Search window in bp (default 10000).\n",
-      stderr);
+    yame_usage_head("sesame impute --method <mean|neighbors> [options] <in.cg> <out.cg>");
+    fputs("\n", stderr);
+    yame_usage_text("Fill missing (NA) beta values in a beta.cg (imputeBetas*). Output is");
+    yame_usage_text("positional to the same ordering.");
+
+    yame_usage_sec("--method mean:");
+    yame_usage_text("imputeBetasMatrixByMean -- replace each NA with a mean.");
+    yame_usage_opt("--axis probe", "mean of the probe across samples (default; R axis=1)");
+    yame_usage_opt("--axis sample", "mean of the sample across probes (R axis=2)");
+
+    yame_usage_sec("--method neighbors:");
+    yame_usage_text("imputeBetasByGenomicNeighbors -- replace each missing probe with the");
+    yame_usage_text("mean of its nearest non-missing genomic neighbours.");
+    yame_usage_opt("--platform P", "EPIC | EPICv2 | HM450 | MSA (for the coord table)");
+    yame_usage_opt("--coords FILE", "probe coordinate .tsv.gz (default: the store's).");
+    yame_usage_cont("Matches R for mapQ>=1 probes; differs only on");
+    yame_usage_cont("mapQ=0 (multi-mapping) ones.");
+    yame_usage_opt("--genome BUILD", "genome build (default hg38)");
+    yame_usage_opt("--max-neighbors N", "up to N nearest neighbours (default 3)");
+    yame_usage_opt("--max-dist BP", "search window in bp (default 10000)");
     return 1;
 }
 
 static int usage_attach(void)
 {
-    fputs(
-      "Usage: sesame attach-probe [options] <file>\n"
-      "\n"
-      "  Prepend the ordering's Probe_ID to a positional file's rows, as TSV on\n"
-      "  stdout. <file> is a YAME .cg/.cm/.cx (fmt0 mask, fmt3 M/U or --beta, fmt4\n"
-      "  float) or a text .tsv[.gz] (e.g. a .hg38.coord.tsv.gz). The row count must\n"
-      "  match the ordering (same platform + tag that made the file).\n"
-      "\n"
-      "Options:\n"
-      "  --platform P       EPIC | EPICv2 | HM450 | MSA (else from the filename).\n"
-      "  --index FILE       Ordering .tsv.gz (overrides --platform).\n"
-      "  --all, -a          Emit every sample column (default: first only).\n"
-      "  --beta             Read fmt3 M/U as beta.\n"
-      "  --no-header        Omit the header row.\n",
-      stderr);
+    yame_usage_head("sesame attach-probe [options] <file>");
+    fputs("\n", stderr);
+    yame_usage_text("Prepend the ordering's Probe_ID to a positional file's rows, as TSV");
+    yame_usage_text("on stdout. <file> is a YAME .cg/.cm/.cx (fmt0 mask, fmt3 M/U or");
+    yame_usage_text("--beta, fmt4 float) or a text .tsv[.gz], e.g. a .hg38.coord.tsv.gz.");
+    yame_usage_text("The row count must match the ordering -- same platform and tag that");
+    yame_usage_text("made the file.");
+
+    yame_usage_sec("Options:");
+    yame_usage_opt("--platform P", "EPIC | EPICv2 | HM450 | MSA (else from filename)");
+    yame_usage_opt("--index FILE", "ordering .tsv.gz (overrides --platform)");
+    yame_usage_opt("--all, -a", "emit every sample column (default: first only)");
+    yame_usage_opt("--beta", "read fmt3 M/U as beta");
+    yame_usage_opt("--no-header", "omit the header row");
     return 1;
 }
 
 static int usage_idat(void)
 {
-    fputs(
-      "Usage: sesame idat-dump [options] <file.idat|file.idat.gz>\n"
-      "\n"
-      "  Print IDAT contents. Default prints a summary header.\n"
-      "\n"
-      "Options:\n"
-      "  --tsv              Emit addr<TAB>mean<TAB>sd<TAB>nbeads.\n"
-      "  --head N           Limit to the first N records.\n",
-      stderr);
+    yame_usage_head("sesame idat-dump [options] <file.idat|file.idat.gz>");
+    fputs("\n", stderr);
+    yame_usage_text("Print IDAT contents. Default prints a summary header.");
+
+    yame_usage_sec("Options:");
+    yame_usage_opt("--tsv", "emit addr<TAB>mean<TAB>sd<TAB>nbeads");
+    yame_usage_opt("--head N", "limit to the first N records");
     return 1;
 }
 
 static int usage_deidentify(void)
 {
-    fputs(
-      "Usage: sesame deidentify [options] <prefix|idat> [<out.idat>]\n"
-      "\n"
-      "  Strip the genetic fingerprint from an IDAT: the SNP (rs) probes' bead\n"
-      "  Mean intensities are zeroed (default), or reversibly scrambled with\n"
-      "  --randomize --seed. Everything else is copied byte-for-byte, so the file\n"
-      "  reads identically apart from the SNP beads (ports sesame's deIdentify).\n"
-      "  A <prefix> processes both Grn and Red; a single .idat[.gz] just that file.\n"
-      "  Output defaults to <name>_noid_*.idat (with -r: _reid_).\n"
-      "\n"
-      "Options:\n"
-      "  --randomize        Scramble the SNP means instead of zeroing (reversible).\n"
-      "  -r, --reidentify   Reverse a --randomize (restore); needs the same --seed.\n"
-      "  --seed N           Seed for --randomize / -r.\n"
-      "  --platform P       EPIC | EPICv2 | HM450 | MSA (else from the bead count).\n"
-      "  --index FILE       Ordering .tsv.gz (overrides --platform).\n"
-      "  --out FILE         Output path (single input only).\n"
-      "\n"
-      "  --randomize uses this tool's own PRNG, so a scrambled file round-trips\n"
-      "  with `deidentify -r --seed <same N>`, not with R. Zeroing is\n"
-      "  R-equivalent and irreversible.\n",
-      stderr);
+    yame_usage_head("sesame deidentify [options] <prefix|idat> [<out.idat>]");
+    fputs("\n", stderr);
+    yame_usage_text("Strip the genetic fingerprint from an IDAT: the SNP (rs) probes'");
+    yame_usage_text("bead Mean intensities are zeroed (default), or reversibly scrambled");
+    yame_usage_text("with --randomize --seed. Everything else is copied byte-for-byte, so");
+    yame_usage_text("the file reads identically apart from the SNP beads (ports sesame's");
+    yame_usage_text("deIdentify). A <prefix> processes both Grn and Red; a single");
+    yame_usage_text(".idat[.gz] just that file. Output defaults to <name>_noid_*.idat,");
+    yame_usage_text("or _reid_ with -r.");
+
+    yame_usage_sec("Options:");
+    yame_usage_opt("--randomize", "scramble the SNP means instead of zeroing");
+    yame_usage_cont("(reversible)");
+    yame_usage_opt("-r, --reidentify", "reverse a --randomize; needs the same --seed");
+    yame_usage_opt("--seed N", "seed for --randomize / -r");
+    yame_usage_opt("--platform P", "EPIC | EPICv2 | HM450 | MSA (else from bead count)");
+    yame_usage_opt("--index FILE", "ordering .tsv.gz (overrides --platform)");
+    yame_usage_opt("--out FILE", "output path (single input only)");
+
+    yame_usage_sec("Notes:");
+    yame_usage_text("--randomize uses this tool's own PRNG, so a scrambled file");
+    yame_usage_text("round-trips with `deidentify -r --seed <same N>`, not with R.");
+    yame_usage_text("Zeroing is R-equivalent and irreversible.");
     return 1;
 }
 
