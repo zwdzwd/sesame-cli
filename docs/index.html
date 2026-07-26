@@ -126,7 +126,15 @@
   .lb.on{display:flex}
   .lb img{max-width:96vw;max-height:92vh;border-radius:10px;box-shadow:0 14px 60px rgba(0,0,0,.55);background:#fff}
   footer{margin-top:28px;padding-top:16px;border-top:1px solid var(--line);color:var(--muted);font-size:.82rem}
-</style>
+
+  /* version badge: filled in from the repository's tags at load */
+  .badge-ver{display:inline-block;margin-left:8px;font-size:.72rem;font-weight:700;
+    letter-spacing:.02em;vertical-align:middle;text-decoration:none;
+    color:var(--accent);background:var(--accent-soft);
+    border:1px solid color-mix(in srgb,var(--accent) 35%,transparent);
+    padding:2px 8px;border-radius:20px}
+  .badge-ver:hover{background:var(--accent);color:#fff}
+  </style>
 </head>
 <body>
 <div class="wrap">
@@ -134,6 +142,7 @@
 <header>
   <div class="titlerow">
     <h1><b>SE</b>nsible <b>S</b>tep-wise <b>A</b>nalysis of DNA <b>ME</b>thylation</h1>
+    <a class="badge badge-ver" id="ver" href="https://github.com/zwdzwd/sesame-cli/tags">latest</a>
     <span class="badge">cli</span>
     <span class="install">
       <button id="install-btn" type="button"
@@ -467,6 +476,35 @@ sesame &lt;version&gt;
   lb.addEventListener('click',function(){lb.classList.remove('on');lbimg.src='';});
   document.addEventListener('keydown',function(e){if(e.key==='Escape')lb.classList.remove('on');});
 })();
+
+  /* The version is whatever the repository says it is: hardcoding it here is
+   * how a docs page ends up advertising a release two tags out of date, with
+   * nothing about editing the page to remind anyone.
+   *
+   * Sorted numerically rather than trusting the order the endpoint returns --
+   * alphabetically v1.8 sorts above v1.31 -- and filtered to v<digit>, since
+   * some of these repositories also tag things like "MSA.ordering.v1".
+   * Offline or rate-limited it keeps its label and still links to the tags. */
+  fetch("https://api.github.com/repos/zwdzwd/sesame-cli/tags?per_page=100")
+    .then(function (r) { return r.ok ? r.json() : []; })
+    .then(function (tags) {
+      var parts = function (v) { return v.replace(/^v/, "").split(".").map(Number); };
+      var newest = tags.map(function (t) { return t.name; })
+        .filter(function (n) { return /^v\d/.test(n); })
+        .sort(function (a, b) {
+          var A = parts(a), B = parts(b);
+          for (var i = 0; i < Math.max(A.length, B.length); ++i) {
+            var d = (B[i] || 0) - (A[i] || 0);
+            if (d) return d;
+          }
+          return 0;
+        })[0];
+      if (!newest) return;
+      var el = document.getElementById("ver");
+      el.textContent = newest;
+      el.href = "https://github.com/zwdzwd/sesame-cli/releases/tag/" + newest;
+    })
+    .catch(function () {});
 </script>
 </body>
 </html>
