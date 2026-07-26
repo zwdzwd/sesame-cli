@@ -9,6 +9,11 @@
 # manifest coordinates, which the store's design-coord table does not provide.)
 set -eu
 
+## The R oracle. Overridable because the binary is not called the same
+## thing everywhere: on the lab HPC plain `Rscript` is a different R
+## without a usable sesame, and the one to use is Rscript-4.6.0.
+RSCRIPT=${RSCRIPT:-Rscript}
+
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 root=$(dirname "$here")
 bin="$root/sesame"
@@ -21,7 +26,7 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
 [ -x "$bin" ] || { echo "FAIL: $bin not built"; exit 1; }
-command -v Rscript >/dev/null 2>&1 || { echo "SKIP impute: no Rscript"; exit 0; }
+command -v "$RSCRIPT" >/dev/null 2>&1 || { echo "SKIP impute: no Rscript"; exit 0; }
 
 plat=EPICv2
 ord="$store/$plat/$plat.ordering.tsv.gz"
@@ -42,7 +47,7 @@ one_axis() {
     ax=$1; rax=$2
     "$bin" impute --method mean --axis "$ax" "$work/pp/beta.cg" "$work/out.cg" 2>/dev/null
     "$bin" attach-probe --all --index "$ord" "$work/out.cg" 2>/dev/null > "$work/out.tsv"
-    if Rscript --vanilla - "$work/in.tsv" "$work/out.tsv" "$rax" "$ax" <<'PY' 2>"$work/r.err"
+    if "$RSCRIPT" --vanilla - "$work/in.tsv" "$work/out.tsv" "$rax" "$ax" <<'PY' 2>"$work/r.err"
 suppressMessages(library(sesame)); a<-commandArgs(TRUE)
 inp<-as.matrix(read.table(a[1],header=TRUE,sep="\t",row.names=1,check.names=FALSE))
 out<-as.matrix(read.table(a[2],header=TRUE,sep="\t",row.names=1,check.names=FALSE))

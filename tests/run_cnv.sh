@@ -7,6 +7,11 @@
 # Rscript; skips cleanly otherwise.
 set -eu
 
+## The R oracle. Overridable because the binary is not called the same
+## thing everywhere: on the lab HPC plain `Rscript` is a different R
+## without a usable sesame, and the one to use is Rscript-4.6.0.
+RSCRIPT=${RSCRIPT:-Rscript}
+
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 root=$(dirname "$here")
 bin="$root/sesame"
@@ -19,7 +24,7 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
 [ -x "$bin" ] || { echo "FAIL: $bin not built"; exit 1; }
-command -v Rscript >/dev/null 2>&1 || { echo "SKIP cnv: no Rscript"; exit 0; }
+command -v "$RSCRIPT" >/dev/null 2>&1 || { echo "SKIP cnv: no Rscript"; exit 0; }
 
 plat=EPICv2
 ord="$store/$plat/$plat.ordering.tsv.gz"
@@ -45,7 +50,7 @@ export YAME_DATA_HOME="$yhome"
 "$bin" attach-probe --index "$ord" "$work/total_intensity.cg" 2>/dev/null > "$work/tgt.tsv"
 "$bin" attach-probe --all --index "$ord" "$nrm" 2>/dev/null > "$work/norm.tsv"
 "$bin" attach-probe --index "$ord" "$crd" 2>/dev/null > "$work/coord.tsv"
-Rscript "$here/compare_cnv.R" "$work/tgt.tsv" "$work/norm.tsv" "$work/coord.tsv" "$work/r_probes.tsv" >/dev/null 2>&1
+"$RSCRIPT" "$here/compare_cnv.R" "$work/tgt.tsv" "$work/norm.tsv" "$work/coord.tsv" "$work/r_probes.tsv" >/dev/null 2>&1
 
 python3 - "$work/c_probes.tsv" "$work/r_probes.tsv" "$work/c_bins.tsv" <<'PY'
 import sys, math

@@ -10,6 +10,11 @@
 # Requires Rscript with sesame + sesameData installed (the R oracle).
 set -eu
 
+## The R oracle. Overridable because the binary is not called the same
+## thing everywhere: on the lab HPC plain `Rscript` is a different R
+## without a usable sesame, and the one to use is Rscript-4.6.0.
+RSCRIPT=${RSCRIPT:-Rscript}
+
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 root=$(dirname "$here")
 bin="$root/sesame"
@@ -26,7 +31,7 @@ check_one() {
     label=$2
 
     # R oracle: dump addr/mean/sd/nbeads in file order, no header.
-    if ! Rscript --vanilla -e '
+    if ! "$RSCRIPT" --vanilla -e '
         suppressMessages(library(sesame))
         f <- commandArgs(trailingOnly=TRUE)[1]
         r <- suppressWarnings(sesame:::readIDAT(f))
@@ -57,7 +62,7 @@ check_one() {
 }
 
 echo "== corpus 1: sesameData extdata =="
-extdata=$(Rscript -e 'cat(system.file("extdata","",package="sesameData"))' 2>/dev/null || true)
+extdata=$("$RSCRIPT" -e 'cat(system.file("extdata","",package="sesameData"))' 2>/dev/null || true)
 if [ -n "${extdata:-}" ] && [ -d "$extdata" ]; then
     for f in "$extdata"/*.idat; do
         [ -e "$f" ] || continue

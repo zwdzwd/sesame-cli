@@ -2,6 +2,11 @@
 # Level-3: each prep step applied in isolation must match R exactly.
 set -eu
 
+## The R oracle. Overridable because the binary is not called the same
+## thing everywhere: on the lab HPC plain `Rscript` is a different R
+## without a usable sesame, and the one to use is Rscript-4.6.0.
+RSCRIPT=${RSCRIPT:-Rscript}
+
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 root=$(dirname "$here")
 bin="$root/sesame"
@@ -28,7 +33,7 @@ while IFS=' ' read -r plat rel code; do
         echo "FAIL $plat $code: sesame errored"; sed 's/^/    /' "$work/c.err" | head -3
         fail=$((fail+1)); continue
     fi
-    if Rscript --vanilla "$here/compare_prep.R" "$plat" "$pfx" "$code" \
+    if "$RSCRIPT" --vanilla "$here/compare_prep.R" "$plat" "$pfx" "$code" \
          "$work/col.tsv" 2>"$work/r.err"; then
         pass=$((pass+1))
     else

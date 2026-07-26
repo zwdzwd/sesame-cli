@@ -6,6 +6,11 @@
 # and Rscript with sesame; skips cleanly otherwise.
 set -eu
 
+## The R oracle. Overridable because the binary is not called the same
+## thing everywhere: on the lab HPC plain `Rscript` is a different R
+## without a usable sesame, and the one to use is Rscript-4.6.0.
+RSCRIPT=${RSCRIPT:-Rscript}
+
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 root=$(dirname "$here")
 bin="$root/sesame"
@@ -18,7 +23,7 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
 [ -x "$bin" ] || { echo "FAIL: $bin not built"; exit 1; }
-command -v Rscript >/dev/null 2>&1 || { echo "SKIP vcf: no Rscript"; exit 0; }
+command -v "$RSCRIPT" >/dev/null 2>&1 || { echo "SKIP vcf: no Rscript"; exit 0; }
 
 plat=EPICv2
 ord="$store/$plat/$plat.ordering.tsv.gz"
@@ -47,7 +52,7 @@ for l in sys.stdin:
     print(d['Probe_ID'],d['GT'],p[5],d['PVF'],sep='\t')" > "$work/c.tsv"
 
 # R oracle
-Rscript "$here/compare_vcf.R" "$pfx" $plat "$snp" "$work/r.tsv" >/dev/null 2>&1
+"$RSCRIPT" "$here/compare_vcf.R" "$pfx" $plat "$snp" "$work/r.tsv" >/dev/null 2>&1
 
 python3 - "$work/c.tsv" "$work/r.tsv" <<'PY'
 import sys

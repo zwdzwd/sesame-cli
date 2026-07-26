@@ -8,6 +8,11 @@
 # with the ordering, the yame + pipeline_dump binaries, the R oracle, and IDATs.
 set -eu
 
+## The R oracle. Overridable because the binary is not called the same
+## thing everywhere: on the lab HPC plain `Rscript` is a different R
+## without a usable sesame, and the one to use is Rscript-4.6.0.
+RSCRIPT=${RSCRIPT:-Rscript}
+
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 root=$(dirname "$here")
 bin="$root/sesame"
@@ -24,7 +29,7 @@ trap 'rm -rf "$work"' EXIT
 [ -x "$bin" ]  || { echo "FAIL: $bin not built"; exit 1; }
 [ -x "$dump" ] || { echo "FAIL: $dump not built (make pipeline_dump)"; exit 1; }
 [ -x "$yame" ] || { echo "SKIP collapse: no $yame"; exit 0; }
-command -v Rscript >/dev/null 2>&1 || { echo "SKIP collapse: no Rscript"; exit 0; }
+command -v "$RSCRIPT" >/dev/null 2>&1 || { echo "SKIP collapse: no Rscript"; exit 0; }
 
 PASS=0; FAIL=0
 run_one() {
@@ -41,7 +46,7 @@ run_one() {
     "$yame" unpack "$work/pp/beta.cg" 2>/dev/null > "$work/vals.txt"
     paste "$work/pp/beta.cg.probes" "$work/vals.txt" > "$work/c.txt"
 
-    if Rscript --vanilla - "$work/raw.txt" "$work/c.txt" <<'PY' 2>"$work/r.err"
+    if "$RSCRIPT" --vanilla - "$work/raw.txt" "$work/c.txt" <<'PY' 2>"$work/r.err"
 suppressMessages(library(sesame))
 a <- commandArgs(TRUE)
 rv <- read.table(a[1], colClasses=c("character","numeric"))

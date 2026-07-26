@@ -10,6 +10,11 @@
 # Needs a store with the platform ordering, the R oracle, and IDATs; skips clean.
 set -eu
 
+## The R oracle. Overridable because the binary is not called the same
+## thing everywhere: on the lab HPC plain `Rscript` is a different R
+## without a usable sesame, and the one to use is Rscript-4.6.0.
+RSCRIPT=${RSCRIPT:-Rscript}
+
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 root=$(dirname "$here")
 dump="$root/pipeline_dump"
@@ -22,7 +27,7 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
 [ -x "$dump" ] || { echo "FAIL: $dump not built (make pipeline_dump)"; exit 1; }
-command -v Rscript >/dev/null 2>&1 || { echo "SKIP dyebiasL: no Rscript"; exit 0; }
+command -v "$RSCRIPT" >/dev/null 2>&1 || { echo "SKIP dyebiasL: no Rscript"; exit 0; }
 
 PASS=0; FAIL=0
 run_one() {
@@ -36,7 +41,7 @@ run_one() {
     YAME_DATA_HOME="$yhome" "$dump" --prep CE --what beta "$pfx" \
         2>/dev/null > "$work/c_CE.txt"
 
-    if Rscript --vanilla - "$plat" "$pfx" "$work/c_CE.txt" <<'PY' 2>"$work/r.err"
+    if "$RSCRIPT" --vanilla - "$plat" "$pfx" "$work/c_CE.txt" <<'PY' 2>"$work/r.err"
 suppressMessages(library(sesame))
 a <- commandArgs(TRUE); plat<-a[1]; pfx<-a[2]; cf<-a[3]
 sdf <- readIDATpair(pfx, platform=plat)

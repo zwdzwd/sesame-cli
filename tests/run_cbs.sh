@@ -8,6 +8,11 @@
 # Needs Rscript + sesameData for (2); (1) always runs.
 set -eu
 
+## The R oracle. Overridable because the binary is not called the same
+## thing everywhere: on the lab HPC plain `Rscript` is a different R
+## without a usable sesame, and the one to use is Rscript-4.6.0.
+RSCRIPT=${RSCRIPT:-Rscript}
+
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 root=$(dirname "$here")
 cbs="$root/cbs_test"
@@ -31,8 +36,8 @@ else
 fi
 
 # (2) real K562 vs DNAcopy
-if command -v Rscript >/dev/null 2>&1 && Rscript -e 'quit(status=!requireNamespace("DNAcopy",quietly=TRUE) || !requireNamespace("sesameData",quietly=TRUE))' 2>/dev/null; then
-    if Rscript "$here/compare_cbs.R" "$work/cbs" >/dev/null 2>&1; then
+if command -v "$RSCRIPT" >/dev/null 2>&1 && "$RSCRIPT" -e 'quit(status=!requireNamespace("DNAcopy",quietly=TRUE) || !requireNamespace("sesameData",quietly=TRUE))' 2>/dev/null; then
+    if "$RSCRIPT" "$here/compare_cbs.R" "$work/cbs" >/dev/null 2>&1; then
         python3 - "$cbs" "$work/cbs.sig" "$work/cbs.seg" <<'PY'
 import sys, subprocess, collections
 cbs, sigf, segf = sys.argv[1], sys.argv[2], sys.argv[3]

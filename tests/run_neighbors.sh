@@ -10,6 +10,11 @@
 # match (imputed-or-not, value within float32); unmapped probes stay NA.
 set -eu
 
+## The R oracle. Overridable because the binary is not called the same
+## thing everywhere: on the lab HPC plain `Rscript` is a different R
+## without a usable sesame, and the one to use is Rscript-4.6.0.
+RSCRIPT=${RSCRIPT:-Rscript}
+
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 root=$(dirname "$here")
 bin="$root/sesame"
@@ -26,7 +31,7 @@ trap 'rm -rf "$work"' EXIT
 [ -x "$bin" ]  || { echo "FAIL: $bin not built"; exit 1; }
 [ -x "$dump" ] || { echo "FAIL: $dump not built (make pipeline_dump)"; exit 1; }
 [ -x "$yame" ] || { echo "SKIP neighbors: no $yame"; exit 0; }
-command -v Rscript >/dev/null 2>&1 || { echo "SKIP neighbors: no Rscript"; exit 0; }
+command -v "$RSCRIPT" >/dev/null 2>&1 || { echo "SKIP neighbors: no Rscript"; exit 0; }
 
 plat=EPICv2
 ord="$store/$plat/$plat.ordering.tsv.gz"
@@ -46,7 +51,7 @@ YAME_DATA_HOME="$yhome" "$dump" --prep QCDPB --what beta "$pfx" 2>/dev/null > "$
 zcat < "$ord" | tail -n +2 | cut -f1 > "$work/ids.txt"
 paste "$work/ids.txt" "$work/vals.txt" > "$work/c.txt"
 
-if Rscript --vanilla - "$co" "$work/ids.txt" "$work/src.txt" "$work/c.txt" <<'PY'
+if "$RSCRIPT" --vanilla - "$co" "$work/ids.txt" "$work/src.txt" "$work/c.txt" <<'PY'
 suppressMessages({library(GenomicRanges); library(dplyr)})
 a <- commandArgs(TRUE)
 ids <- readLines(a[2])

@@ -6,6 +6,11 @@
 # R oracle. Skips cleanly if missing.
 set -eu
 
+## The R oracle. Overridable because the binary is not called the same
+## thing everywhere: on the lab HPC plain `Rscript` is a different R
+## without a usable sesame, and the one to use is Rscript-4.6.0.
+RSCRIPT=${RSCRIPT:-Rscript}
+
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 root=$(dirname "$here")
 bin="$root/sesame"
@@ -32,7 +37,7 @@ run_one() {
       | python3 -c "import sys; print('\n'.join(l.split('\t')[0] for l in sys.stdin if l.rstrip('\n').split('\t')[1]=='NA'))" \
       > "$work/c_masked.txt"
 
-    if Rscript --vanilla "$here/compare_poobah.R" "$plat" "$pfx" "$work/c_masked.txt" \
+    if "$RSCRIPT" --vanilla "$here/compare_poobah.R" "$plat" "$pfx" "$work/c_masked.txt" \
          2>"$work/r.err"; then
         PASS=$((PASS+1))
     else

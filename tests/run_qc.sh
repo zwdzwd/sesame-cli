@@ -5,6 +5,11 @@
 # skips cleanly if missing.
 set -eu
 
+## The R oracle. Overridable because the binary is not called the same
+## thing everywhere: on the lab HPC plain `Rscript` is a different R
+## without a usable sesame, and the one to use is Rscript-4.6.0.
+RSCRIPT=${RSCRIPT:-Rscript}
+
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 root=$(dirname "$here")
 bin="$root/sesame"
@@ -29,7 +34,7 @@ run_one() {
     YAME_DATA_HOME="$yhome" "$bin" preprocess --output qc --out "$work" "$pfx" 2>/dev/null
     mv "$work/qc.tsv" "$work/c_qc.tsv"
 
-    if Rscript --vanilla "$here/compare_qc.R" "$plat" "$pfx" "$work/c_qc.tsv" \
+    if "$RSCRIPT" --vanilla "$here/compare_qc.R" "$plat" "$pfx" "$work/c_qc.tsv" \
          2>"$work/r.err"; then
         PASS=$((PASS+1))
     else

@@ -5,13 +5,18 @@
 # small dataset, runs `sesame dml`, and compares (see compare_dml.R).
 set -eu
 
+## The R oracle. Overridable because the binary is not called the same
+## thing everywhere: on the lab HPC plain `Rscript` is a different R
+## without a usable sesame, and the one to use is Rscript-4.6.0.
+RSCRIPT=${RSCRIPT:-Rscript}
+
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 root=$(dirname "$here")
 bin="$root/sesame"
 
 [ -x "$bin" ] || { echo "FAIL: $bin not built"; exit 1; }
 
-if Rscript --vanilla "$here/compare_dml.R" "$bin"; then
+if "$RSCRIPT" --vanilla "$here/compare_dml.R" "$bin"; then
     echo "passed 1, failed 0"
 else
     echo "passed 0, failed 1"; exit 1

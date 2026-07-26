@@ -9,6 +9,11 @@
 # asset (EPIC/EPICv2/HM450/MSA at annotation v8.1+). Needs the store, R, IDATs.
 set -eu
 
+## The R oracle. Overridable because the binary is not called the same
+## thing everywhere: on the lab HPC plain `Rscript` is a different R
+## without a usable sesame, and the one to use is Rscript-4.6.0.
+RSCRIPT=${RSCRIPT:-Rscript}
+
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 root=$(dirname "$here")
 bin="$root/sesame"
@@ -21,7 +26,7 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
 [ -x "$bin" ] || { echo "FAIL: $bin not built"; exit 1; }
-command -v Rscript >/dev/null 2>&1 || { echo "SKIP gct: no Rscript"; exit 0; }
+command -v "$RSCRIPT" >/dev/null 2>&1 || { echo "SKIP gct: no Rscript"; exit 0; }
 
 PASS=0; FAIL=0
 run_one() {
@@ -38,7 +43,7 @@ run_one() {
         --out "$work/pp" "$pfx" 2>/dev/null
     cgct=$(awk -F'\t' 'NR==1{for(i=1;i<=NF;i++)if($i=="GCT")c=i} NR==2{print $c}' "$work/pp/qc.tsv")
 
-    if Rscript --vanilla - "$plat" "$pfx" "$ord" "$ext" "$cgct" <<'PY' 2>"$work/r.err"
+    if "$RSCRIPT" --vanilla - "$plat" "$pfx" "$ord" "$ext" "$cgct" <<'PY' 2>"$work/r.err"
 suppressMessages(library(sesame))
 a <- commandArgs(TRUE); plat<-a[1]; pfx<-a[2]; ordp<-a[3]; extp<-a[4]; cg<-as.numeric(a[5])
 ids <- read.table(gzfile(ordp), header=TRUE, sep="\t", stringsAsFactors=FALSE)$Probe_ID

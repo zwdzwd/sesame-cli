@@ -7,6 +7,11 @@
 # or testdata/), the yame + pipeline_dump binaries, the R oracle, and IDATs.
 set -eu
 
+## The R oracle. Overridable because the binary is not called the same
+## thing everywhere: on the lab HPC plain `Rscript` is a different R
+## without a usable sesame, and the one to use is Rscript-4.6.0.
+RSCRIPT=${RSCRIPT:-Rscript}
+
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 root=$(dirname "$here")
 bin="$root/sesame"
@@ -23,7 +28,7 @@ trap 'rm -rf "$work"' EXIT
 [ -x "$bin" ]  || { echo "FAIL: $bin not built"; exit 1; }
 [ -x "$dump" ] || { echo "FAIL: $dump not built (make pipeline_dump)"; exit 1; }
 [ -x "$yame" ] || { echo "SKIP mLiftOver: no $yame"; exit 0; }
-command -v Rscript >/dev/null 2>&1 || { echo "SKIP mLiftOver: no Rscript"; exit 0; }
+command -v "$RSCRIPT" >/dev/null 2>&1 || { echo "SKIP mLiftOver: no Rscript"; exit 0; }
 
 find_ord() {   # echo the first existing ordering for platform $1
     for c in "$store/$1/$1.ordering.tsv.gz" "$root/testdata/$1.ordering.tsv.gz"; do
@@ -49,7 +54,7 @@ run_pair() {
     paste "$work/tids.txt" "$work/vals.txt" > "$work/c.txt"
     "$dump" --index "$so" --prep "" --what beta "$pfx" 2>/dev/null > "$work/src.txt"
 
-    if Rscript --vanilla - "$sp" "$tp" "$work/src.txt" "$work/c.txt" <<'PY' 2>"$work/r.err"
+    if "$RSCRIPT" --vanilla - "$sp" "$tp" "$work/src.txt" "$work/c.txt" <<'PY' 2>"$work/r.err"
 suppressMessages(library(sesame))
 a <- commandArgs(TRUE); sp<-a[1]; tp<-a[2]
 sv <- read.table(a[3], colClasses=c("character","numeric"))

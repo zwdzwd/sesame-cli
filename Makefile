@@ -2,10 +2,17 @@
 #
 #   make            build sesame
 #   make asan       build with ASan/UBSan
-#   make test       run the golden tests (requires Rscript for the R oracle)
+#   make test       run the golden tests (needs an R with sesame; override the
+#                   binary with RSCRIPT=, e.g. make test RSCRIPT=Rscript-4.6.0)
 #   make clean
 
 CC      ?= cc
+# The R oracle the golden tests compare against. Overridable because the
+# binary is not called the same thing everywhere: on the lab HPC plain
+# `Rscript` is a different R without a usable sesame, and Rscript-4.6.0 is
+# the one to use. Exported so the tests/*.sh see it.
+RSCRIPT ?= Rscript
+export RSCRIPT
 PREFIX  ?= /usr/local
 CFLAGS  ?= -O2 -g
 # _GNU_SOURCE makes POSIX/BSD functions (strdup, realpath, getline) visible under
@@ -196,7 +203,7 @@ test-deidentify: $(BIN)
 PLATFORMS := HM450 EPIC EPICv2 MSA
 index:
 	@for p in $(PLATFORMS); do \
-	    Rscript tools/export_ordering.R $$p testdata/$$p.ordering.tsv.gz; \
+	    $(RSCRIPT) tools/export_ordering.R $$p testdata/$$p.ordering.tsv.gz; \
 	done
 
 # Export the per-platform CNV normal references (format-3 .cg) from sesameData.
@@ -208,7 +215,7 @@ index:
 cnv-normals: mu2cg
 	@for p in EPIC EPICv2; do \
 	    mkdir -p data/InfiniumAnnotation/$$p; \
-	    Rscript tools/export_cnvnormals.R $$p testdata/$$p.ordering.tsv.gz \
+	    $(RSCRIPT) tools/export_cnvnormals.R $$p testdata/$$p.ordering.tsv.gz \
 	        data/InfiniumAnnotation/$$p/$$p.cnvnormals.mu.tsv.gz && \
 	    ./mu2cg data/InfiniumAnnotation/$$p/$$p.cnvnormals.mu.tsv.gz \
 	        data/InfiniumAnnotation/$$p/$$p.cnvnormals.cg && \
