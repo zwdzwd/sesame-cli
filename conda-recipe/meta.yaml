@@ -2,7 +2,7 @@
 ## method is called. The GitHub repo stays sesame-cli, so home/dev_url below
 ## are unchanged; only the installable name differs.
 {% set name = "sesame" %}
-{% set version = "0.3" %}
+{% set version = "0.4" %}
 
 package:
   name: {{ name }}
@@ -15,9 +15,10 @@ source:
   path: ..
 
 build:
-  # Reset for 0.3. (The 0.2.0 build 0 linux-64 package was built against
-  # glibc 2.39 headers and aborted on any host with glibc < 2.38; build 1
-  # fixed that with the pinned 2.17 sysroot, which 0.3 keeps.)
+  # 0.4 is the first release published as `sesame` rather than `sesame-cli`.
+  # (The 0.2.0 build 0 linux-64 package was built against glibc 2.39 headers
+  # and aborted on any host with glibc < 2.38; build 1 fixed that with the
+  # pinned 2.17 sysroot, which every release since keeps.)
   number: 0
   skip: true  # [win]
 
