@@ -448,14 +448,14 @@ ctl_1060944_NEG    NA        10609447  2   1</code></pre>
     </div>
     <div>
       <h3>Read a .cg back as a labelled TSV</h3>
-      <pre><code>$ sesame <span class="sub">attach-probe</span> --platform EPICv2 out/beta.cg
+      <pre><code>$ sesame <span class="sub">attach-probe</span> out/beta.cg
 Probe_ID          206909630040_R03C01
 cg00000029_TC21   0.9124
 cg00000769_BC11   0.0331
-<span class="cm"># --all for every sample column (matrix)</span>
-<span class="cm"># --platform is optional: the ordering is inferred from the</span>
-<span class="cm"># row count, since each platform's is a distinct length</span>
-$ sesame <span class="sub">attach-probe</span> out/beta.cg</code></pre>
+<span class="cm"># the ordering is inferred from the row count -- each</span>
+<span class="cm"># platform's is a distinct length. Name it if you'd rather:</span>
+$ sesame <span class="sub">attach-probe</span> --platform EPICv2 out/beta.cg
+<span class="cm"># --all for every sample column (matrix)</span></code></pre>
     </div>
     <div>
       <h3>Peek at a raw IDAT</h3>
