@@ -68,11 +68,17 @@
   .citebtn a:focus-visible,.citebtn button:focus-visible{outline:2px solid var(--fg);outline-offset:-2px}
   .links{font-size:.85rem;color:var(--muted)}
   .links a{font-weight:600}.links span{opacity:.4;margin:0 8px}
-  /* masonry: up to 3 command cards per row on desktop */
+  /* Masonry. The CSS column-count below is the no-JS fallback: it fills
+     columns in order, which with unbreakable cards leaves one column long
+     and another with a single stub. When JS runs it adds .balanced and
+     packs the cards by measured height instead (see the balancer at the
+     bottom of the page). */
   .grid{column-count:1;column-gap:16px}
   @media(min-width:640px){.grid{column-count:2}}
   @media(min-width:980px){.grid{column-count:3}}
   @media(min-width:1440px){.grid{column-count:4}}
+  .grid.balanced{column-count:initial;display:flex;align-items:flex-start;gap:16px}
+  .grid.balanced>.gcol{flex:1 1 0;min-width:0}
   .card{break-inside:avoid;margin:0 0 16px;border:1px solid var(--line);border-radius:13px;background:var(--card);
      padding:13px 15px 15px;box-shadow:var(--shadow);transition:border-color .16s,box-shadow .16s,transform .16s}
   .card:hover{border-color:color-mix(in srgb,var(--accent) 45%,var(--line));transform:translateY(-2px)}
@@ -605,6 +611,91 @@ sesame &lt;version&gt;
       document.getElementById("builton").hidden = false;
     })
     .catch(function () {});
+  /* Masonry: split the cards into columns so the TALLEST column is as short as
+   * possible, which is what sets the page height.
+   *
+   * CSS column-count fills sequentially against a naive average-height target,
+   * and because a card cannot be broken it overshoots: on this page that left
+   * one column at ~2500px next to one holding a single ~270px card. Rather than
+   * hand-assigning cards, solve it.
+   *
+   * Each column is a CONTIGUOUS run of cards in DOM order, so the page still
+   * reads down column 1, then column 2 -- the same order the markup declares,
+   * and the same order CSS columns would give. Under that constraint the
+   * optimum is exact: binary-search the tallest allowed column height and test
+   * feasibility by filling greedily. O(n log(total)), n = 9 here.
+   *
+   * A free (non-contiguous) packing can do a hair better on some widths but
+   * reorders the cards, which is the wrong trade for documentation.
+   *
+   * Re-runs on resize and once images report their real heights. */
+  (function () {
+    var grid = document.querySelector(".grid");
+    if (!grid) return;
+    var cards = Array.prototype.slice.call(grid.children).filter(function (el) {
+      return el.classList && el.classList.contains("card");
+    });
+    if (cards.length < 2) return;
+    var GAP = 16;
+
+    function colCount() {
+      var w = window.innerWidth;
+      return w >= 1440 ? 4 : w >= 980 ? 3 : w >= 640 ? 2 : 1;
+    }
+
+    /* fewest columns needed if no column may exceed `cap` */
+    function needed(h, cap) {
+      var c = 1, cur = 0;
+      for (var i = 0; i < h.length; i++) {
+        if (h[i] > cap) return Infinity;          /* one card alone is too tall */
+        if (cur + h[i] > cap) { c++; cur = h[i]; } else { cur += h[i]; }
+      }
+      return c;
+    }
+
+    function layout() {
+      var n = colCount();
+      grid.classList.add("balanced");
+      while (grid.firstChild) grid.removeChild(grid.firstChild);
+
+      var cols = [];
+      for (var i = 0; i < n; i++) {
+        var d = document.createElement("div");
+        d.className = "gcol";
+        grid.appendChild(d);
+        cols.push(d);
+      }
+      /* park everything in column 0: it is flex:1 1 0 of n, so the cards
+       * measure at exactly the width they will end up occupying */
+      cards.forEach(function (c) { cols[0].appendChild(c); });
+      var h = cards.map(function (c) { return c.offsetHeight + GAP; });
+      if (n === 1) return;
+
+      var lo = Math.max.apply(null, h);
+      var hi = h.reduce(function (a, b) { return a + b; }, 0);
+      while (lo < hi) {                       /* smallest feasible tallest column */
+        var mid = Math.floor((lo + hi) / 2);
+        if (needed(h, mid) <= n) hi = mid; else lo = mid + 1;
+      }
+
+      var k = 0, cur = 0;
+      for (var j = 0; j < cards.length; j++) {
+        if (cur + h[j] > lo && k < n - 1) { k++; cur = 0; }
+        cols[k].appendChild(cards[j]);
+        cur += h[j];
+      }
+    }
+
+    layout();
+    grid.querySelectorAll("img").forEach(function (img) {
+      if (!img.complete) img.addEventListener("load", layout, { once: true });
+    });
+    window.addEventListener("load", layout);
+    var t;
+    window.addEventListener("resize", function () {
+      clearTimeout(t); t = setTimeout(layout, 120);
+    });
+  })();
 </script>
 </body>
 </html>
