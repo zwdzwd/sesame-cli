@@ -294,19 +294,16 @@ cinderplot 'qq.tsv + aes(R, G) + geom_point(size=1.2)
         <img src="figures/qc_intens_beta.png" alt="Total intensity versus beta, as a binned density">
         <button class="zoom" type="button" data-full="figures/qc_intens_beta.png" title="expand">⤢</button>
         <div class="code"><pre><code>sesame <span class="sub">preprocess</span> --prep C --output intensity,beta --out qc/ $PFX
-sesame <span class="sub">attach-probe</span> qc/intensity.cg | tail -n +2 &gt; qc/mu.tsv
-sesame <span class="sub">attach-probe</span> qc/beta.cg      | tail -n +2 &gt; qc/beta.tsv
 
-<span class="cm"># join, then bin log2(M+U) x beta onto a 180x140 grid</span>
-{ printf 'Probe_ID\tM\tU\tbeta\n'
-  <b>tabl</b> join -H -k V1 --inner qc/mu.tsv qc/beta.tsv; } \
-| <b>tabl</b> mutate 'logint=log2(M+U)' | <b>tabl</b> filter 'logint&gt;=5 &amp;&amp; logint&lt;=15' \
-| <b>tabl</b> mutate 'xb=floor((logint-5)*18)' 'yb=floor(beta*140)' \
-| <b>tabl</b> count xb,yb \
-| <b>tabl</b> mutate 'logint=5+(xb+0.5)/18' 'beta=(yb+0.5)/140' 'density=log10(n+1)' \
-| <b>tabl</b> select 'logint,beta,density' &gt; qc/ib.tsv
+<span class="cm"># both .cg are positional to the same ordering, so attach-probe puts</span>
+<span class="cm"># them side by side -- no join. Then bin onto a 180x140 grid.</span>
+sesame <span class="sub">attach-probe</span> qc/intensity.cg qc/beta.cg \
+| <b>tabl</b> rename M=2 U=3 beta=4 \
+| <b>tabl</b> mutate 'logint=log2(M+U)' \
+| <b>tabl</b> bin2d -x logint -y beta -nx 180 -ny 140 --xlim 5,15 --ylim 0,1 \
+| <b>tabl</b> mutate 'density=log10(n+1)' &gt; qc/ib.tsv
 
-cinderplot 'ib.tsv + aes(logint, beta, colour=density) + geom_point(size=0.7)
+cinderplot 'ib.tsv + aes(x, y, colour=density) + geom_point(size=0.7)
   + geom_hline(yintercept=0.5, colour="grey30") + scale_colour_viridis()
   + labs(x="Total intensity  log2(M+U)", y="beta")' ib.png --size 5.5x4.5</code></pre></div>
       </div>

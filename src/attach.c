@@ -205,51 +205,80 @@ static void render_head(FILE *out, char fmt, const char *name,
     else                          fputs(name, out);
 }
 
-static int attach_yame(const char *path, const sesame_index_t *ix,
+/* Several .cg files, side by side.
+ *
+ * They are all positional to the same ordering, so pairing them is a column
+ * concatenation -- there is no key to match on. Doing it here rather than
+ * making the caller write out two labelled TSVs and join them back on their
+ * Probe_ID is both shorter and honest about what the operation is: the
+ * files already line up, row i is probe i in every one of them. The row
+ * counts must agree, and a mismatch is the lineage error it always was. */
+static int attach_yame(const char *const *paths, int npath,
+                       const sesame_index_t *ix,
                        const sesame_attach_opt_t *opt, FILE *out,
                        sesame_err_t *err)
 {
     cfile_t cf;
     snames_t sn;
     cdata_t *recs = NULL;
+    char **names = NULL;                     /* per record, owned */
     char pathbuf[4096];
     int32_t nid = sesame_index_nprobes(ix), nrec = 0, cap = 0, j;
     int64_t np = -1, i;
-    int rc = SESAME_OK;
+    int rc = SESAME_OK, k;
 
-    snprintf(pathbuf, sizeof pathbuf, "%s", path);
-    cf = open_cfile(pathbuf);
-    if (!cf.fh) return sesame__fail(err, SESAME_ERR_IO, "cannot open %s", path);
-    sn = loadSampleNamesFromIndex(pathbuf);
-
-    for (;;) {
-        cdata_t c = read_cdata1(&cf), d;
-        if (c.n == 0) break;                            /* EOF */
-        d = decompress(c);
-        free_cdata(&c);
-        if (np < 0) np = (int64_t)d.n;
-        else if ((int64_t)d.n != np) {
-            free_cdata(&d);
-            rc = sesame__fail(err, SESAME_ERR_FORMAT,
-                              "inconsistent record length in %s", path);
+    for (k = 0; k < npath; k++) {
+        int32_t got = 0;
+        snprintf(pathbuf, sizeof pathbuf, "%s", paths[k]);
+        cf = open_cfile(pathbuf);
+        if (!cf.fh) {
+            rc = sesame__fail(err, SESAME_ERR_IO, "cannot open %s", paths[k]);
             goto done;
         }
-        if (nrec >= cap) {
-            cap = cap ? cap * 2 : 8;
-            recs = (cdata_t *)realloc(recs, (size_t)cap * sizeof(cdata_t));
+        sn = loadSampleNamesFromIndex(pathbuf);
+
+        for (;;) {
+            cdata_t c = read_cdata1(&cf), d;
+            if (c.n == 0) break;                        /* EOF */
+            d = decompress(c);
+            free_cdata(&c);
+            if (np < 0) np = (int64_t)d.n;
+            else if ((int64_t)d.n != np) {
+                free_cdata(&d);
+                cleanSampleNames2(sn); bgzf_close(cf.fh);
+                rc = sesame__fail(err, SESAME_ERR_FORMAT,
+                    "%s has %" PRIu64 " rows, an earlier file has %" PRId64
+                    " -- they are not the same ordering", paths[k],
+                    (uint64_t)d.n, np);
+                goto done;
+            }
+            if (nrec >= cap) {
+                cap = cap ? cap * 2 : 8;
+                recs  = (cdata_t *)realloc(recs, (size_t)cap * sizeof(cdata_t));
+                names = (char **)realloc(names, (size_t)cap * sizeof(char *));
+            }
+            {   const char *nm = (got < sn.n) ? sn.s[got] : NULL;
+                names[nrec] = strdup((nm && *nm) ? nm : "V"); }
+            recs[nrec++] = d;
+            got++;
+            if (!opt->all) break;                       /* first record only */
         }
-        recs[nrec++] = d;
-        if (!opt->all) break;                           /* first record only */
+        cleanSampleNames2(sn);
+        bgzf_close(cf.fh);
+        if (got == 0) {
+            rc = sesame__fail(err, SESAME_ERR_FORMAT, "no records in %s", paths[k]);
+            goto done;
+        }
     }
 
     if (nrec == 0) {
-        rc = sesame__fail(err, SESAME_ERR_FORMAT, "no records in %s", path);
+        rc = sesame__fail(err, SESAME_ERR_FORMAT, "no records in %s", paths[0]);
         goto done;
     }
     if (np != nid) {
         rc = sesame__fail(err, SESAME_ERR_FORMAT,
             "%s has %" PRId64 " probes, ordering has %d -- lineage mismatch",
-            path, np, nid);
+            paths[0], np, nid);
         goto done;
     }
 
@@ -257,9 +286,8 @@ static int attach_yame(const char *path, const sesame_index_t *ix,
         fputs("Probe_ID", out);
         with_head(out, opt);
         for (j = 0; j < nrec; j++) {
-            const char *nm = (j < sn.n) ? sn.s[j] : "";
             fputc('\t', out);
-            render_head(out, recs[j].fmt, (nm && *nm) ? nm : "V", opt);
+            render_head(out, recs[j].fmt, names[j], opt);
         }
         fputc('\n', out);
     }
@@ -274,10 +302,8 @@ static int attach_yame(const char *path, const sesame_index_t *ix,
     }
 
 done:
-    for (j = 0; j < nrec; j++) free_cdata(&recs[j]);
-    free(recs);
-    cleanSampleNames2(sn);
-    bgzf_close(cf.fh);
+    for (j = 0; j < nrec; j++) { free_cdata(&recs[j]); free(names[j]); }
+    free(recs); free(names);
     return rc;
 }
 
@@ -285,9 +311,23 @@ int sesame_attach_probe(const char *path, const sesame_index_t *ix,
                         const sesame_attach_opt_t *opt, FILE *out,
                         sesame_err_t *err)
 {
+    return sesame_attach_probe_n(&path, 1, ix, opt, out, err);
+}
+
+int sesame_attach_probe_n(const char *const *paths, int npath,
+                          const sesame_index_t *ix,
+                          const sesame_attach_opt_t *opt, FILE *out,
+                          sesame_err_t *err)
+{
     static const sesame_attach_opt_t deflt = { 0, 0, 0, 0 };
     if (err) { err->code = SESAME_OK; err->msg[0] = '\0'; }
     if (!opt) opt = &deflt;
-    return is_yame(path) ? attach_yame(path, ix, opt, out, err)
-                         : attach_text(path, ix, opt, out, err);
+    if (npath < 1) return sesame__fail(err, SESAME_ERR_IO, "no input file");
+    if (!is_yame(paths[0])) {
+        if (npath > 1)
+            return sesame__fail(err, SESAME_ERR_UNSUPPORTED,
+                "several inputs are only supported for YAME files");
+        return attach_text(paths[0], ix, opt, out, err);
+    }
+    return attach_yame(paths, npath, ix, opt, out, err);
 }

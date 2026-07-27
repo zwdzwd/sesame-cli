@@ -1713,7 +1713,9 @@ static const char *platform_from_basename(const char *path)
 
 static int cmd_attach_probe(int argc, char **argv)
 {
-    const char *path = NULL, *idxpath = NULL, *platform = NULL;
+    const char *paths[64], *idxpath = NULL, *platform = NULL;
+    int npath = 0;
+    const char *path;
     sesame_attach_opt_t opt; memset(&opt, 0, sizeof opt);
     char resolved[4096];
     sesame_index_t *ix = NULL;
@@ -1746,9 +1748,11 @@ static int cmd_attach_probe(int argc, char **argv)
         else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) { usage_attach(); return 0; }
         else if (argv[i][0] == '-' && argv[i][1] != '\0') {
             fprintf(stderr, "sesame: unknown option %s\n", argv[i]); return usage_attach();
-        } else path = argv[i];
+        } else if (npath < (int)(sizeof paths / sizeof *paths)) paths[npath++] = argv[i];
+        else { fprintf(stderr, "sesame: too many input files\n"); return 1; }
     }
-    if (!path) return usage_attach();
+    if (!npath) return usage_attach();
+    path = paths[0];                    /* the one we identify the ordering by */
 
     /* Probe IDs come from the ordering: --index wins, else --platform, else the
      * filename prefix (e.g. MSA.hg38.coord.tsv.gz), else the file's own row
@@ -1793,7 +1797,7 @@ static int cmd_attach_probe(int argc, char **argv)
     if (!(ix = sesame_index_open(idxpath, &e))) {
         fprintf(stderr, "sesame: %s\n", e.msg); return 1;
     }
-    if (sesame_attach_probe(path, ix, &opt, stdout, &e) != SESAME_OK) {
+    if (sesame_attach_probe_n(paths, npath, ix, &opt, stdout, &e) != SESAME_OK) {
         fprintf(stderr, "sesame: %s\n", e.msg); goto out;
     }
     rc = 0;

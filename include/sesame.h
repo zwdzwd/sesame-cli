@@ -161,6 +161,14 @@ int sesame_attach_probe(const char *path, const sesame_index_t *ix,
                         const sesame_attach_opt_t *opt, FILE *out,
                         sesame_err_t *err);
 
+/* Several YAME files side by side. They are positional to the same ordering,
+ * so this is a column concatenation, not a join -- row i is probe i in every
+ * one of them. Row counts must agree. Text input takes a single file only. */
+int sesame_attach_probe_n(const char *const *paths, int npath,
+                          const sesame_index_t *ix,
+                          const sesame_attach_opt_t *opt, FILE *out,
+                          sesame_err_t *err);
+
 /* --------------------------------------------------------------- sigdf ---
  *
  * Signals, one row per index probe, in index order. NaN encodes NA.
