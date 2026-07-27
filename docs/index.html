@@ -273,17 +273,13 @@ yame unpack beta.cg | cinderplot --no-header \
         <img src="figures/qc_dyebias_qq.png" alt="Dye bias Q-Q plot, Infinium-I red versus green signal">
         <button class="zoom" type="button" data-full="figures/qc_dyebias_qq.png" title="expand">⤢</button>
         <div class="code"><pre><code>sesame <span class="sub">preprocess</span> --prep C --output intensity --out qc/ $PFX
-sesame <span class="sub">attach-probe</span> qc/intensity.cg | tail -n +2 &gt; qc/mu.tsv
 
-<span class="cm"># pool each channel's in-band {M,U}, read off a matched quantile grid</span>
-QS=$(seq 0 0.02 1 | awk '{printf " q%03d=quantile(sig,%s)", NR, $1}')
-{ printf 'Probe_ID\tM\tU\tcol\n'
-  <b>tabl</b> join -H -k V1 --inner qc/mu.tsv \
-    &lt;(zcat $STORE/EPICv2/EPICv2.ordering.tsv.gz | tail -n +2 | cut -f1,4); } \
-| <b>tabl</b> filter 'col=="R" || col=="G"' | <b>tabl</b> longer -c M,U -v sig \
-| <b>tabl</b> summarize -g col $QS \
-| <b>tabl</b> longer -c 2:52 -n q -v sig | <b>tabl</b> wider -n col -v sig \
-| <b>tabl</b> select 'R,G' &gt; qq.tsv
+<span class="cm"># --with col carries the ordering's channel through; then pool each</span>
+<span class="cm"># channel's in-band {M,U} and read off a matched quantile grid</span>
+sesame <span class="sub">attach-probe</span> --with col qc/intensity.cg \
+| <b>tabl</b> filter 'col=="R" || col=="G"' \
+| <b>tabl</b> longer -c 3:4 -v sig \
+| <b>tabl</b> quantile -g col -n 51 sig --wider &gt; qq.tsv
 
 cinderplot 'qq.tsv + aes(R, G) + geom_point(size=1.2)
   + geom_abline(slope=1, intercept=0, colour="grey40")
