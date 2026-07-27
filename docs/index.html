@@ -387,6 +387,24 @@ cinderplot 'out/bins.tsv
   </section>
 
   <section class="card">
+    <h2>Speed <span class="m">— vs the R package</span></h2>
+    <p>One EPICv2 sample, IDAT → betas, median of 3. R is timed twice: the
+      <code class="inl">openSesame()</code> call alone, and the whole invocation —
+      startup and <code class="inl">library(sesame)</code> included — which is what a
+      pipeline pays, since it starts a fresh R per sample.</p>
+    <figure>
+      <div class="shot" tabindex="0">
+        <img src="figures/bench_vs_r.png" alt="Runtime comparison: sesame C versus R openSesame">
+        <button class="zoom" type="button" data-full="figures/bench_vs_r.png" title="expand">⤢</button>
+        <div class="code"><pre><code>tools/bench_vs_r.sh $PFX EPICv2 3</code></pre></div>
+      </div>
+      <figcaption><b>2.5 s</b> vs <b>30.7 s</b> in-session (<b>12&times;</b>) and
+        <b>46.9 s</b> per invocation (<b>19&times;</b>). One machine, one array —
+        regenerate rather than quoting these.</figcaption>
+    </figure>
+  </section>
+
+  <section class="card">
     <h2>Betas utilities <span class="m">— mliftover · impute</span></h2>
     <p>Post-process a <code class="inl">beta.cg</code> → <code class="inl">beta.cg</code>,
       positional to the platform ordering.</p>
@@ -401,31 +419,16 @@ sesame <span class="sub">impute</span> --method neighbors \
     <p style="margin-top:11px"><b>mliftover</b> prefix-joins to the target ordering
       (EPICv2↔EPIC↔HM450); <b>impute</b> fills NAs by the probe's cross-sample mean,
       or the nearest same-strand genomic neighbours (imputeBetas*).</p>
+    <p style="margin-top:9px">Both are local fills — a neighbouring CpG or the column
+      mean — and they only reach probes the array already carries. For imputation as
+      an inference problem, use
+      <a href="https://zhou-lab.github.io/methscope-cli/">methscope</a>:
+      <code class="inl">methscope upscale</code> predicts genome-wide CpG methylation
+      from a sparse methylome with a trained model, which is both more accurate and
+      not limited to the manifest.</p>
   </section>
 
 </div>
-
-<section class="full">
-  <h2>Speed <span class="m">— against the R package, same sample, same betas</span></h2>
-  <p>One EPICv2 sample, IDAT to betas, median of three runs on one node. R is timed
-    twice: the <code class="inl">openSesame()</code> call alone, and the whole
-    invocation as a pipeline actually pays for it — a fresh process per sample,
-    interpreter startup and <code class="inl">library(sesame)</code> included.</p>
-  <figure>
-    <div class="shot" tabindex="0">
-      <img src="figures/bench_vs_r.png" alt="Runtime comparison: sesame C versus R openSesame">
-      <button class="zoom" type="button" data-full="figures/bench_vs_r.png" title="expand">⤢</button>
-      <div class="code"><pre><code>tools/bench_vs_r.sh $PFX EPICv2 3</code></pre></div>
-    </div>
-    <figcaption>
-      <b>2.5 s</b> vs <b>30.7 s</b> in-session (<b>12&times;</b>) and <b>46.9 s</b> per
-      invocation (<b>19&times;</b>). The 16 s gap between R's two bars is startup plus
-      <code class="inl">library()</code> — paid once interactively, but once
-      <i>per sample</i> in a pipeline that shells out. Numbers are one machine and one
-      array; regenerate with the script rather than quoting these.
-    </figcaption>
-  </figure>
-</section>
 
 <section class="full">
   <h2>Storage &amp; formats <span class="m">— YAME .cg, and where the Probe IDs live</span></h2>
@@ -653,6 +656,18 @@ sesame &lt;version&gt;
       return c;
     }
 
+    /* tallest column for the optimal contiguous split into n */
+    function best(h, n) {
+      if (n <= 1) return h.reduce(function (a, b) { return a + b; }, 0);
+      var lo = Math.max.apply(null, h),
+          hi = h.reduce(function (a, b) { return a + b; }, 0);
+      while (lo < hi) {
+        var mid = Math.floor((lo + hi) / 2);
+        if (needed(h, mid) <= n) hi = mid; else lo = mid + 1;
+      }
+      return lo;
+    }
+
     function layout() {
       var n = colCount();
       grid.classList.add("balanced");
@@ -671,12 +686,28 @@ sesame &lt;version&gt;
       var h = cards.map(function (c) { return c.offsetHeight + GAP; });
       if (n === 1) return;
 
-      var lo = Math.max.apply(null, h);
-      var hi = h.reduce(function (a, b) { return a + b; }, 0);
-      while (lo < hi) {                       /* smallest feasible tallest column */
-        var mid = Math.floor((lo + hi) / 2);
-        if (needed(h, mid) <= n) hi = mid; else lo = mid + 1;
+      /* How many columns to actually use. More columns cannot make the page
+       * taller, so minimising height alone always picks the maximum -- and that
+       * is how you get a stub column: at 1600px four columns save 4% of height
+       * and leave the last one half empty. So take the FEWEST columns that stay
+       * within TOL of the best achievable height; fuller columns and wider cards
+       * are worth a few percent. */
+      var TOL = 1.15, bestH = Infinity, i2;
+      for (i2 = 1; i2 <= n; i2++) bestH = Math.min(bestH, best(h, i2));
+      for (i2 = 1; i2 <= n; i2++) if (best(h, i2) <= bestH * TOL) { n = i2; break; }
+
+      /* rebuild at the chosen count */
+      while (grid.firstChild) grid.removeChild(grid.firstChild);
+      cols = [];
+      for (i = 0; i < n; i++) {
+        var d2 = document.createElement("div");
+        d2.className = "gcol";
+        grid.appendChild(d2);
+        cols.push(d2);
       }
+      cards.forEach(function (c) { cols[0].appendChild(c); });
+
+      var lo = best(h, n);
 
       var k = 0, cur = 0;
       for (var j = 0; j < cards.length; j++) {
