@@ -29,6 +29,18 @@
      color:var(--accent);background:var(--accent-soft);border:1px solid var(--line);padding:2px 8px;border-radius:20px;vertical-align:middle}
   /* title row: heading, badges, install box and cite button on one wrapping line */
   .titlerow{display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px}
+  /* "built against | YAME vX.YZ" pill on the title row. The version is filled
+     by JS from the pinned submodule, so nothing here needs manual updating --
+     and it stays hidden offline, or until the submodule bump is pushed. */
+  .builton{display:inline-flex;align-items:stretch;border:1px solid var(--accent);
+     border-radius:6px;overflow:hidden;font-size:.72rem;white-space:nowrap;text-decoration:none}
+  .builton .bl{display:inline-flex;align-items:center;padding:.42em .6em;font-weight:600;
+     background:var(--accent);color:var(--on-accent)}
+  .builton .br{display:inline-flex;align-items:center;padding:.42em .6em;
+     color:var(--accent);background:var(--accent-soft);
+     font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  .builton:hover .bl{filter:brightness(1.08)}
+  .builton:hover .br{filter:brightness(.96)}
   .titlerow .badge{margin-left:0}
   .expand{color:var(--muted);margin:8px 0 12px;font-size:.9rem;max-width:78ch}
   /* install: the command itself is the button — click to copy */
@@ -144,6 +156,9 @@
     <h1><b>SE</b>nsible <b>S</b>tep-wise <b>A</b>nalysis of DNA <b>ME</b>thylation</h1>
     <a class="badge badge-ver" id="ver" href="https://github.com/zwdzwd/sesame-cli/tags">latest</a>
     <span class="badge">cli</span>
+    <a class="builton" id="builton" href="https://zhou-lab.github.io/YAME/" hidden
+       title="sesame links libyame.a from this pinned submodule; it fills the store sesame reads"
+       ><span class="bl">built against</span><span class="br">YAME&nbsp;<span id="yame-ver"></span></span></a>
     <span class="install">
       <button id="install-btn" type="button"
               data-cmd="conda install -c zhou-lab -c conda-forge sesame-cli"
@@ -503,6 +518,26 @@ sesame &lt;version&gt;
       var el = document.getElementById("ver");
       el.textContent = newest;
       el.href = "https://github.com/zwdzwd/sesame-cli/releases/tag/" + newest;
+    })
+    .catch(function () {});
+
+  /* "built against YAME vX.YZ": resolve the version through the pinned
+   * submodule rather than hardcoding it -- read the commit the submodule
+   * points at, then src/yame_version.h from YAME at that commit. Tracks the
+   * pin with no manual edit, and simply stays hidden if either call fails. */
+  fetch("https://api.github.com/repos/zwdzwd/sesame-cli/contents/YAME")
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (sub) {
+      if (!sub || !sub.sha) return null;
+      return fetch("https://api.github.com/repos/zhou-lab/YAME/contents/src/yame_version.h?ref=" + sub.sha)
+        .then(function (r) { return r.ok ? r.json() : null; });
+    })
+    .then(function (f) {
+      if (!f || !f.content) return;
+      var m = atob(f.content.replace(/\s/g, "")).match(/YAME_VERSION\s+"([^"]+)"/);
+      if (!m) return;
+      document.getElementById("yame-ver").textContent = m[1];
+      document.getElementById("builton").hidden = false;
     })
     .catch(function () {});
 </script>
