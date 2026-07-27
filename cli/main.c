@@ -319,6 +319,9 @@ static int usage_attach(void)
     yame_usage_cont("file's row count -- each ordering has a distinct");
     yame_usage_cont("length, so a positional .cg identifies itself.");
     yame_usage_opt("--index FILE", "ordering .tsv.gz (overrides --platform)");
+    yame_usage_opt("--with LIST", "also emit these ordering columns after the ID:");
+    yame_usage_cont("M, U, col, mask (or all). The ordering is already");
+    yame_usage_cont("open -- this saves joining it back on.");
     yame_usage_opt("--all, -a", "emit every sample column (default: first only)");
     yame_usage_opt("--beta", "read fmt3 M/U as beta");
     yame_usage_opt("--no-header", "omit the header row");
@@ -1720,6 +1723,23 @@ static int cmd_attach_probe(int argc, char **argv)
     for (i = 0; i < argc; i++) {
         if (strcmp(argv[i], "--index") == 0 && i+1 < argc) idxpath = argv[++i];
         else if (strcmp(argv[i], "--platform") == 0 && i+1 < argc) platform = argv[++i];
+        else if (strcmp(argv[i], "--with") == 0 && i+1 < argc) {
+            /* comma list of ordering columns to carry through */
+            char *spec = argv[++i], *t;
+            for (t = strtok(spec, ","); t; t = strtok(NULL, ",")) {
+                if (!strcmp(t, "col"))       opt.with |= SESAME_WITH_COL;
+                else if (!strcmp(t, "M"))    opt.with |= SESAME_WITH_M;
+                else if (!strcmp(t, "U"))    opt.with |= SESAME_WITH_U;
+                else if (!strcmp(t, "mask")) opt.with |= SESAME_WITH_MASK;
+                else if (!strcmp(t, "all"))  opt.with |= SESAME_WITH_M | SESAME_WITH_U |
+                                                         SESAME_WITH_COL | SESAME_WITH_MASK;
+                else {
+                    fprintf(stderr, "sesame: --with: unknown column '%s' "
+                        "(M, U, col, mask, all)\n", t);
+                    return 1;
+                }
+            }
+        }
         else if (strcmp(argv[i], "--all") == 0 || strcmp(argv[i], "-a") == 0) opt.all = 1;
         else if (strcmp(argv[i], "--beta") == 0) opt.beta = 1;
         else if (strcmp(argv[i], "--no-header") == 0) opt.no_header = 1;

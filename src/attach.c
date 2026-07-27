@@ -63,6 +63,36 @@ static int read_gzline(gzFile f, char **buf, size_t *cap)
     return 1;
 }
 
+/* The ordering columns requested with --with, in the ordering's own column
+ * order, so the output reads like the ordering it came from. */
+static void with_head(FILE *out, const sesame_attach_opt_t *opt)
+{
+    if (opt->with & SESAME_WITH_M)    fputs("\tM", out);
+    if (opt->with & SESAME_WITH_U)    fputs("\tU", out);
+    if (opt->with & SESAME_WITH_COL)  fputs("\tcol", out);
+    if (opt->with & SESAME_WITH_MASK) fputs("\tmask", out);
+}
+
+static void with_row(FILE *out, const sesame_index_t *ix, int32_t i,
+                     const sesame_attach_opt_t *opt)
+{
+    if (opt->with & SESAME_WITH_M) {
+        uint32_t v = sesame__index_M(ix)[i];
+        if (v) fprintf(out, "\t%u", v); else fputs("\tNA", out);
+    }
+    if (opt->with & SESAME_WITH_U) {
+        uint32_t v = sesame__index_U(ix)[i];
+        if (v) fprintf(out, "\t%u", v); else fputs("\tNA", out);
+    }
+    if (opt->with & SESAME_WITH_COL) {
+        uint8_t c = sesame__index_col(ix)[i];
+        fprintf(out, "\t%s", c == SESAME_COL_G ? "G" :
+                              c == SESAME_COL_R ? "R" : "2");
+    }
+    if (opt->with & SESAME_WITH_MASK)
+        fprintf(out, "\t%u", (unsigned)sesame__index_mask(ix)[i]);
+}
+
 /* Count data rows (total lines minus the header, unless no_header). */
 static int count_text_rows(const char *path, int no_header, int32_t *nrow,
                            sesame_err_t *err)
@@ -109,12 +139,15 @@ static int attach_text(const char *path, const sesame_index_t *ix,
 
     while ((r = read_gzline(f, &buf, &cap)) == 1) {
         if (first && !opt->no_header) {
-            fprintf(out, "Probe_ID\t%s\n", buf);
+            fputs("Probe_ID", out); with_head(out, opt);
+            fprintf(out, "\t%s\n", buf);
             first = 0;
             continue;
         }
         first = 0;
-        fprintf(out, "%s\t%s\n", sesame_index_probe_id(ix, row), buf);
+        fputs(sesame_index_probe_id(ix, row), out);
+        with_row(out, ix, row, opt);
+        fprintf(out, "\t%s\n", buf);
         row++;
     }
     free(buf);
@@ -222,6 +255,7 @@ static int attach_yame(const char *path, const sesame_index_t *ix,
 
     if (!opt->no_header) {
         fputs("Probe_ID", out);
+        with_head(out, opt);
         for (j = 0; j < nrec; j++) {
             const char *nm = (j < sn.n) ? sn.s[j] : "";
             fputc('\t', out);
@@ -231,6 +265,7 @@ static int attach_yame(const char *path, const sesame_index_t *ix,
     }
     for (i = 0; i < np; i++) {
         fputs(sesame_index_probe_id(ix, (int32_t)i), out);
+        with_row(out, ix, (int32_t)i, opt);
         for (j = 0; j < nrec; j++) {
             fputc('\t', out);
             render1(out, &recs[j], (uint64_t)i, opt);
@@ -250,7 +285,7 @@ int sesame_attach_probe(const char *path, const sesame_index_t *ix,
                         const sesame_attach_opt_t *opt, FILE *out,
                         sesame_err_t *err)
 {
-    static const sesame_attach_opt_t deflt = { 0, 0, 0 };
+    static const sesame_attach_opt_t deflt = { 0, 0, 0, 0 };
     if (err) { err->code = SESAME_OK; err->msg[0] = '\0'; }
     if (!opt) opt = &deflt;
     return is_yame(path) ? attach_yame(path, ix, opt, out, err)

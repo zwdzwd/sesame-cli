@@ -142,10 +142,19 @@ const char     *sesame_index_probe_id(const sesame_index_t *ix, int32_t i);
  * format: fmt0 mask bit, fmt3 M/U or beta, fmt4 float, ...) and plain text
  * .tsv[.gz] (e.g. <platform>.hg38.coord.tsv.gz), whose own header is kept and
  * prefixed with "Probe_ID". Errors if the row count does not match ix. */
+/* Ordering columns attach-probe can emit beside the Probe_ID. The ordering is
+ * already open to supply the IDs; these let a caller have the rest of the row
+ * without re-reading the file and joining it back on. */
+#define SESAME_WITH_M     (1u << 0)   /* methylated bead address (NA -> "NA") */
+#define SESAME_WITH_U     (1u << 1)   /* unmethylated bead address            */
+#define SESAME_WITH_COL   (1u << 2)   /* design/in-band channel: G, R or 2    */
+#define SESAME_WITH_MASK  (1u << 3)   /* the ordering's mask bit, when it has one */
+
 typedef struct {
     int all;        /* YAME: emit every sample/record, not just the first     */
     int beta;       /* format 3: print beta instead of M<TAB>U                 */
     int no_header;  /* suppress the header line (text: treat line 1 as data)   */
+    unsigned with;  /* SESAME_WITH_* bits, emitted right after Probe_ID        */
 } sesame_attach_opt_t;
 
 int sesame_attach_probe(const char *path, const sesame_index_t *ix,
