@@ -254,6 +254,49 @@ yame unpack beta.cg | cinderplot --no-header \
   </section>
 
   <section class="card">
+    <h2>Array QC plots <span class="m">— preprocess → cinderplot</span></h2>
+    <p>The two diagnostics from sesame's
+      <a href="https://zhou-lab.github.io/sesame-docs/dev/supplemental.html">supplemental QC</a>,
+      with no R in the loop: <code class="inl">preprocess</code> writes the signals,
+      <code class="inl">attach-probe</code> labels them, and
+      <a href="https://github.com/zhou-lab/cinderplot">cinderplot</a> draws them.</p>
+    <figure>
+      <div class="shot" tabindex="0">
+        <img src="figures/qc_dyebias_qq.png" alt="Dye bias Q-Q plot, Infinium-I red versus green signal">
+        <button class="zoom" type="button" data-full="figures/qc_dyebias_qq.png" title="expand">⤢</button>
+        <div class="code"><pre><code><span class="cm"># Infinium-I in-band signal, split by channel, paired at matched quantiles</span>
+sesame <span class="sub">preprocess</span> --prep C --output intensity --out qc/ $PFX
+sesame <span class="sub">attach-probe</span> --platform EPICv2 qc/intensity.cg &gt; qc/mu.tsv
+<span class="cm"># join to the ordering's col, sort each channel's {M,U}, pair quantiles -&gt; qq.tsv</span>
+
+cinderplot 'qq.tsv + aes(red, grn) + geom_point(size=0.4)
+  + geom_abline(slope=1, intercept=0, colour="grey40")
+  + labs(x="Infinium-I Red signal", y="Infinium-I Grn signal")' qq.png --size 5x5</code></pre></div>
+      </div>
+      <figcaption><b>Dye bias Q-Q</b> — green quantiles below the diagonal: red reads
+        hotter across the range. Re-run after <code class="inl">--prep CD</code> and the
+        curve should land on the line. Ports <code class="inl">sesameQC_plotRedGrnQQ()</code>.</figcaption>
+    </figure>
+    <figure>
+      <div class="shot" tabindex="0">
+        <img src="figures/qc_intens_beta.png" alt="Total intensity versus beta, as a binned density">
+        <button class="zoom" type="button" data-full="figures/qc_intens_beta.png" title="expand">⤢</button>
+        <div class="code"><pre><code>sesame <span class="sub">preprocess</span> --prep C --output intensity,beta --out qc/ $PFX
+sesame <span class="sub">attach-probe</span> --platform EPICv2 qc/intensity.cg &gt; qc/mu.tsv
+sesame <span class="sub">attach-probe</span> --platform EPICv2 qc/beta.cg      &gt; qc/beta.tsv
+<span class="cm"># total = M+U; bin log2(total) x beta onto a grid -&gt; ib_density.tsv</span>
+
+cinderplot 'ib_density.tsv + aes(logint, beta, colour=density) + geom_point(size=0.7)
+  + geom_hline(yintercept=0.5, colour="grey30") + scale_colour_viridis()
+  + labs(x="Total intensity  log2(M+U)", y="beta")' ib.png --size 5.5x4.5</code></pre></div>
+      </div>
+      <figcaption><b>Intensity vs beta</b> — two lobes at beta ~0.05 and ~0.9, funnelling
+        to 0.5 as signal dies into background below ~2<sup>10</sup>. That funnel is where a
+        detection cutoff belongs. Ports <code class="inl">sesameQC_plotIntensVsBetas()</code>.</figcaption>
+    </figure>
+  </section>
+
+  <section class="card">
     <h2>Differential methylation <span class="m">— dml</span></h2>
     <p>Per-probe OLS with t/F tests + BH, matching R's <code class="inl">lm</code> to ~1e-9.</p>
     <pre><code>sesame <span class="sub">dml</span> --betas out/beta.cg \
@@ -355,6 +398,28 @@ sesame <span class="sub">impute</span> --method neighbors \
   </section>
 
 </div>
+
+<section class="full">
+  <h2>Speed <span class="m">— against the R package, same sample, same betas</span></h2>
+  <p>One EPICv2 sample, IDAT to betas, median of three runs on one node. R is timed
+    twice: the <code class="inl">openSesame()</code> call alone, and the whole
+    invocation as a pipeline actually pays for it — a fresh process per sample,
+    interpreter startup and <code class="inl">library(sesame)</code> included.</p>
+  <figure>
+    <div class="shot" tabindex="0">
+      <img src="figures/bench_vs_r.png" alt="Runtime comparison: sesame C versus R openSesame">
+      <button class="zoom" type="button" data-full="figures/bench_vs_r.png" title="expand">⤢</button>
+      <div class="code"><pre><code>tools/bench_vs_r.sh $PFX EPICv2 3</code></pre></div>
+    </div>
+    <figcaption>
+      <b>2.5 s</b> vs <b>30.7 s</b> in-session (<b>12&times;</b>) and <b>46.9 s</b> per
+      invocation (<b>19&times;</b>). The 16 s gap between R's two bars is startup plus
+      <code class="inl">library()</code> — paid once interactively, but once
+      <i>per sample</i> in a pipeline that shells out. Numbers are one machine and one
+      array; regenerate with the script rather than quoting these.
+    </figcaption>
+  </figure>
+</section>
 
 <section class="full">
   <h2>Storage &amp; formats <span class="m">— YAME .cg, and where the Probe IDs live</span></h2>
