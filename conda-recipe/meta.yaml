@@ -39,7 +39,7 @@ requirements:
     # it reads, so yame is a real runtime dependency now. The floor is the yame
     # this was built against: that is the one whose catalog fixes the annotation
     # tags compiled into src/registry.h.
-    - yame >=1.29
+    - yame >=1.33
 
 test:
   commands:
