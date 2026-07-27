@@ -36,8 +36,18 @@ jobs:
       - name: Install conda-build
         run: conda install -n base -y conda-build anaconda-client
 
+      # zhou-lab supplies yame, which the recipe declares as a run dependency,
+      # so conda-build needs it to solve the TEST env -- not just the build one.
+      # Without it linux-64 fails outright ("yame >=1.33 does not exist"), while
+      # macOS accidentally passes: its filesystem is case-insensitive, so
+      # conda-build's "missing dependency, look for a recipe" fallback matches
+      # the YAME/ submodule against a lowercase yame/ and quietly builds yame
+      # from source instead. Naming the channel makes both platforms do the same
+      # thing, and use the published package.
       - name: Build package
-        run: conda build -c conda-forge --output-folder "$RUNNER_TEMP/bld" conda-recipe/
+        run: |
+          conda build -c conda-forge -c zhou-lab \
+            --output-folder "$RUNNER_TEMP/bld" conda-recipe/
 
       # The runner's glibc is far newer than users'. If the sysroot pin ever
       # comes loose, the binary silently picks up symbols no ordinary machine
