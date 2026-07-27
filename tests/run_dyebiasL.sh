@@ -41,19 +41,41 @@ run_one() {
 
     YAME_DATA_HOME="$yhome" "$dump" --prep CE --what beta "$pfx" \
         2>/dev/null > "$work/c_CE.txt"
+    ## Raw betas too, to find probes that already disagree before E runs --
+    ## the ordering-lineage set, excluded the same way compare_noob.R does.
+    YAME_DATA_HOME="$yhome" "$dump" --prep "" --what beta "$pfx" \
+        2>/dev/null > "$work/c_raw.txt"
 
-    if "$RSCRIPT" --vanilla - "$plat" "$pfx" "$work/c_CE.txt" <<'PY' 2>"$work/r.err"
+    if "$RSCRIPT" --vanilla - "$plat" "$pfx" "$work/c_CE.txt" "$work/c_raw.txt" \
+         <<'PY' 2>"$work/r.err"
 suppressMessages(library(sesame))
-a <- commandArgs(TRUE); plat<-a[1]; pfx<-a[2]; cf<-a[3]
+a <- commandArgs(TRUE); plat<-a[1]; pfx<-a[2]; cf<-a[3]; rawf<-a[4]
+rd  <- function(f) { x <- read.table(f, colClasses=c("character","numeric"))
+                     setNames(x$V2, x$V1) }
 sdf <- readIDATpair(pfx, platform=plat)
 rB  <- getBetas(dyeBiasL(inferInfiniumIChannel(sdf)))
-cb  <- read.table(cf, colClasses=c("character","numeric")); cB<-setNames(cb$V2,cb$V1)
+cB  <- rd(cf)
 ids <- intersect(names(rB), names(cB))
+
+## The store ships InfiniumAnnotation's ordering; R reads sesameData's older
+## manifest. Where the two disagree on a probe's DESIGN TYPE (Infinium-I vs II)
+## M and U come from different addresses, so the betas differ from the raw stage
+## on and no downstream step can reconcile them -- e.g. EPIC/HM450 cg07162498
+## and cg09334382, which v8.1 calls Infinium-I and sesameData Infinium-II.
+## That is an annotation-lineage difference, not a dye-bias one, so exclude it
+## and test E on the probes whose raw betas already agree (cf. compare_noob.R).
+## A G<->R channel flip is NOT in this set: inferInfiniumIChannel re-derives the
+## channel from the data, so both sides converge on it.
+rRaw <- getBetas(sdf); cRaw <- rd(rawf)
+rawd <- abs(rRaw[ids] - cRaw[ids])
+lin  <- (!is.na(rawd) & rawd >= 1e-9) | xor(is.na(rRaw[ids]), is.na(cRaw[ids]))
+ids  <- ids[!lin]
+
 d   <- abs(rB[ids]-cB[ids]); d <- d[!is.na(d)]
 nam <- sum(xor(is.na(rB[ids]), is.na(cB[ids])))
 mx  <- if (length(d)) max(d) else 0
-cat(sprintf("ok   %-8s E: max|diff|=%.2e over %d betas, NA-mismatch=%d\n",
-            plat, mx, length(d), nam))
+cat(sprintf("ok   %-8s E: max|diff|=%.2e over %d betas, NA-mismatch=%d (%d lineage-divergent excluded)\n",
+            plat, mx, length(d), nam, sum(lin)))
 if (mx > 1e-9 || nam != 0) { cat("FAIL: E diverges from dyeBiasL\n"); quit(status=1) }
 PY
     then PASS=$((PASS+1)); else sed 's/^/    /' "$work/r.err" | head -4; FAIL=$((FAIL+1)); fi
