@@ -160,6 +160,43 @@ int sesame_genome_locate(const char *genome, const char *file, char *out, size_t
     return -1;
 }
 
+/* Identify a positional file's platform from its ROW COUNT, and return the
+ * ordering that goes with it.
+ *
+ * A .cg is positional: row i is probe i of some ordering, and nothing in the
+ * file says which. But each platform's ordering has a distinct length (EPIC
+ * 866553, EPICv2 937690, HM450 486427, MSA 284309, ...), so the count alone
+ * identifies it. YAME keeps that row-space table for its own -R/-m inference;
+ * this asks the same question, and like YAME it RESOLVES ONLY -- a command
+ * that finds the ordering missing should say which fetch supplies it, not
+ * start a multi-megabyte transfer in the middle of printing a table.
+ *
+ * Returns 0 and fills out with the ordering path; 1 if the platform is
+ * identified but not in the store (platform/fetch are set, out is not); -1 if
+ * the count matches nothing -- which is the honest answer for a --collapse'd
+ * beta.cg, whose rows were averaged to cg-prefixes and no longer line up with
+ * any ordering. Text input returns -1 too: there is no header to read, and
+ * those files carry the platform in their name anyway. */
+int sesame_index_from_rows(const char *file, char *out, size_t n,
+                           const char **platform, const char **fetch)
+{
+    uint64_t rows;
+    int rc;
+
+    if (platform) *platform = NULL;
+    if (fetch) *fetch = NULL;
+    if (out && n) out[0] = '\0';
+    if (!file) return -1;
+
+    rows = yame_ref_file_rows(file);
+    if (!rows) return -1;                 /* not a YAME file, or unreadable */
+
+    rc = yame_ref_for_rows(rows, NULL, "array", out, n, platform, fetch);
+    if (rc == YAME_REF_OK) return 0;
+    if (rc == YAME_REF_MISSING) return 1;
+    return -1;
+}
+
 /* Fills msg with the "here is how to fix it" text used when no index is found.
  * Deliberately verbose: this is the error a first-time user will hit. The
  * searched path must match sesame_asset_locate(). */

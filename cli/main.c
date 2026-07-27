@@ -314,7 +314,10 @@ static int usage_attach(void)
     yame_usage_text("made the file.");
 
     yame_usage_sec("Options:");
-    yame_usage_opt("--platform P", "EPIC | EPICv2 | HM450 | MSA (else from filename)");
+    yame_usage_opt("--platform P", "EPIC | EPICv2 | HM450 | MSA. Omit it and the");
+    yame_usage_cont("ordering comes from the filename, else from the");
+    yame_usage_cont("file's row count -- each ordering has a distinct");
+    yame_usage_cont("length, so a positional .cg identifies itself.");
     yame_usage_opt("--index FILE", "ordering .tsv.gz (overrides --platform)");
     yame_usage_opt("--all, -a", "emit every sample column (default: first only)");
     yame_usage_opt("--beta", "read fmt3 M/U as beta");
@@ -1727,16 +1730,37 @@ static int cmd_attach_probe(int argc, char **argv)
     }
     if (!path) return usage_attach();
 
-    /* Probe IDs come from the ordering: --index wins, else --platform, else
-     * inferred from the filename prefix (e.g. MSA.hg38.coord.tsv.gz). */
-    if (!idxpath) {
-        if (!platform) platform = platform_from_basename(path);
-        if (!platform) {
-            fprintf(stderr, "sesame: cannot tell which ordering to use for %s\n"
-                "  pass --index <ordering.tsv.gz> or --platform <EPIC|EPICv2|HM450|MSA>\n",
+    /* Probe IDs come from the ordering: --index wins, else --platform, else the
+     * filename prefix (e.g. MSA.hg38.coord.tsv.gz), else the file's own row
+     * count -- each platform's ordering has a distinct length, so a positional
+     * .cg identifies itself. Filename first because it is free and already
+     * documented; the row count only has to catch what it misses. */
+    if (!idxpath && !platform) platform = platform_from_basename(path);
+
+    if (!idxpath && !platform) {
+        const char *pname = NULL, *fetch = NULL;
+        int got = sesame_index_from_rows(path, resolved, sizeof resolved,
+                                         &pname, &fetch);
+        if (got == 0) {
+            idxpath = resolved;
+        } else if (got == 1) {
+            fprintf(stderr, "sesame: %s looks like %s by row count, but that "
+                "ordering is not in the store\n  fix: yame fetch %s\n",
+                path, pname, fetch ? fetch : pname);
+            return 1;
+        } else {
+            fprintf(stderr,
+                "sesame: cannot tell which ordering to use for %s\n"
+                "  the row count matches no published platform -- a --collapse'd\n"
+                "  beta.cg is averaged to cg-prefixes and no longer lines up with\n"
+                "  any ordering\n"
+                "  fix: pass --index <ordering.tsv.gz>, or --platform <P>\n",
                 path);
             return 1;
         }
+    }
+
+    if (!idxpath) {
         if (sesame_index_locate(platform, resolved, sizeof resolved) != 0) {
             char help[1024];
             sesame_index_missing_help(platform, help, sizeof help);

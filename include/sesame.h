@@ -107,6 +107,14 @@ void sesame_asset_dir(const char *platform, char *out, size_t n);
  * -1 if absent. */
 int sesame_index_locate(const char *platform, char *out, size_t n);
 
+/* Identify a positional file's platform from its row count -- each ordering
+ * has a distinct length -- and return that ordering's path. 0 = resolved into
+ * out; 1 = identified but not in the store (*platform and *fetch are set, for
+ * the error message); -1 = the count matches no known ordering. Resolves only,
+ * never downloads. */
+int sesame_index_from_rows(const char *file, char *out, size_t n,
+                           const char **platform, const char **fetch);
+
 /* Finds a genome-level file (e.g. "seqinfo.tsv.gz") at
  * <store>/<genome>/. These drive CNV binning (seqinfo+gaps), the CNV
  * ideogram (cytoband) and `region --gene` (genes.bed.gz). 0 on success. */
