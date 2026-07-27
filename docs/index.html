@@ -265,18 +265,27 @@ yame unpack beta.cg | cinderplot --no-header \
     <p>The two diagnostics from sesame's
       <a href="https://zhou-lab.github.io/sesame-docs/dev/supplemental.html">supplemental QC</a>,
       with no R in the loop: <code class="inl">preprocess</code> writes the signals,
-      <code class="inl">attach-probe</code> labels them, and
+      <code class="inl">attach-probe</code> labels them,
+      <a href="https://github.com/zhou-lab/tabl">tabl</a> reshapes them, and
       <a href="https://github.com/zhou-lab/cinderplot">cinderplot</a> draws them.</p>
     <figure>
       <div class="shot" tabindex="0">
         <img src="figures/qc_dyebias_qq.png" alt="Dye bias Q-Q plot, Infinium-I red versus green signal">
         <button class="zoom" type="button" data-full="figures/qc_dyebias_qq.png" title="expand">⤢</button>
-        <div class="code"><pre><code><span class="cm"># Infinium-I in-band signal, split by channel, paired at matched quantiles</span>
-sesame <span class="sub">preprocess</span> --prep C --output intensity --out qc/ $PFX
-sesame <span class="sub">attach-probe</span> --platform EPICv2 qc/intensity.cg &gt; qc/mu.tsv
-<span class="cm"># join to the ordering's col, sort each channel's {M,U}, pair quantiles -&gt; qq.tsv</span>
+        <div class="code"><pre><code>sesame <span class="sub">preprocess</span> --prep C --output intensity --out qc/ $PFX
+sesame <span class="sub">attach-probe</span> qc/intensity.cg | tail -n +2 &gt; qc/mu.tsv
 
-cinderplot 'qq.tsv + aes(red, grn) + geom_point(size=0.4)
+<span class="cm"># pool each channel's in-band {M,U}, read off a matched quantile grid</span>
+QS=$(seq 0 0.02 1 | awk '{printf " q%03d=quantile(sig,%s)", NR, $1}')
+{ printf 'Probe_ID\tM\tU\tcol\n'
+  <b>tabl</b> join -H -k V1 --inner qc/mu.tsv \
+    &lt;(zcat $STORE/EPICv2/EPICv2.ordering.tsv.gz | tail -n +2 | cut -f1,4); } \
+| <b>tabl</b> filter 'col=="R" || col=="G"' | <b>tabl</b> longer -c M,U -v sig \
+| <b>tabl</b> summarize -g col $QS \
+| <b>tabl</b> longer -c 2:52 -n q -v sig | <b>tabl</b> wider -n col -v sig \
+| <b>tabl</b> select 'R,G' &gt; qq.tsv
+
+cinderplot 'qq.tsv + aes(R, G) + geom_point(size=1.2)
   + geom_abline(slope=1, intercept=0, colour="grey40")
   + labs(x="Infinium-I Red signal", y="Infinium-I Grn signal")' qq.png --size 5x5</code></pre></div>
       </div>
@@ -289,11 +298,19 @@ cinderplot 'qq.tsv + aes(red, grn) + geom_point(size=0.4)
         <img src="figures/qc_intens_beta.png" alt="Total intensity versus beta, as a binned density">
         <button class="zoom" type="button" data-full="figures/qc_intens_beta.png" title="expand">⤢</button>
         <div class="code"><pre><code>sesame <span class="sub">preprocess</span> --prep C --output intensity,beta --out qc/ $PFX
-sesame <span class="sub">attach-probe</span> --platform EPICv2 qc/intensity.cg &gt; qc/mu.tsv
-sesame <span class="sub">attach-probe</span> --platform EPICv2 qc/beta.cg      &gt; qc/beta.tsv
-<span class="cm"># total = M+U; bin log2(total) x beta onto a grid -&gt; ib_density.tsv</span>
+sesame <span class="sub">attach-probe</span> qc/intensity.cg | tail -n +2 &gt; qc/mu.tsv
+sesame <span class="sub">attach-probe</span> qc/beta.cg      | tail -n +2 &gt; qc/beta.tsv
 
-cinderplot 'ib_density.tsv + aes(logint, beta, colour=density) + geom_point(size=0.7)
+<span class="cm"># join, then bin log2(M+U) x beta onto a 180x140 grid</span>
+{ printf 'Probe_ID\tM\tU\tbeta\n'
+  <b>tabl</b> join -H -k V1 --inner qc/mu.tsv qc/beta.tsv; } \
+| <b>tabl</b> mutate 'logint=log2(M+U)' | <b>tabl</b> filter 'logint&gt;=5 &amp;&amp; logint&lt;=15' \
+| <b>tabl</b> mutate 'xb=floor((logint-5)*18)' 'yb=floor(beta*140)' \
+| <b>tabl</b> count xb,yb \
+| <b>tabl</b> mutate 'logint=5+(xb+0.5)/18' 'beta=(yb+0.5)/140' 'density=log10(n+1)' \
+| <b>tabl</b> select 'logint,beta,density' &gt; qc/ib.tsv
+
+cinderplot 'ib.tsv + aes(logint, beta, colour=density) + geom_point(size=0.7)
   + geom_hline(yintercept=0.5, colour="grey30") + scale_colour_viridis()
   + labs(x="Total intensity  log2(M+U)", y="beta")' ib.png --size 5.5x4.5</code></pre></div>
       </div>
