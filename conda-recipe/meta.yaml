@@ -1,4 +1,7 @@
-{% set name = "sesame-cli" %}
+## The package is "sesame" -- it is what the binary is called and what the
+## method is called. The GitHub repo stays sesame-cli, so home/dev_url below
+## are unchanged; only the installable name differs.
+{% set name = "sesame" %}
 {% set version = "0.3" %}
 
 package:
@@ -56,7 +59,7 @@ about:
   license_file: LICENSE
   summary: Standalone C reimplementation of sesame's Infinium methylation preprocessing (IDAT -> betas), with QC, DML, and CNV.
   description: |
-    sesame-cli is a dependency-light C program that reproduces the sesame /
+    sesame is a dependency-light C program that reproduces the sesame /
     openSesame Infinium DNA-methylation workflow without R or Bioconductor:
     read IDAT pairs, run the QCDPB preprocessing (qualityMask,
     inferInfiniumIChannel, dyeBiasNL, pOOBAH, noob), and emit betas as YAME
@@ -65,7 +68,7 @@ about:
     and circular binary segmentation). The IDAT reader and un-preprocessed betas
     are bit-identical to the R package; other steps match to documented
     tolerances (see NUMERICS.md). Platform annotations come from the shared
-    store filled by `yame fetch`; sesame-cli itself never touches the network.
+    store filled by `yame fetch`; sesame itself never touches the network.
     The only runtime dependencies are zlib and libcurl.
   dev_url: https://github.com/zwdzwd/sesame-cli
 

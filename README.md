@@ -38,8 +38,8 @@ Arrays: **EPIC, EPICv2, HM450, MSA**. Outputs are [YAME](https://github.com/zhou
 ## Install
 
 ```sh
-# conda (recommended) — installs the `sesame` binary; deps are zlib + libcurl
-conda install -c zhou-lab -c conda-forge sesame-cli
+# conda (recommended) — the package is `sesame`; deps are zlib, libcurl and yame
+conda install -c zhou-lab -c conda-forge sesame
 ```
 
 Or build from source (a C compiler + `make`, `zlib`, `libcurl`, and the bundled

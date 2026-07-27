@@ -1,15 +1,24 @@
-# Conda recipe for sesame-cli
+# Conda recipe for sesame
 
 Builds the `sesame` binary and publishes it to the **zhou-lab** channel.
 
 ## Install (end users)
 
 ```sh
-conda install -c zhou-lab -c conda-forge sesame-cli
+conda install -c zhou-lab -c conda-forge sesame
 ```
 
-This installs the `sesame` command. (The conda package is named `sesame-cli` to
-avoid confusion with the Bioconductor R package `sesame`; the binary is `sesame`.)
+This installs the `sesame` command. The package was called `sesame-cli` up to
+and including 0.3, to keep its distance from the Bioconductor R package. That
+distance is no longer wanted: the C implementation is the one we build on, and
+the package, the binary and the method should all be spelled the same. There is
+no actual name clash to avoid -- the R package is `bioconductor-sesame` on
+bioconda, and nothing named `sesame` exists on conda-forge or bioconda.
+
+**Renaming orphans the old name.** Anyone who installed `sesame-cli` keeps it
+and will not see `sesame` updates; `conda install sesame-cli` still resolves,
+but to 0.3 forever. If that matters, publish a `sesame-cli` metapackage that
+depends on `sesame` so the old name keeps tracking the new one.
 
 ## Build & upload (maintainers)
 
@@ -45,7 +54,7 @@ release:
 ```sh
 # bump `version` in conda-recipe/meta.yaml and SESAME_VERSION in include/sesame.h,
 # commit, then:
-git tag -a v0.1.0 -m "sesame-cli 0.1.0" && git push origin v0.1.0
+git tag -a v0.4 -m "sesame 0.4" && git push origin v0.4
 ```
 
 ## Notes
