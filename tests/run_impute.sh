@@ -17,10 +17,11 @@ RSCRIPT=${RSCRIPT:-Rscript}
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 root=$(dirname "$here")
 bin="$root/sesame"
-## The shared store yame fetch fills; per-platform assets sit under its
-## InfiniumAnnotation/ key, so $store/$plat/... stays the same shape.
+## The shared store yame fetch fills. It is keyed on the browser
+## hierarchy -- species/platform -- so a platform's assets sit directly
+## at $store/$plat/ and a genome build's at $store/<build>/.
 yhome=${YAME_DATA_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/yame}
-store=$yhome/InfiniumAnnotation
+store=$yhome
 idats=${SESAME_TEST_IDATS:-$HOME/repo/InfiniumTestIDATs}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT

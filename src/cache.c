@@ -5,21 +5,28 @@
  * this file is only path resolution plus the errors that name the command to
  * run. See YAME/src/assets.h.
  *
- * The store mirrors the remote exactly, one version, keyed by upstream repo and
- * platform, so a file one tool downloads is found by the next:
+ * The store is keyed on the browser hierarchy -- species, then platform or
+ * genome build -- which is the address a user navigates to, so a file one tool
+ * downloads is found by the next:
  *
- *   <store>/InfiniumAnnotation/MSA/SHA256SUMS   byte-identical copy of the remote
- *   <store>/InfiniumAnnotation/MSA/MSA.ordering.tsv.gz
- *   <store>/InfiniumAnnotation/MSA/MSA.hg38.mask.cm
- *   <store>/InfiniumAnnotation/MSA/KYCG/...     kycg's knowledgebase sets
- *   <store>/genomes/hg38/seqinfo.tsv.gz
+ *   <store>/MSA/SHA256SUMS         byte-identical copy of the remote
+ *   <store>/MSA/MSA.ordering.tsv.gz
+ *   <store>/MSA/MSA.hg38.mask.cm
+ *   <store>/MSA/KYCG/...           kycg's per-platform sets
+ *   <store>/hg38/seqinfo.tsv.gz    genome-level annotation
+ *   <store>/hg38/KYCG/...          kycg's sequencing knowledgebase
+ *
+ * Note the store path is NOT the fetch address: `yame fetch` names a unit as
+ * <source>/<target> (InfiniumAnnotation/MSA, genomes/hg38), because one
+ * directory can be filled from more than one upstream -- <store>/hg38 holds
+ * both the genomes files and, under KYCG/, the KYCGKB sets.
  *
  * Before this, sesame kept its own cache under ~/.cache/sesame and kycg kept one
  * under ~/.cache/kycg, and the two downloaded the identical InfiniumAnnotation
  * files separately.
  *
  * Mirroring means the store is self-describing and hand-verifiable per platform
- * (cd <store>/InfiniumAnnotation/MSA && shasum -a 256 -c SHA256SUMS), with no
+ * (cd <store>/MSA && shasum -a 256 -c SHA256SUMS), with no
  * local bookkeeping -- and that stored SHA256SUMS is how a directory says which
  * upstream tag filled it. registry.h records the tag THIS build expects, which
  * is why the errors below quote it.
@@ -37,7 +44,7 @@
  * Resolution order (explicit always wins; same rule for library and CLI):
  *
  *   1. --index / --coords / --normals <path>          (caller-supplied)
- *   2. <store>/InfiniumAnnotation/<platform>/<file>
+ *   2. <store>/<platform>/<file>
  *   3. ./<file>
  *
  * sesame NEVER prompts and NEVER touches the network. If an asset is missing,
@@ -59,9 +66,12 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* The store layout, keyed by upstream repo so every tool agrees on it. */
-#define SESAME_IA_SUB      "InfiniumAnnotation"
-#define SESAME_GENOME_SUB  "genomes"
+/* `yame fetch` addresses a unit as <source>/<target> (InfiniumAnnotation/MSA),
+ * but the STORE is keyed on the target alone -- the browser hierarchy the
+ * user navigates, species then platform. So the fetch address and the store
+ * path are not the same string, and only the latter belongs in a path. */
+#define SESAME_IA_SRC      "InfiniumAnnotation"   /* fetch address only */
+#define SESAME_GENOME_SRC  "genomes"              /* fetch address only */
 
 static int is_file(const char *p)
 {
@@ -90,7 +100,7 @@ const char *sesame_store_dir(char *out, size_t n)
     return out;
 }
 
-/* <store>/InfiniumAnnotation/<platform>/<file>, else ./<file>. 0 on success.
+/* <store>/<platform>/<file>, else ./<file>. 0 on success.
  * Every per-platform asset resolves through here -- ordering, .cm mask, coord
  * table, SNP table, typeI_ext -- so there is exactly one place that knows the
  * layout, and it cannot drift from what `yame fetch` writes. */
@@ -101,7 +111,7 @@ int sesame_asset_locate(const char *platform, const char *file,
 
     if (!platform || !file) return -1;
     sesame_store_dir(dir, sizeof dir);
-    snprintf(out, n, "%s/%s/%s/%s", dir, SESAME_IA_SUB, platform, file);
+    snprintf(out, n, "%s/%s/%s", dir, platform, file);
     if (is_file(out)) return 0;
 
     snprintf(out, n, "./%s", file);   /* cwd convenience */
@@ -117,7 +127,7 @@ void sesame_asset_dir(const char *platform, char *out, size_t n)
 {
     char dir[4096];
     sesame_store_dir(dir, sizeof dir);
-    snprintf(out, n, "%s/%s/%s", dir, SESAME_IA_SUB, platform ? platform : "");
+    snprintf(out, n, "%s/%s", dir, platform ? platform : "");
 }
 
 int sesame_index_locate(const char *platform, char *out, size_t n)
@@ -137,10 +147,10 @@ int sesame_genome_locate(const char *genome, const char *file, char *out, size_t
     char dir[4096];
     if (!genome || !file) return -1;
     sesame_store_dir(dir, sizeof dir);
-    /* Mirrors the remote: <store>/genomes/<genome>/<file>. The directory is
-     * the upstream repo name (zhou-lab/genomes), which is the rule the whole
-     * shared layout follows; it was singular "genome/" before the move. */
-    snprintf(out, n, "%s/%s/%s/%s", dir, SESAME_GENOME_SUB, genome, file);
+    /* <store>/<genome>/<file> -- the same species-keyed slot the browser
+     * shows. The genomes files sit at its root; kycg's sequencing sets sit
+     * under KYCG/ in the same directory, from a different upstream. */
+    snprintf(out, n, "%s/%s/%s", dir, genome, file);
     if (is_file(out)) return 0;
 
     snprintf(out, n, "./%s", file);   /* cwd convenience */
@@ -161,10 +171,10 @@ void sesame_index_missing_help(const char *platform, char *msg, size_t n)
     snprintf(msg, n,
         "no index found for platform %s\n"
         "  searched:\n"
-        "    %s/" SESAME_IA_SUB "/%s/%s\n"
+        "    %s/%s/%s\n"
         "    ./%s.ordering.tsv.gz\n"
         "  fix, any of:\n"
-        "    yame fetch " SESAME_IA_SUB "/%s   (this build expects tag %s)\n"
+        "    yame fetch " SESAME_IA_SRC "/%s   (this build expects tag %s)\n"
         "    sesame betas --index <path> ...\n"
         "    export YAME_DATA_HOME=<dir>",
         platform,
@@ -182,8 +192,8 @@ void sesame_asset_missing_help(const char *platform, const char *file,
     sesame_store_dir(dir, sizeof dir);
     snprintf(msg, n,
         "no %s in the store for %s\n"
-        "  searched: %s/" SESAME_IA_SUB "/%s/\n"
-        "  fix: yame fetch " SESAME_IA_SUB "/%s   (this build expects tag %s)",
+        "  searched: %s/%s/\n"
+        "  fix: yame fetch " SESAME_IA_SRC "/%s   (this build expects tag %s)",
         file ? file : "asset", platform, dir, platform,
         platform, SESAME_DEFAULT_TAG);
 }
@@ -196,7 +206,7 @@ void sesame_genome_missing_help(const char *genome, char *msg, size_t n)
     sesame_store_dir(dir, sizeof dir);
     snprintf(msg, n,
         "no genome annotation for %s in the store\n"
-        "  searched: %s/" SESAME_GENOME_SUB "/%s/\n"
-        "  fix: yame fetch " SESAME_GENOME_SUB "/%s   (this build expects tag %s)",
+        "  searched: %s/%s/\n"
+        "  fix: yame fetch " SESAME_GENOME_SRC "/%s   (this build expects tag %s)",
         genome, dir, genome, genome, SESAME_GENOME_TAG);
 }

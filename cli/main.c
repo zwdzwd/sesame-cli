@@ -1320,7 +1320,7 @@ static int cmd_cnv(int argc, char **argv)
         if (sesame_asset_locate(platform, nfile, nbuf, sizeof nbuf) != 0) {
             fprintf(stderr,
                 "sesame: no normal panel for %s\n"
-                "  searched: %s/InfiniumAnnotation/%s/%s\n"
+                "  searched: %s/%s/%s\n"
                 "  the panel is not published with the annotation -- pass\n"
                 "  --normals <file>, or build one with `make cnv-normals`\n",
                 platform, store, platform, nfile);

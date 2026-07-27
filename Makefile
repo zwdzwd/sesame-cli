@@ -218,12 +218,12 @@ index:
 # `yame fetch genomes/<build>`. Needs Rscript.
 cnv-normals: mu2cg
 	@for p in EPIC EPICv2; do \
-	    mkdir -p data/InfiniumAnnotation/$$p; \
+	    mkdir -p data/$$p; \
 	    $(RSCRIPT) tools/export_cnvnormals.R $$p testdata/$$p.ordering.tsv.gz \
-	        data/InfiniumAnnotation/$$p/$$p.cnvnormals.mu.tsv.gz && \
-	    ./mu2cg data/InfiniumAnnotation/$$p/$$p.cnvnormals.mu.tsv.gz \
-	        data/InfiniumAnnotation/$$p/$$p.cnvnormals.cg && \
-	    rm -f data/InfiniumAnnotation/$$p/$$p.cnvnormals.mu.tsv.gz; \
+	        data/$$p/$$p.cnvnormals.mu.tsv.gz && \
+	    ./mu2cg data/$$p/$$p.cnvnormals.mu.tsv.gz \
+	        data/$$p/$$p.cnvnormals.cg && \
+	    rm -f data/$$p/$$p.cnvnormals.mu.tsv.gz; \
 	done
 
 # Real fuzzing. Needs a clang with libFuzzer (Linux CI); Apple clang has none.

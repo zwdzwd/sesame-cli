@@ -93,7 +93,7 @@ const char *sesame_platform_from_beads(int32_t beads);
  * Returns out. */
 const char *sesame_store_dir(char *out, size_t n);
 
-/* Finds a per-platform asset at <store>/InfiniumAnnotation/<platform>/<file>,
+/* Finds a per-platform asset at <store>/<platform>/<file>,
  * then ./<file>. 0 and fills out on success, -1 if absent. Never downloads,
  * never prompts. */
 int sesame_asset_locate(const char *platform, const char *file,
@@ -108,7 +108,7 @@ void sesame_asset_dir(const char *platform, char *out, size_t n);
 int sesame_index_locate(const char *platform, char *out, size_t n);
 
 /* Finds a genome-level file (e.g. "seqinfo.tsv.gz") at
- * <store>/genomes/<genome>/. These drive CNV binning (seqinfo+gaps), the CNV
+ * <store>/<genome>/. These drive CNV binning (seqinfo+gaps), the CNV
  * ideogram (cytoband) and `region --gene` (genes.bed.gz). 0 on success. */
 int sesame_genome_locate(const char *genome, const char *file,
                          char *out, size_t n);

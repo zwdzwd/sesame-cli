@@ -175,7 +175,7 @@ sesame cnv --platform EPICv2 --probes t/total_intensity.cg out/segments.tsv out/
 ```
 
 `--coords` and the ordering default to the store for `--platform`
-(`<store>/InfiniumAnnotation/<P>/<P>.hg38.coord.tsv.gz`); genome tiling comes
+(`<store>/<P>/<P>.hg38.coord.tsv.gz`); genome tiling comes
 from `yame fetch genomes/<--genome>` (default hg38). `--normals` is
 user-supplied -- the normal panel is not published with the annotation. Both output
 files carry a leading `sample` column — segments: chrom/start/end/nbin/seg.mean;
@@ -299,18 +299,22 @@ tool suite, and `yame fetch InfiniumAnnotation/EPICv2` mirrors that folder into
 the shared **store**:
 
 ```
-<store>/InfiniumAnnotation/EPICv2/SHA256SUMS          byte-identical copy of the remote
-<store>/InfiniumAnnotation/EPICv2/EPICv2.ordering.tsv.gz
-<store>/InfiniumAnnotation/EPICv2/EPICv2.hg38.mask.cm(.idx)
-<store>/InfiniumAnnotation/EPICv2/EPICv2.hg38.coord.tsv.gz
-<store>/InfiniumAnnotation/EPICv2/EPICv2.hg38.snp.tsv.gz
-<store>/genomes/hg38/seqinfo.tsv.gz  gaps  cytoband  genes.bed.gz(.tbi)
+<store>/EPICv2/SHA256SUMS          byte-identical copy of the remote
+<store>/EPICv2/EPICv2.ordering.tsv.gz
+<store>/EPICv2/EPICv2.hg38.mask.cm(.idx)
+<store>/EPICv2/EPICv2.hg38.coord.tsv.gz
+<store>/EPICv2/EPICv2.hg38.snp.tsv.gz
+<store>/EPICv2/KYCG/...            kycg's per-platform sets
+<store>/hg38/seqinfo.tsv.gz  gaps  cytoband  genes.bed.gz(.tbi)
 ```
 
-so `cd <store>/InfiniumAnnotation/EPICv2 && shasum -a 256 -c SHA256SUMS`
-verifies it by hand. The path is keyed by the upstream repo and the platform
-rather than by which tool asked, which is what makes one download serve
-sesame, kycg and yame at once. Genome-level annotation comes the same way from
+so `cd <store>/EPICv2 && shasum -a 256 -c SHA256SUMS` verifies it by hand. The
+path is keyed by the browser hierarchy — species, then platform or genome
+build — rather than by which tool asked, which is what makes one download
+serve sesame, kycg and yame at once. Note it is not the same string as the
+fetch address: `yame fetch` names a unit `<source>/<target>`, because one
+store directory can be filled from more than one upstream (`<store>/hg38`
+holds the genome annotation, and `<store>/hg38/KYCG` kycg's sets). Genome-level annotation comes the same way from
 [`zhou-lab/genomes`](https://github.com/zhou-lab/genomes) via `yame fetch
 genomes/hg38` (hg38, mm10, mm39 published); it drives CNV binning, the CNV
 ideogram, and `region --gene`.
@@ -320,8 +324,7 @@ ideogram, and `region --gene`.
 because a shared store only dedupes if every tool agrees where it is. It is the
 *data* tier rather than a cache tier on purpose: these are large references that
 should survive somebody clearing `~/.cache`. **Asset lookup:** `--index` /
-`--coords` / `--normals` / `--snp` → `<store>/InfiniumAnnotation/<platform>/` →
-`./`.
+`--coords` / `--normals` / `--snp` → `<store>/<platform>/` → `./`.
 
 **sesame has no network code at all** — it never downloads, never prompts (a
 prompt would hang a Nextflow job or Docker build silently), and never falls back
