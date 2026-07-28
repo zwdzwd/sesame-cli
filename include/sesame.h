@@ -12,7 +12,7 @@
 #define SESAME_H
 
 /* Keep in sync with conda-recipe/meta.yaml and the git release tag. */
-#define SESAME_VERSION "0.4"
+#define SESAME_VERSION "0.5"
 
 #include <stdint.h>
 #include <stddef.h>
