@@ -21,7 +21,7 @@
   body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;line-height:1.5;-webkit-font-smoothing:antialiased}
   .wrap{max-width:1520px;margin:0 auto;padding:0 22px 44px}
   a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
-  header{padding:32px 0 4px;margin-bottom:2px}
+  header{padding:32px 0 0;margin-bottom:0}
   h1{font-size:1.55rem;margin:0;letter-spacing:-.01em;font-weight:400;line-height:1.2;
      background:linear-gradient(92deg,var(--accent),var(--accent-2));-webkit-background-clip:text;background-clip:text;color:transparent;display:inline}
   h1 b{font-weight:800}
@@ -31,7 +31,7 @@
   /* Horizontal tabs, same shape as YAME's docs so the suite reads alike.
      Building a custom array is a different job from reading a .cg, not a
      footnote to it, so it gets a tab rather than a fifth cell in the grid. */
-  .tabs{display:flex;flex-wrap:wrap;gap:2px;margin:0 0 18px;
+  .tabs{display:flex;flex-wrap:wrap;gap:2px;margin:9px 0 18px;
     border-bottom:1px solid var(--line)}
   .tab{font:inherit;font-size:.86rem;font-weight:600;cursor:pointer;
     border:0;border-bottom:2px solid transparent;background:none;
@@ -57,7 +57,8 @@
   .builton:hover .bl{filter:brightness(1.08)}
   .builton:hover .br{filter:brightness(.96)}
   .titlerow .badge{margin-left:0}
-  .expand{color:var(--muted);margin:8px 0 12px;font-size:.9rem;max-width:78ch}
+  .expand{color:var(--muted);margin:8px 0 5px;font-size:.9rem;max-width:78ch}
+  .lead{color:var(--muted);margin:2px 0 16px;font-size:.9rem}
   /* install: the command itself is the button — click to copy */
   .install{display:inline-flex;align-items:stretch;gap:0;border:1px solid var(--accent);border-radius:6px;overflow:hidden;margin-left:4px}
   #install-btn{font:inherit;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.74rem;cursor:pointer;border:0;
@@ -81,7 +82,7 @@
   .citebtn .pmid:hover{filter:brightness(.97)}
   .citebtn .pmid.done{color:var(--on-accent);background:var(--accent)}
   .citebtn a:focus-visible,.citebtn button:focus-visible{outline:2px solid var(--fg);outline-offset:-2px}
-  .links{font-size:.85rem;color:var(--muted)}
+  .links{font-size:.85rem;color:var(--muted);margin:0}
   .links a{font-weight:600}.links span{opacity:.4;margin:0 8px}
   /* Masonry. The CSS column-count below is the no-JS fallback: it fills
      columns in order, which with unbreakable cards leaves one column long
@@ -496,44 +497,43 @@ sesame <span class="sub">impute</span> --method neighbors \
 <div class="panel hidden" id="custom-array" role="tabpanel"
      aria-labelledby="tab-custom">
 
-<section class="full">
-  <h2>Custom arrays <span class="m">&mdash; a pre-release or in-house design</span></h2>
-  <p>Nothing here is a special mode: a platform <i>is</i> its ordering table, and
-    <code class="inl">--platform</code> takes one by path as readily as by name. Publish
-    the ordering once and every command works the same as on a stock array.</p>
-  <div class="cols">
-    <div>
-      <h3>The ordering table — IDs live here, once</h3>
-      <pre><code>Probe_ID           M         U         col
+<p class="lead">A platform <i>is</i> its ordering table — <code class="inl">--platform</code> takes one by path as readily as by name.</p>
+
+<div class="grid">
+
+  <section class="card">
+    <h2>The ordering table <span class="m">— IDs live here, once</span></h2>
+    <pre><code>Probe_ID           M         U         col
 cg00000029_TC21    NA        41791408  2
 cg00000769_BC11    26756338  59799309  G
 ctl_1060944_NEG    NA        10609447  2</code></pre>
-      <p style="margin-top:9px">Four columns and nothing else — <b>not</b> the
-        Illumina/sesame manifest with tabs instead of commas. <code class="inl">M</code>
-        is the methylated bead address (Illumina <code class="inl">AddressB_ID</code>,
-        <code class="inl">NA</code> for Infinium-II), <code class="inl">U</code> the
-        unmethylated one (<code class="inl">AddressA_ID</code>), and
-        <code class="inl">col</code> the design: <code class="inl">G</code> /
-        <code class="inl">R</code> Infinium-I in green or red,
-        <code class="inl">2</code> Infinium-II. Sequences and coordinates live in
-        separate files a custom array can do without. A legacy fifth
-        <code class="inl">mask</code> column is still read; published orderings keep
-        the mask in a companion <code class="inl">.cm</code>.</p>
-      <p style="margin-top:9px"><b>Tab- or comma-separated, plain or gzipped</b> — the
-        separator is sniffed from the header, so a table exported straight out of a
-        CSV manifest needs no conversion. A header line is required.</p>
-      <p style="margin-top:9px"><b>Row order is load-bearing and permanent.</b> A
-        <code class="inl">.cg</code> stores one value per row with no Probe_IDs inside,
-        so row <i>i</i> is probe <i>i</i> forever — sorting or inserting a row
-        re-labels every <code class="inl">.cg</code> written against the old file.
-        Freeze it when you publish, and version it if it changes.</p>
-    </div>
-    <div>
-      <h3>Your own array — hand it the ordering</h3>
-      <p><code class="inl">--platform</code> takes a name <i>or</i> a path, so a custom
-        or pre-release array needs no special flag. Every companion asset has its own
-        override, inferred only when the platform is a name you published.</p>
-      <pre><code><span class="cm"># named platform: ordering, mask, coords all inferred</span>
+    <p style="margin-top:11px">Four columns and nothing else — <b>not</b> the
+      Illumina/sesame manifest with tabs instead of commas. <code class="inl">M</code>
+      is the methylated bead address (Illumina <code class="inl">AddressB_ID</code>,
+      <code class="inl">NA</code> for Infinium-II), <code class="inl">U</code> the
+      unmethylated one (<code class="inl">AddressA_ID</code>), and
+      <code class="inl">col</code> the design: <code class="inl">G</code> /
+      <code class="inl">R</code> Infinium-I in green or red,
+      <code class="inl">2</code> Infinium-II. Sequences and coordinates live in
+      separate files a custom array can do without. A legacy fifth
+      <code class="inl">mask</code> column is still read; published orderings keep
+      the mask in a companion <code class="inl">.cm</code>.</p>
+    <p><b>Tab- or comma-separated, plain or gzipped</b> — the separator is sniffed
+      from the header, so a table exported straight out of a CSV manifest needs no
+      conversion. A header line is required.</p>
+    <p><b>Row order is load-bearing and permanent.</b> A <code class="inl">.cg</code>
+      stores one value per row with no Probe_IDs inside, so row <i>i</i> is probe
+      <i>i</i> forever — sorting or inserting a row re-labels every
+      <code class="inl">.cg</code> written against the old file. Freeze it when you
+      publish, and version it if it changes.</p>
+  </section>
+
+  <section class="card">
+    <h2>Your own array <span class="m">— hand it the ordering</span></h2>
+    <p><code class="inl">--platform</code> takes a name <i>or</i> a path, so a custom
+      or pre-release array needs no special flag. Every companion asset has its own
+      override, inferred only when the platform is a name you published.</p>
+    <pre><code><span class="cm"># named platform: ordering, mask, coords all inferred</span>
 sesame <span class="sub">preprocess</span> --platform EPICv2 --out out/ idats/
 
 <span class="cm"># custom array: the ordering IS the platform</span>
@@ -543,31 +543,36 @@ sesame <span class="sub">preprocess</span> --platform MyArray.ordering.csv \
 <span class="cm"># without --mask, prep C or "" work; Q/P/B need one</span>
 sesame <span class="sub">preprocess</span> --platform MyArray.ordering.csv \
   --prep C --out out/ idats/</code></pre>
-      <p style="margin-top:9px"><b>Making the mask.</b> A <code class="inl">.cm</code> is
-        a bitset with one bit per ordering row, in the same order — 1 means drop the
-        probe. Write the column, pack it, name the track:</p>
-      <pre><code><span class="cm"># one 0/1 per ordering row, same order as the ordering</span>
-awk -F'\t' 'NR&gt;1{print (bad) ? 1 : 0}' MyArray.ordering.csv &gt; m.txt
+    <p style="margin-top:11px">Overrides: <code class="inl">--mask</code>
+      <code class="inl">--coords</code> <code class="inl">--snp</code>
+      <code class="inl">--normals</code>. From an Illumina manifest the ordering is a
+      projection: <code class="inl">IlmnID</code>&rarr;<code class="inl">Probe_ID</code>,
+      <code class="inl">AddressB_ID</code>&rarr;<code class="inl">M</code>,
+      <code class="inl">AddressA_ID</code>&rarr;<code class="inl">U</code>, design +
+      colour channel&rarr;<code class="inl">col</code>. Full spec in the
+      <a href="https://github.com/zwdzwd/sesame-cli#custom-arrays--the-ordering-table">README</a>.</p>
+  </section>
 
-yame pack -f b m.txt MyArray.mask.cm       <span class="cm"># -f b = binary/bitset</span>
+  <section class="card">
+    <h2>Making the mask <span class="m">— a .cm bitset</span></h2>
+    <p>A <code class="inl">.cm</code> is a bitset with one bit per ordering row, in
+      the same order — 1 means drop the probe. Write the column, pack it, name the
+      track:</p>
+    <pre><code><span class="cm"># one 0/1 per ordering row, in the ordering's order</span>
+awk -F'\t' 'NR&gt;1{print (bad) ? 1 : 0}' \
+  MyArray.ordering.csv &gt; m.txt
+
+yame pack -f b m.txt MyArray.mask.cm   <span class="cm"># b = bitset</span>
 echo M_custom &gt; names.txt
-yame index -s names.txt MyArray.mask.cm    <span class="cm"># name the track</span></code></pre>
-      <p style="margin-top:9px">Given directly, <code class="inl">--mask</code> wants a
-        <b>single-track</b> <code class="inl">.cm</code> — a published platform's mask
-        holds many (EPICv2 has 25) and sesame picks the recommended subset by platform
-        name, so handing one over without a name would be ambiguous. It says so rather
-        than guessing.</p>
-      <p style="margin-top:9px">Overrides: <code class="inl">--mask</code>
-        <code class="inl">--coords</code> <code class="inl">--snp</code>
-        <code class="inl">--normals</code>. From an Illumina manifest the ordering is a
-        projection: <code class="inl">IlmnID</code>&rarr;<code class="inl">Probe_ID</code>,
-        <code class="inl">AddressB_ID</code>&rarr;<code class="inl">M</code>,
-        <code class="inl">AddressA_ID</code>&rarr;<code class="inl">U</code>, design +
-        colour channel&rarr;<code class="inl">col</code>. Full spec in the
-        <a href="https://github.com/zwdzwd/sesame-cli#custom-arrays--the-ordering-table">README</a>.</p>
-    </div>
-  </div>
-</section>
+yame index -s names.txt MyArray.mask.cm  <span class="cm"># name it</span></code></pre>
+    <p style="margin-top:11px">Given directly, <code class="inl">--mask</code> wants a
+      <b>single-track</b> <code class="inl">.cm</code> — a published platform's mask
+      holds many (EPICv2 has 25) and sesame picks the recommended subset by platform
+      name, so handing one over without a name would be ambiguous. It says so rather
+      than guessing.</p>
+  </section>
+
+</div>
 
 </div><!-- /custom-array -->
 
@@ -733,9 +738,10 @@ yame index -s names.txt MyArray.mask.cm    <span class="cm"># name the track</sp
    * reorders the cards, which is the wrong trade for documentation.
    *
    * Re-runs on resize and once images report their real heights. */
-  (function () {
-    var grid = document.querySelector(".grid");
-    if (!grid) return;
+  /* One call per grid: the usage cards and the custom-array cards balance
+   * independently, and a grid inside a hidden panel measures as 0 until its
+   * tab is shown (see the offsetWidth guard in layout). */
+  document.querySelectorAll(".grid").forEach(function (grid) {
     var cards = Array.prototype.slice.call(grid.children).filter(function (el) {
       return el.classList && el.classList.contains("card");
     });
@@ -832,7 +838,7 @@ yame index -s names.txt MyArray.mask.cm    <span class="cm"># name the track</sp
     window.addEventListener("resize", function () {
       clearTimeout(t); t = setTimeout(layout, 120);
     });
-  })();
+  });
   /* Tabs, hash-addressable. A link or a bookmark into the custom-array side
    * has to open its tab before it can scroll, so the hash drives the same code
    * path the buttons do -- and clicking a tab writes the hash back, so the
