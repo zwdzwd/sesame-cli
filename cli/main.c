@@ -128,7 +128,9 @@ static int usage_preprocess(void)
     yame_usage_cont("control ECDF). Masking always uses pOOBAH.");
     yame_usage_opt("--collapse", "average replicate probes to their cg-prefix in the");
     yame_usage_cont("beta output; axis -> beta.cg.probes");
-    yame_usage_opt("--platform P", "EPIC | EPICv2 | HM450 | MSA (else from bead count)");
+    yame_usage_opt("--platform P", "EPIC | EPICv2 | HM450 | MSA (else from the bead");
+    yame_usage_cont("count), or the path to an ordering file, which is");
+    yame_usage_cont("how a custom array is named.");
     yame_usage_opt("--index FILE", "ordering .tsv.gz (overrides --platform/detection)");
     yame_usage_opt("--min-beads N", "mask probes with < N beads (default 0)");
     yame_usage_opt("--out DIR", "output directory (default: current directory)");
@@ -194,7 +196,9 @@ static int usage_cnv(void)
     yame_usage_cont("(e.g. chrY for a female sample; unreliable on arrays)");
     yame_usage_opt("--normals FILE", "normal panel .cg -- NOT shipped with the annotation;");
     yame_usage_cont("build one with `make cnv-normals` or supply your own");
-    yame_usage_opt("--platform P", "EPIC | EPICv2 | HM450 | MSA; supplies the defaults");
+    yame_usage_opt("--platform P", "EPIC | EPICv2 | HM450 | MSA; supplies the");
+    yame_usage_cont("defaults. A path to an ordering file also works,");
+    yame_usage_cont("for a custom array.");
     yame_usage_opt("--index FILE", "ordering .tsv.gz (overrides --platform)");
     yame_usage_opt("--coords FILE", "probe coordinate .tsv.gz (default: the store's)");
     yame_usage_opt("--genome BUILD", "genome build (default hg38)");
@@ -216,7 +220,9 @@ static int usage_vcf(void)
     yame_usage_text("<prefix> is an IDAT pair. Sites-only VCF on stdout.");
 
     yame_usage_sec("Options:");
-    yame_usage_opt("--platform P", "EPIC | EPICv2 | HM450 | MSA (else from bead count)");
+    yame_usage_opt("--platform P", "EPIC | EPICv2 | HM450 | MSA (else from the bead");
+    yame_usage_cont("count), or the path to an ordering file, which is");
+    yame_usage_cont("how a custom array is named.");
     yame_usage_opt("--index FILE", "ordering .tsv.gz (overrides --platform)");
     yame_usage_opt("--snp FILE", "SNP table (default: the store's");
     yame_usage_cont("<P>.<genome>.snp.tsv.gz)");
@@ -245,7 +251,8 @@ static int usage_region(void)
     yame_usage_cont("rather than a chr:beg-end");
     yame_usage_opt("--gene-models F", "GENCODE genes.bed.gz for --gene (default: store)");
     yame_usage_opt("--pad BP", "extend the region by BP on each side (default 0)");
-    yame_usage_opt("--platform P", "EPIC | EPICv2 | HM450 | MSA; Probe_IDs and coords");
+    yame_usage_opt("--platform P", "EPIC | EPICv2 | HM450 | MSA, or the path to an");
+    yame_usage_cont("ordering file. Supplies Probe_IDs and coords.");
     yame_usage_opt("--index FILE", "ordering .tsv.gz (overrides --platform)");
     yame_usage_opt("--coords FILE", "probe coordinate .tsv.gz (default: the store's)");
     yame_usage_opt("--genome BUILD", "genome build (default hg38)");
@@ -357,7 +364,9 @@ static int usage_deidentify(void)
     yame_usage_cont("(reversible)");
     yame_usage_opt("-r, --reidentify", "reverse a --randomize; needs the same --seed");
     yame_usage_opt("--seed N", "seed for --randomize / -r");
-    yame_usage_opt("--platform P", "EPIC | EPICv2 | HM450 | MSA (else from bead count)");
+    yame_usage_opt("--platform P", "EPIC | EPICv2 | HM450 | MSA (else from the bead");
+    yame_usage_cont("count), or the path to an ordering file, which is");
+    yame_usage_cont("how a custom array is named.");
     yame_usage_opt("--index FILE", "ordering .tsv.gz (overrides --platform)");
     yame_usage_opt("--out FILE", "output path (single input only)");
 
@@ -667,6 +676,14 @@ static int cmd_preprocess(int argc, char **argv)
             } else if (pp_add(&prefixes, &nsamp, &pcap, argv[i]) != 0) {
                 fprintf(stderr, "sesame: out of memory\n"); pp_free_prefixes(prefixes, nsamp); return 1;
             }
+
+    /* --platform may name an ordering file instead of a platform (YAME's -R
+     * rule: a path is a path). Then it IS the index, and there is no platform
+     * name under which to look up companion assets. */
+    if (sesame_platform_is_path(platform)) {
+        if (!idxpath) idxpath = platform;
+        platform = NULL;
+    }
         }
     }
     if (nsamp == 0) {
@@ -1298,6 +1315,14 @@ static int cmd_cnv(int argc, char **argv)
         else if (npos < 3) pos[npos++] = argv[i];
         else { fprintf(stderr, "sesame: cnv takes exactly three positional args\n"); return usage_cnv(); }
     }
+
+    /* --platform may name an ordering file instead of a platform (YAME's -R
+     * rule: a path is a path). Then it IS the index, and there is no platform
+     * name under which to look up companion assets. */
+    if (sesame_platform_is_path(platform)) {
+        if (!idxpath) idxpath = platform;
+        platform = NULL;
+    }
     if (npos != 3) {
         fprintf(stderr, "sesame: cnv needs <target.cg> <segments.tsv> <%s.tsv>\n",
                 probes ? "probes" : "bins");
@@ -1425,6 +1450,14 @@ static int cmd_vcf(int argc, char **argv)
         else if (!prefix) prefix = argv[i];
         else { fprintf(stderr, "sesame: vcf takes one IDAT prefix\n"); return usage_vcf(); }
     }
+
+    /* --platform may name an ordering file instead of a platform (YAME's -R
+     * rule: a path is a path). Then it IS the index, and there is no platform
+     * name under which to look up companion assets. */
+    if (sesame_platform_is_path(platform)) {
+        if (!idxpath) idxpath = platform;
+        platform = NULL;
+    }
     if (!prefix) { fprintf(stderr, "sesame: vcf needs an IDAT <prefix>\n"); return usage_vcf(); }
 
     if (idxpath) {
@@ -1498,6 +1531,14 @@ static int cmd_region(int argc, char **argv)
         else if (argv[i][0] == '-' && argv[i][1] != '\0') { fprintf(stderr, "sesame: unknown option %s\n", argv[i]); return usage_region(); }
         else if (!regstr) regstr = argv[i];
         else { fprintf(stderr, "sesame: region takes one <chr:beg-end>\n"); return usage_region(); }
+    }
+
+    /* --platform may name an ordering file instead of a platform (YAME's -R
+     * rule: a path is a path). Then it IS the index, and there is no platform
+     * name under which to look up companion assets. */
+    if (sesame_platform_is_path(platform)) {
+        if (!idxpath) idxpath = platform;
+        platform = NULL;
     }
     if (!betapath || (!regstr && !gene) || (regstr && gene)) {
         fprintf(stderr, "sesame: region needs --betas and exactly one of <chr:beg-end> or --gene <NAME>\n");
@@ -1752,6 +1793,14 @@ static int cmd_attach_probe(int argc, char **argv)
         else { fprintf(stderr, "sesame: too many input files\n"); return 1; }
     }
     if (!npath) return usage_attach();
+
+    /* --platform may name an ordering file instead of a platform (YAME's -R
+     * rule). Then it IS the index, and there are no companion assets to look
+     * up under a platform name. */
+    if (sesame_platform_is_path(platform)) {
+        if (!idxpath) idxpath = platform;
+        platform = NULL;
+    }
     path = paths[0];                    /* the one we identify the ordering by */
 
     /* Probe IDs come from the ordering: --index wins, else --platform, else the

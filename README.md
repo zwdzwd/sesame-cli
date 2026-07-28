@@ -335,6 +335,78 @@ One asset is deliberately not published: the CNV normal panel
 (`<platform>.cnvnormals.cg`). Build one with `make cnv-normals`, or pass your
 own with `cnv --normals`.
 
+### Custom arrays — the ordering table
+
+`--platform` and `--index` take **the same thing**. `--platform EPICv2` is only a
+lookup shortcut: it finds `<store>/EPICv2/EPICv2.ordering.tsv.gz` for you. So a
+custom or pre-release array needs no new flag — hand `--platform` the ordering
+that describes it, and a path is used as a path:
+
+```sh
+sesame preprocess  --platform MyArray.ordering.tsv.gz --out out/ idats/
+sesame attach-probe --platform MyArray.ordering.tsv.gz out/beta.cg
+```
+
+`--index` is the same thing spelled explicitly. The two stay separate because
+they are separate questions: **`--index` is which probe order**, `--platform` is
+**which companion assets** (mask, coordinates, SNP table). They coincide for a
+published platform, and passing both is how a custom ordering borrows a known
+platform's masks:
+
+```sh
+sesame preprocess --index MyArray.ordering.tsv.gz --platform EPICv2 ...
+```
+
+A custom array with no published masks can still run `--prep C` (or `""`), but
+not the `Q`/`P`/`B` steps, which need a `.cm` mask that only exists per platform.
+
+**It is not the Illumina/sesame manifest with tabs instead of commas.** It is a
+four-column *ordering* derived from a manifest — everything sesame needs to turn
+bead addresses into probes, and nothing else. No sequences, no coordinates:
+those live in the separate `coord`/`mask`/`snp` files, which a custom array
+simply does without.
+
+| column | meaning |
+|---|---|
+| `Probe_ID` | any string; what `attach-probe` prints and what joins to your annotation |
+| `M` | the **methylated** bead address, decimal — Illumina's `AddressB_ID`. `NA` for Infinium-II |
+| `U` | the **unmethylated** bead address — Illumina's `AddressA_ID`. Always present |
+| `col` | design and in-band channel: `G` Infinium-I green, `R` Infinium-I red, `2` Infinium-II |
+
+Rules the parser enforces:
+
+- **Tab-separated, with a header line.** The first line is skipped unconditionally,
+  so it must be there; its text is not checked.
+- **Four columns**, or five with a trailing `mask` (`0`/`1`). The five-column form
+  is the legacy sesameData export; the published orderings use four and keep the
+  mask in a companion `.cm`.
+- `col` must be exactly `G`, `R` or `2` — anything else is a hard error naming the row.
+- Addresses are decimal or the literal `NA`; `NA` becomes "no address".
+- Plain or gzipped, both fine — `MyArray.ordering.tsv` and `.tsv.gz` read the same.
+
+**Row order is load-bearing, and permanent.** A `.cg` stores one value per row in
+this order with no Probe_IDs inside, so row *i* is probe *i* forever. Sorting or
+inserting a row silently re-labels every `.cg` ever written against the old
+file — which is what the row-count check catches when it says "lineage mismatch".
+Freeze the order when you first publish an ordering, and version it if it changes.
+
+From an Illumina manifest, that is a projection:
+
+```
+Probe_ID  <- IlmnID
+M         <- AddressB_ID   (empty -> NA, which is every Infinium-II probe)
+U         <- AddressA_ID
+col       <- Infinium_Design_Type II            -> 2
+             Infinium_Design_Type I + Color_Channel Grn -> G
+             Infinium_Design_Type I + Color_Channel Red -> R
+```
+
+Sanity-check a new file before shipping it: every `col=G|R` row should have both
+addresses, every `col=2` row should have `M=NA`, and the row count should equal
+the number of probes you expect. `sesame attach-probe --index MyArray.ordering.tsv.gz`
+on any `.cg` you built with it is the end-to-end check — it fails loudly if the
+lengths disagree.
+
 **Versions travel together.** `sesame version` (and the top of `sesame help`)
 names the yame this binary was built against and the store it will read:
 

@@ -103,6 +103,11 @@ int sesame_asset_locate(const char *platform, const char *file,
  * callers that scan it rather than name one file. */
 void sesame_asset_dir(const char *platform, char *out, size_t n);
 
+/* True when a --platform argument is really a path to an ordering file, so a
+ * custom array needs no separate flag. A path is a path; anything else is a
+ * platform name. */
+int sesame_platform_is_path(const char *arg);
+
 /* Finds an existing ordering table for platform. 0 and fills out on success,
  * -1 if absent. */
 int sesame_index_locate(const char *platform, char *out, size_t n);

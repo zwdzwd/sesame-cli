@@ -100,6 +100,22 @@ const char *sesame_store_dir(char *out, size_t n)
     return out;
 }
 
+/* A --platform argument may be a NAME (EPICv2) or a PATH to an ordering file.
+ *
+ * YAME settled this rule for its own -R/-m and it is worth matching: an
+ * existing path is used as given -- the ordinary spelling costs nothing and
+ * cannot change meaning -- and anything else is a name resolved against the
+ * store. So a custom or pre-release array needs no new flag; --platform simply
+ * takes the ordering that describes it.
+ *
+ * --index is still the explicit spelling, and still separable: --platform names
+ * the companion assets (mask, coord, SNP) while --index names the probe order,
+ * and passing both is how a custom ordering borrows a known platform's masks. */
+int sesame_platform_is_path(const char *arg)
+{
+    return arg && *arg && yame_assets_is_file(arg);
+}
+
 /* <store>/<platform>/<file>, else ./<file>. 0 on success.
  * Every per-platform asset resolves through here -- ordering, .cm mask, coord
  * table, SNP table, typeI_ext -- so there is exactly one place that knows the
