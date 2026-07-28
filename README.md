@@ -337,6 +337,9 @@ own with `cnv --normals`.
 
 ### Custom arrays — the ordering table
 
+*(the same ground with worked examples:
+[docs → Custom array](https://zwdzwd.github.io/sesame-cli/#custom-array))*
+
 `--platform` and `--index` take **the same thing**. `--platform EPICv2` is only a
 lookup shortcut: it finds `<store>/EPICv2/EPICv2.ordering.tsv.gz` for you. So a
 custom or pre-release array needs no new flag — hand `--platform` the ordering

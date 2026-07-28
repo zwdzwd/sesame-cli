@@ -28,6 +28,21 @@
   .badge{margin-left:9px;font-size:.72rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
      color:var(--accent);background:var(--accent-soft);border:1px solid var(--line);padding:2px 8px;border-radius:20px;vertical-align:middle}
   /* title row: heading, badges, install box and cite button on one wrapping line */
+  /* Horizontal tabs, same shape as YAME's docs so the suite reads alike.
+     Building a custom array is a different job from reading a .cg, not a
+     footnote to it, so it gets a tab rather than a fifth cell in the grid. */
+  .tabs{display:flex;flex-wrap:wrap;gap:2px;margin:0 0 18px;
+    border-bottom:1px solid var(--line)}
+  .tab{font:inherit;font-size:.86rem;font-weight:600;cursor:pointer;
+    border:0;border-bottom:2px solid transparent;background:none;
+    color:var(--muted);padding:9px 12px;margin-bottom:-1px;
+    transition:color .12s,border-color .12s}
+  .tab:hover{color:var(--fg)}
+  .tab.on{color:var(--accent);border-bottom-color:var(--accent)}
+  .tab:focus-visible{outline:2px solid var(--accent);outline-offset:-3px;
+    border-radius:6px}
+  .panel.hidden{display:none}
+  @media print{.tabs{display:none}.panel{display:block!important}}
   .titlerow{display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px}
   /* "built against | YAME vX.YZ" pill on the title row. The version is filled
      by JS from the pinned submodule, so nothing here needs manual updating --
@@ -441,14 +456,52 @@ sesame <span class="sub">impute</span> --method neighbors \
 
 </div>
 
-<section class="full">
+<section class="full" id="storage">
   <h2>Storage &amp; formats <span class="m">— YAME .cg, and where the Probe IDs live</span></h2>
   <p>Betas and signals are stored <b>positionally</b> as compact YAME <code class="inl">.cg</code> files —
     one value per probe, in a fixed order, with <b>no Probe IDs inside</b>. The IDs live once in the platform's
     <b>ordering table</b>. Keeping them out of every sample makes files small and byte-for-byte alignable —
     stack N samples into a matrix by column with no key-matching. To read a <code class="inl">.cg</code> back as a
     labelled TSV, join it with the ordering via <code class="inl">attach-probe</code>.</p>
-  <div class="cols">
+  <nav class="tabs" role="tablist" aria-label="Storage sections">
+    <button class="tab on" type="button" role="tab" id="tab-cg"
+      aria-controls="reading-cg" aria-selected="true">Reading a .cg</button>
+    <button class="tab" type="button" role="tab" id="tab-custom" tabindex="-1"
+      aria-controls="custom-array" aria-selected="false">Custom array</button>
+  </nav>
+
+  <div class="panel" id="reading-cg" role="tabpanel" aria-labelledby="tab-cg">
+    <div class="cols">
+    <div>
+      <h3>Read a .cg back as a labelled TSV</h3>
+      <pre><code>$ sesame <span class="sub">attach-probe</span> out/beta.cg
+Probe_ID          206909630040_R03C01
+cg00000029_TC21   0.9124
+cg00000769_BC11   0.0331
+<span class="cm"># the ordering is inferred from the row count -- each</span>
+<span class="cm"># platform's is a distinct length. Name it if you'd rather:</span>
+$ sesame <span class="sub">attach-probe</span> --platform EPICv2 out/beta.cg
+<span class="cm"># --all for every sample column (matrix)</span></code></pre>
+    </div>
+    <div>
+      <h3>Peek at a raw IDAT</h3>
+      <pre><code>$ sesame <span class="sub">idat-dump</span> --tsv sample_Grn.idat.gz
+address    mean  sd   nbeads
+10600313   4821  118  12
+10600322   287   34   9</code></pre>
+    </div>
+    <div>
+      <h3>Which yame, which store?</h3>
+      <pre><code>$ sesame <span class="sub">version</span>
+sesame &lt;version&gt;
+    built against  YAME &lt;version&gt;
+    store          ~/.local/share/yame</code></pre>
+    </div>
+    </div>
+  </div>
+
+  <div class="panel hidden" id="custom-array" role="tabpanel" aria-labelledby="tab-custom">
+    <div class="cols">
     <div>
       <h3>The ordering table — IDs live here, once</h3>
       <pre><code>Probe_ID           M         U         col
@@ -513,30 +566,6 @@ yame index -s names.txt MyArray.mask.cm    <span class="cm"># name the track</sp
         colour channel&rarr;<code class="inl">col</code>. Full spec in the
         <a href="https://github.com/zwdzwd/sesame-cli#custom-arrays--the-ordering-table">README</a>.</p>
     </div>
-    <div>
-      <h3>Read a .cg back as a labelled TSV</h3>
-      <pre><code>$ sesame <span class="sub">attach-probe</span> out/beta.cg
-Probe_ID          206909630040_R03C01
-cg00000029_TC21   0.9124
-cg00000769_BC11   0.0331
-<span class="cm"># the ordering is inferred from the row count -- each</span>
-<span class="cm"># platform's is a distinct length. Name it if you'd rather:</span>
-$ sesame <span class="sub">attach-probe</span> --platform EPICv2 out/beta.cg
-<span class="cm"># --all for every sample column (matrix)</span></code></pre>
-    </div>
-    <div>
-      <h3>Peek at a raw IDAT</h3>
-      <pre><code>$ sesame <span class="sub">idat-dump</span> --tsv sample_Grn.idat.gz
-address    mean  sd   nbeads
-10600313   4821  118  12
-10600322   287   34   9</code></pre>
-    </div>
-    <div>
-      <h3>Which yame, which store?</h3>
-      <pre><code>$ sesame <span class="sub">version</span>
-sesame &lt;version&gt;
-    built against  YAME &lt;version&gt;
-    store          ~/.local/share/yame</code></pre>
     </div>
   </div>
 </section>
@@ -797,6 +826,61 @@ sesame &lt;version&gt;
     window.addEventListener("resize", function () {
       clearTimeout(t); t = setTimeout(layout, 120);
     });
+  })();
+  /* Tabs, hash-addressable. A link or a bookmark into the custom-array side
+   * has to open its tab before it can scroll, so the hash drives the same code
+   * path the buttons do -- and clicking a tab writes the hash back, so the
+   * address bar is always a link to what is on screen. Panels are plain
+   * elements toggled with a class, so with JS off every panel is visible and
+   * the page still reads top to bottom -- nothing is only reachable by script. */
+  (function () {
+    document.querySelectorAll('[role="tablist"]').forEach(function (list) {
+      var tabs = Array.prototype.slice.call(list.querySelectorAll('[role="tab"]'));
+      function show(id) {
+        tabs.forEach(function (t) {
+          var on = t.id === id;
+          t.classList.toggle("on", on);
+          t.setAttribute("aria-selected", on ? "true" : "false");
+          t.tabIndex = on ? 0 : -1;
+          var pane = document.getElementById(t.getAttribute("aria-controls"));
+          if (pane) pane.classList.toggle("hidden", !on);
+        });
+      }
+      tabs.forEach(function (t) {
+        t.addEventListener("click", function (e) {
+          show(t.id);
+          /* replaceState, not location.hash: no jump, no history entry, and no
+           * hashchange to bounce back through fromHash(). isTrusted keeps the
+           * synthetic clicks fromHash() makes from rewriting the hash. */
+          if (e.isTrusted)
+            history.replaceState(null, "", "#" + t.getAttribute("aria-controls"));
+        });
+        t.addEventListener("keydown", function (e) {
+          var d = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+          if (!d) return;
+          e.preventDefault();
+          var n = tabs[(tabs.indexOf(t) + d + tabs.length) % tabs.length];
+          n.click(); n.focus();
+        });
+      });
+    });
+
+    /* The hash may name a panel or anything inside one, so walk out from the
+     * target and open every tab above it. */
+    function fromHash() {
+      var el = location.hash.length > 1 &&
+               document.getElementById(location.hash.slice(1));
+      if (!el) return;
+      var p = el.closest('[role="tabpanel"]');
+      while (p) {
+        var t = document.querySelector('[aria-controls="' + p.id + '"]');
+        if (t) t.click();
+        p = p.parentElement && p.parentElement.closest('[role="tabpanel"]');
+      }
+      el.scrollIntoView();
+    }
+    window.addEventListener("hashchange", fromHash);
+    fromHash();
   })();
 </script>
 </body>
