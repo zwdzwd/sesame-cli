@@ -451,10 +451,53 @@ sesame <span class="sub">impute</span> --method neighbors \
   <div class="cols">
     <div>
       <h3>The ordering table — IDs live here, once</h3>
-      <pre><code>Probe_ID           M         U         col mask
-cg00000029_TC21    NA        41791408  2   0
-cg00000769_BC11    26756338  59799309  G   0
-ctl_1060944_NEG    NA        10609447  2   1</code></pre>
+      <pre><code>Probe_ID           M         U         col
+cg00000029_TC21    NA        41791408  2
+cg00000769_BC11    26756338  59799309  G
+ctl_1060944_NEG    NA        10609447  2</code></pre>
+      <p style="margin-top:9px">Four columns and nothing else — <b>not</b> the
+        Illumina/sesame manifest with tabs instead of commas. <code class="inl">M</code>
+        is the methylated bead address (Illumina <code class="inl">AddressB_ID</code>,
+        <code class="inl">NA</code> for Infinium-II), <code class="inl">U</code> the
+        unmethylated one (<code class="inl">AddressA_ID</code>), and
+        <code class="inl">col</code> the design: <code class="inl">G</code> /
+        <code class="inl">R</code> Infinium-I in green or red,
+        <code class="inl">2</code> Infinium-II. Sequences and coordinates live in
+        separate files a custom array can do without. A legacy fifth
+        <code class="inl">mask</code> column is still read; published orderings keep
+        the mask in a companion <code class="inl">.cm</code>.</p>
+      <p style="margin-top:9px"><b>Tab- or comma-separated, plain or gzipped</b> — the
+        separator is sniffed from the header, so a table exported straight out of a
+        CSV manifest needs no conversion. A header line is required.</p>
+      <p style="margin-top:9px"><b>Row order is load-bearing and permanent.</b> A
+        <code class="inl">.cg</code> stores one value per row with no Probe_IDs inside,
+        so row <i>i</i> is probe <i>i</i> forever — sorting or inserting a row
+        re-labels every <code class="inl">.cg</code> written against the old file.
+        Freeze it when you publish, and version it if it changes.</p>
+    </div>
+    <div>
+      <h3>Your own array — hand it the ordering</h3>
+      <p><code class="inl">--platform</code> takes a name <i>or</i> a path, so a custom
+        or pre-release array needs no special flag. Every companion asset has its own
+        override, inferred only when the platform is a name you published.</p>
+      <pre><code><span class="cm"># named platform: ordering, mask, coords all inferred</span>
+sesame <span class="sub">preprocess</span> --platform EPICv2 --out out/ idats/
+
+<span class="cm"># custom array: the ordering IS the platform</span>
+sesame <span class="sub">preprocess</span> --platform MyArray.ordering.csv \
+  --mask MyArray.mask.cm --prep QCDPB --out out/ idats/
+
+<span class="cm"># without --mask, prep C or "" work; Q/P/B need one</span>
+sesame <span class="sub">preprocess</span> --platform MyArray.ordering.csv \
+  --prep C --out out/ idats/</code></pre>
+      <p style="margin-top:9px">Overrides: <code class="inl">--mask</code>
+        <code class="inl">--coords</code> <code class="inl">--snp</code>
+        <code class="inl">--normals</code>. From an Illumina manifest the ordering is a
+        projection: <code class="inl">IlmnID</code>&rarr;<code class="inl">Probe_ID</code>,
+        <code class="inl">AddressB_ID</code>&rarr;<code class="inl">M</code>,
+        <code class="inl">AddressA_ID</code>&rarr;<code class="inl">U</code>, design +
+        colour channel&rarr;<code class="inl">col</code>. Full spec in the
+        <a href="https://github.com/zwdzwd/sesame-cli#custom-arrays--the-ordering-table">README</a>.</p>
     </div>
     <div>
       <h3>Read a .cg back as a labelled TSV</h3>
