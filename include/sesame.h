@@ -226,8 +226,8 @@ sesame_sigdf_t *sesame_sigdf_dup(const sesame_sigdf_t *sdf);
  * to the ordering (1 = masked). Shells out to the `yame` binary to read the .cm
  * mask in the store; *out is malloc'd (caller frees), *out_n is the probe count.
  * yame is invoked as a separate process, so its AGPL code never links here. */
-int sesame_quality_mask(const char *platform, uint8_t **out, int32_t *out_n,
-                        sesame_err_t *err);
+int sesame_quality_mask(const char *platform, const char *maskpath,
+                        uint8_t **out, int32_t *out_n, sesame_err_t *err);
 
 /* Q -- apply a mask vector from sesame_quality_mask to a SigDF (mask |= qmask).
  * qn must equal the probe count. */
@@ -236,8 +236,8 @@ int sesame_prep_quality_mask(sesame_sigdf_t *sdf, const uint8_t *qmask,
 
 /* P -- the background mask (backgroundMask names) as a 0/1 vector aligned to the
  * ordering (1 = excluded from background estimation). Reads the same .cm. */
-int sesame_background_mask(const char *platform, uint8_t **out, int32_t *out_n,
-                           sesame_err_t *err);
+int sesame_background_mask(const char *platform, const char *maskpath,
+                           uint8_t **out, int32_t *out_n, sesame_err_t *err);
 
 /* P -- pOOBAH (R/detection.R:141-170). Masks probes whose detection p-value
  * exceeds pval_threshold, from the ecdf of out-of-band + negative-control

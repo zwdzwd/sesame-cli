@@ -58,35 +58,46 @@ static int is_recommended(const char *name, const char *const *rec)
     return 0;
 }
 
-/* Locate the platform's .cm mask in the store: the one file in the platform's
- * asset directory ending in ".cm" (not ".cm.idx"). Scanned rather than named
- * because the file carries its genome build (MM285.mm10.mask.cm), which the
- * caller does not have here. 0 on success. */
+/* Locate the platform's .cm mask in the store: a file in the platform's asset
+ * directory ending in ".cm" (not ".cm.idx"). Scanned rather than named because
+ * the file carries its genome build (MM285.mm10.mask.cm), which the caller does
+ * not have here.
+ *
+ * A platform may ship more than one -- MM285 has both mm10 and mm39 -- so take
+ * the lexicographically first rather than whatever readdir happens to return.
+ * Arbitrary, but DETERMINISTIC, which the previous first-match was not: readdir
+ * order is filesystem-dependent, so the same command could silently mask
+ * against a different genome build on another machine. It also lands on mm10
+ * for MM285, which is the one with the full track set (110 vs 3). Name --mask
+ * explicitly when the choice matters. 0 on success. */
 static int find_cm(const char *platform, char *out, size_t n)
 {
-    char pdir[4096];
+    char pdir[4096], best[512];
     DIR *d;
     struct dirent *de;
     int found = 0;
 
     sesame_asset_dir(platform, pdir, sizeof pdir);
     if (!(d = opendir(pdir))) return -1;
+    best[0] = '\0';
     while ((de = readdir(d))) {
         size_t L = strlen(de->d_name);
-        if (L > 3 && strcmp(de->d_name + L - 3, ".cm") == 0) {
-            snprintf(out, n, "%s/%s", pdir, de->d_name);
-            found = 1;
-            break;
-        }
+        if (L > 3 && strcmp(de->d_name + L - 3, ".cm") == 0)
+            if (!found || strcmp(de->d_name, best) < 0) {
+                snprintf(best, sizeof best, "%s", de->d_name);
+                found = 1;
+            }
     }
     closedir(d);
+    if (found) snprintf(out, n, "%s/%s", pdir, best);
     return found ? 0 : -1;
 }
 
 /* Read the platform's .cm and return the union of the named tracks as a 0/1
  * vector aligned to the ordering (out[i] == 1 -> probe i is in some track).
  * Tracks not present in the .cm simply never match. */
-static int mask_union(const char *platform, const char *const *names,
+static int mask_union(const char *platform, const char *maskpath,
+                      const char *const *names,
                       uint8_t **out, int32_t *out_n, sesame_err_t *err)
 {
     char cm[4096];
@@ -97,10 +108,16 @@ static int mask_union(const char *platform, const char *const *names,
     int k = 0;
 
     if (err) { err->code = SESAME_OK; err->msg[0] = '\0'; }
-    if (!names)
+    /* No recommended track list means we do not know this platform. With an
+     * explicit --mask that is fine: the caller curated the file, so every track
+     * in it counts. Without one there is nothing to go on. */
+    if (!names && !(maskpath && *maskpath))
         return sesame__fail(err, SESAME_ERR_UNSUPPORTED,
-            "no mask set for platform '%s'", platform);
-    if (find_cm(platform, cm, sizeof cm) != 0) {
+            "no mask set for platform '%s' -- pass --mask <file.cm>",
+            platform ? platform : "(none)");
+    if (maskpath && *maskpath) {
+        snprintf(cm, sizeof cm, "%s", maskpath);      /* named outright */
+    } else if (find_cm(platform, cm, sizeof cm) != 0) {
         char help[1024];
         sesame_asset_missing_help(platform, "mask (.cm)", help, sizeof help);
         return sesame__fail(err, SESAME_ERR_IO, "%s", help);
@@ -120,7 +137,7 @@ static int mask_union(const char *platform, const char *const *names,
             mask = (uint8_t *)calloc((size_t)n, 1);
         }
         name = (k < sn.n) ? sn.s[k] : "";
-        if (mask && is_recommended(name, names)) {
+        if (mask && (!names || is_recommended(name, names))) {
             int32_t i;
             for (i = 0; i < n; i++) if (FMT0_IN_SET(c, i)) mask[i] = 1;
         }
@@ -138,16 +155,18 @@ static int mask_union(const char *platform, const char *const *names,
 }
 
 /* Q: the recommended quality mask (union of recommendedMaskNames). */
-int sesame_quality_mask(const char *platform, uint8_t **out, int32_t *out_n,
+int sesame_quality_mask(const char *platform, const char *maskpath,
+                        uint8_t **out, int32_t *out_n,
                         sesame_err_t *err)
 {
-    return mask_union(platform, recommended_names(platform), out, out_n, err);
+    return mask_union(platform, maskpath, recommended_names(platform), out, out_n, err);
 }
 
 /* P/B: the background mask (union of backgroundMask names), the probes EXCLUDED
  * from background estimation. */
-int sesame_background_mask(const char *platform, uint8_t **out, int32_t *out_n,
+int sesame_background_mask(const char *platform, const char *maskpath,
+                           uint8_t **out, int32_t *out_n,
                            sesame_err_t *err)
 {
-    return mask_union(platform, BG_NAMES, out, out_n, err);
+    return mask_union(platform, maskpath, BG_NAMES, out, out_n, err);
 }

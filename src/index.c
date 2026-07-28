@@ -1,7 +1,12 @@
 /* index.c -- the per-platform ordering table.
  *
- * Reads the ordering TSV in either shape:
- *     Probe_ID <TAB> M <TAB> U <TAB> col [ <TAB> mask ]
+ * Reads the ordering table in either shape:
+ *     Probe_ID <SEP> M <SEP> U <SEP> col [ <SEP> mask ]
+ * where SEP is a tab or a comma, sniffed from the header line -- Illumina
+ * manifests are CSV, and a custom array's ordering is usually derived from one,
+ * so insisting on TSV would make everyone convert for no reason. The sniff is
+ * per file, not per line: whichever separator the header uses is the one used
+ * throughout, so a Probe_ID containing the other character stays safe.
  * with M/U as decimal bead addresses or "NA", col in {G,R,2}, mask in {0,1}.
  * The 5-column form is the legacy tools/export_ordering.R (sesameData) export
  * with the mask inline; the 4-column form is the published InfiniumAnnotation
@@ -115,7 +120,7 @@ sesame_index_t *sesame_index_open(const char *path, sesame_err_t *err)
     char *buf = NULL;
     size_t len = 0;
     int32_t n = 0, row = 0;
-    char *p, *eof;
+    char *p, *eof, sep;
 
     if (err) { err->code = SESAME_OK; err->msg[0] = '\0'; }
     if (!path) { sesame__fail(err, SESAME_ERR_IO, "null path"); return NULL; }
@@ -148,8 +153,12 @@ sesame_index_t *sesame_index_open(const char *path, sesame_err_t *err)
         return NULL;
     }
 
-    /* Skip the header line. */
+    /* Sniff the separator off the header, then skip it. A comma only wins if
+     * the header has no tab, so a tab-separated file with commas inside a field
+     * is still read as TSV. */
     p = buf;
+    while (p < eof && *p != '\n' && *p != '\t' && *p != ',') p++;
+    sep = (p < eof && *p == ',') ? ',' : '\t';
     while (p < eof && *p != '\n') p++;
     if (p < eof) p++;
 
@@ -161,10 +170,10 @@ sesame_index_t *sesame_index_open(const char *path, sesame_err_t *err)
         while (le < eof && *le != '\n') le++;
         if (le == line) { p = le + 1; continue; }   /* blank line */
 
-        /* Split on tabs, in place. */
+        /* Split on the sniffed separator, in place. */
         f[nf++] = line;
         for (char *q = line; q < le && nf < 5; q++) {
-            if (*q == '\t') { *q = '\0'; f[nf++] = q + 1; }
+            if (*q == sep) { *q = '\0'; f[nf++] = q + 1; }
         }
         /* 5 columns = legacy sesameData export (mask inline); 4 columns = the
          * published InfiniumAnnotation ordering, where the mask now lives in the

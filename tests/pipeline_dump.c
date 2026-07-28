@@ -70,10 +70,10 @@ int main(int argc, char **argv)
     if (!(ix = sesame_index_open(idxpath, &e))) { fprintf(stderr, "%s\n", e.msg); goto out; }
     if (!(sig = sesame_sigdf_from_idats(g, r, ix, 0, &e))) { fprintf(stderr, "%s\n", e.msg); goto out; }
 
-    if (strchr(prep, 'Q') && sesame_quality_mask(platform, &qmask, &qn, &e))
+    if (strchr(prep, 'Q') && sesame_quality_mask(platform, NULL, &qmask, &qn, &e))
         { fprintf(stderr, "%s\n", e.msg); goto out; }
     if ((strchr(prep,'P') || strchr(prep,'B') || !strcmp(what,"pval")) &&
-        sesame_background_mask(platform, &bgmask, &bgn, &e))
+        sesame_background_mask(platform, NULL, &bgmask, &bgn, &e))
         { fprintf(stderr, "%s\n", e.msg); goto out; }
 
     n = sesame_index_nprobes(ix);

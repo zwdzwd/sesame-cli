@@ -37,6 +37,19 @@
 #define H_NOTE   yame_ui_dim()
 #define H_OFF    yame_ui_reset()
 
+/* --index is the old spelling of --platform <ordering>. Kept working because it
+ * is in published docs and in scripts, but named once on stderr so it does not
+ * quietly outlive the release it was deprecated in. "index" was always a poor
+ * word for the probe ordering -- it reads like a search structure. */
+static void sesame__index_deprecated(void)
+{
+    static int said = 0;
+    if (said) return;
+    said = 1;
+    fprintf(stderr, "sesame: --index is deprecated; pass the ordering to "
+                    "--platform instead\n");
+}
+
 /* The two facts worth stating right under the title: the backend this build is
  * coupled to, and where its store is. sesame links libyame.a from a pinned
  * submodule, so the YAME version is fixed at build time -- the store layout and
@@ -131,7 +144,8 @@ static int usage_preprocess(void)
     yame_usage_opt("--platform P", "EPIC | EPICv2 | HM450 | MSA (else from the bead");
     yame_usage_cont("count), or the path to an ordering file, which is");
     yame_usage_cont("how a custom array is named.");
-    yame_usage_opt("--index FILE", "ordering .tsv.gz (overrides --platform/detection)");
+    yame_usage_opt("--mask FILE", "quality/background mask .cm. Inferred for a named");
+    yame_usage_cont("platform; required for a custom array using Q/P/B.");
     yame_usage_opt("--min-beads N", "mask probes with < N beads (default 0)");
     yame_usage_opt("--out DIR", "output directory (default: current directory)");
     yame_usage_opt("--tmp DIR", "scratch for the sample-major matrix (default $TMPDIR)");
@@ -165,7 +179,7 @@ static int usage_dml(void)
     yame_usage_opt("--meta FILE", "sample table; first column matches sample names");
     yame_usage_opt("--design FILE", "numeric design matrix (for interactions), in");
     yame_usage_cont("place of --formula/--meta");
-    yame_usage_opt("--index FILE", "ordering .tsv.gz (required when --betas is a .cg)");
+
     yame_usage_opt("--threads N, -t", "worker threads (default: number of CPUs)");
     return 1;
 }
@@ -633,6 +647,7 @@ static int pp_scan_dir(const char *dir, char ***list, int32_t *n, int32_t *cap)
 static int cmd_preprocess(int argc, char **argv)
 {
     const char *idxpath = NULL, *platform = NULL, *plat = NULL, *prep = "QCDPB";
+    const char *maskpath = NULL;
     const char *outlist = "beta,intensity,pval,qc", *outdir = ".", *tmpdir = NULL;
     int min_beads = 0, nthreads = 0, raw_signal = 0, pneg_detection = 0, collapse = 0, i, rc = 1;
     char **prefixes = NULL, **names = NULL;
@@ -647,8 +662,12 @@ static int cmd_preprocess(int argc, char **argv)
     sesame_err_t e;
 
     for (i = 0; i < argc; i++) {
-        if (strcmp(argv[i], "--index") == 0 && i+1 < argc) idxpath = argv[++i];
+        if (strcmp(argv[i], "--index") == 0 && i+1 < argc) {
+            idxpath = argv[++i];
+            sesame__index_deprecated();
+        }
         else if (strcmp(argv[i], "--platform") == 0 && i+1 < argc) platform = argv[++i];
+        else if (strcmp(argv[i], "--mask") == 0 && i+1 < argc) maskpath = argv[++i];
         else if (strcmp(argv[i], "--prep") == 0 && i+1 < argc) prep = argv[++i];
         else if (strcmp(argv[i], "--output") == 0 && i+1 < argc) outlist = argv[++i];
         else if (strcmp(argv[i], "--out") == 0 && i+1 < argc) outdir = argv[++i];
@@ -716,12 +735,12 @@ static int cmd_preprocess(int argc, char **argv)
 
     /* masks: Q needs qmask; P/B/pval/qc need bgmask */
     if (strchr(prep, 'Q')) {
-        if (!plat) { fprintf(stderr, "sesame: Q needs a known platform; pass --platform with --index\n"); goto out; }
-        if (sesame_quality_mask(plat, &qmask, &qn, &e) != SESAME_OK) { fprintf(stderr, "sesame: %s\n", e.msg); goto out; }
+        if (!plat && !maskpath) { fprintf(stderr, "sesame: Q needs a mask -- name a\n"            "  commercial platform, or pass --mask <file.cm> for a custom array\n"); goto out; }
+        if (sesame_quality_mask(plat, maskpath, &qmask, &qn, &e) != SESAME_OK) { fprintf(stderr, "sesame: %s\n", e.msg); goto out; }
     }
     if (strchr(prep,'P') || strchr(prep,'B') || ctx.want_pval || ctx.want_qc) {
-        if (!plat) { fprintf(stderr, "sesame: P/B/pval/qc need a known platform; pass --platform with --index\n"); goto out; }
-        if (sesame_background_mask(plat, &bgmask, &bgn, &e) != SESAME_OK) { fprintf(stderr, "sesame: %s\n", e.msg); goto out; }
+        if (!plat && !maskpath) { fprintf(stderr, "sesame: P/B/pval/qc need a mask -- name a\n"            "  commercial platform, or pass --mask <file.cm> for a custom array\n"); goto out; }
+        if (sesame_background_mask(plat, maskpath, &bgmask, &bgn, &e) != SESAME_OK) { fprintf(stderr, "sesame: %s\n", e.msg); goto out; }
     }
     if (ctx.want_qc && plat) {                 /* GCT ext codes (optional) */
         char efile[256], epath[4096];
@@ -1005,7 +1024,10 @@ static int cmd_dml(int argc, char **argv)
         else if (strcmp(argv[i], "--meta") == 0 && i+1 < argc) metapath = argv[++i];
         else if (strcmp(argv[i], "--formula") == 0 && i+1 < argc) formula = argv[++i];
         else if (strcmp(argv[i], "--design") == 0 && i+1 < argc) designpath = argv[++i];
-        else if (strcmp(argv[i], "--index") == 0 && i+1 < argc) idxpath = argv[++i];
+        else if (strcmp(argv[i], "--index") == 0 && i+1 < argc) {
+            idxpath = argv[++i];
+            sesame__index_deprecated();
+        }
         else if ((strcmp(argv[i], "--threads")==0||strcmp(argv[i],"-t")==0) && i+1<argc)
             nthreads = (int)strtol(argv[++i], NULL, 10);
         else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) { usage_dml(); return 0; }
@@ -1302,7 +1324,10 @@ static int cmd_cnv(int argc, char **argv)
 
     for (i = 0; i < argc; i++) {
         if (strcmp(argv[i], "--normals") == 0 && i+1 < argc) normals = argv[++i];
-        else if (strcmp(argv[i], "--index") == 0 && i+1 < argc) idxpath = argv[++i];
+        else if (strcmp(argv[i], "--index") == 0 && i+1 < argc) {
+            idxpath = argv[++i];
+            sesame__index_deprecated();
+        }
         else if (strcmp(argv[i], "--platform") == 0 && i+1 < argc) platform = argv[++i];
         else if (strcmp(argv[i], "--coords") == 0 && i+1 < argc) coords = argv[++i];
         else if (strcmp(argv[i], "--genome") == 0 && i+1 < argc) genome = argv[++i];
@@ -1438,7 +1463,10 @@ static int cmd_vcf(int argc, char **argv)
     sesame_err_t e;
 
     for (i = 0; i < argc; i++) {
-        if (strcmp(argv[i], "--index") == 0 && i+1 < argc) idxpath = argv[++i];
+        if (strcmp(argv[i], "--index") == 0 && i+1 < argc) {
+            idxpath = argv[++i];
+            sesame__index_deprecated();
+        }
         else if (strcmp(argv[i], "--platform") == 0 && i+1 < argc) platform = argv[++i];
         else if (strcmp(argv[i], "--snp") == 0 && i+1 < argc) snp = argv[++i];
         else if (strcmp(argv[i], "--genome") == 0 && i+1 < argc) genome = argv[++i];
@@ -1522,7 +1550,10 @@ static int cmd_region(int argc, char **argv)
         else if (strcmp(argv[i], "--gene") == 0 && i+1 < argc) gene = argv[++i];
         else if (strcmp(argv[i], "--gene-models") == 0 && i+1 < argc) genesbed = argv[++i];
         else if (strcmp(argv[i], "--pad") == 0 && i+1 < argc) pad = strtol(argv[++i], NULL, 10);
-        else if (strcmp(argv[i], "--index") == 0 && i+1 < argc) idxpath = argv[++i];
+        else if (strcmp(argv[i], "--index") == 0 && i+1 < argc) {
+            idxpath = argv[++i];
+            sesame__index_deprecated();
+        }
         else if (strcmp(argv[i], "--platform") == 0 && i+1 < argc) platform = argv[++i];
         else if (strcmp(argv[i], "--coords") == 0 && i+1 < argc) coords = argv[++i];
         else if (strcmp(argv[i], "--genome") == 0 && i+1 < argc) genome = argv[++i];
@@ -1619,8 +1650,14 @@ static int cmd_liftover(int argc, char **argv)
     for (i = 0; i < argc; i++) {
         if (strcmp(argv[i], "--to") == 0 && i+1 < argc) tgt_plat = argv[++i];
         else if (strcmp(argv[i], "--platform") == 0 && i+1 < argc) src_plat = argv[++i];
-        else if (strcmp(argv[i], "--index") == 0 && i+1 < argc) src_idx = argv[++i];
-        else if (strcmp(argv[i], "--index-to") == 0 && i+1 < argc) tgt_idx = argv[++i];
+        else if (strcmp(argv[i], "--index") == 0 && i+1 < argc) {
+            src_idx = argv[++i];
+            sesame__index_deprecated();
+        }
+        else if (strcmp(argv[i], "--index-to") == 0 && i+1 < argc) {
+            tgt_idx = argv[++i];
+            sesame__index_deprecated();
+        }
         else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) { usage_liftover(); return 0; }
         else if (argv[i][0] == '-' && argv[i][1] != '\0') { fprintf(stderr, "sesame: unknown option %s\n", argv[i]); return usage_liftover(); }
         else if (!inpath) inpath = argv[i];
@@ -1764,7 +1801,10 @@ static int cmd_attach_probe(int argc, char **argv)
     int i, rc = 1;
 
     for (i = 0; i < argc; i++) {
-        if (strcmp(argv[i], "--index") == 0 && i+1 < argc) idxpath = argv[++i];
+        if (strcmp(argv[i], "--index") == 0 && i+1 < argc) {
+            idxpath = argv[++i];
+            sesame__index_deprecated();
+        }
         else if (strcmp(argv[i], "--platform") == 0 && i+1 < argc) platform = argv[++i];
         else if (strcmp(argv[i], "--with") == 0 && i+1 < argc) {
             /* comma list of ordering columns to carry through */
@@ -1932,7 +1972,10 @@ static int cmd_deidentify(int argc, char **argv)
     sesame_err_t e;
 
     for (i = 0; i < argc; i++) {
-        if (strcmp(argv[i], "--index") == 0 && i+1 < argc) idxpath = argv[++i];
+        if (strcmp(argv[i], "--index") == 0 && i+1 < argc) {
+            idxpath = argv[++i];
+            sesame__index_deprecated();
+        }
         else if (strcmp(argv[i], "--platform") == 0 && i+1 < argc) platform = argv[++i];
         else if (strcmp(argv[i], "--out") == 0 && i+1 < argc) outpath = argv[++i];
         else if (strcmp(argv[i], "--seed") == 0 && i+1 < argc) seed = strtoll(argv[++i], NULL, 10);

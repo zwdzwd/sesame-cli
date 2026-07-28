@@ -347,18 +347,34 @@ sesame preprocess  --platform MyArray.ordering.tsv.gz --out out/ idats/
 sesame attach-probe --platform MyArray.ordering.tsv.gz out/beta.cg
 ```
 
-`--index` is the same thing spelled explicitly. The two stay separate because
-they are separate questions: **`--index` is which probe order**, `--platform` is
-**which companion assets** (mask, coordinates, SNP table). They coincide for a
-published platform, and passing both is how a custom ordering borrows a known
-platform's masks:
+**Tab or comma, either way.** The separator is sniffed from the header line, so
+an ordering exported straight out of a CSV manifest needs no conversion. A comma
+only wins if the header has no tab.
+
+Every companion asset has its own flag, inferred when `--platform` is a name and
+named explicitly otherwise — so a custom array is not second-class:
+
+| flag | asset | inferred? |
+|---|---|---|
+| `--mask` | `.cm` quality/background mask | yes, for a named platform |
+| `--coords` | per-probe coordinates | yes |
+| `--snp` | SNP table for `vcf` | yes |
+| `--normals` | CNV normal panel | no — not published, build with `make cnv-normals` |
 
 ```sh
-sesame preprocess --index MyArray.ordering.tsv.gz --platform EPICv2 ...
+# a custom array, full QCDPB: the ordering names the array, the mask comes with it
+sesame preprocess --platform MyArray.ordering.csv --mask MyArray.mask.cm \
+    --prep QCDPB --out out/ idats/
 ```
 
-A custom array with no published masks can still run `--prep C` (or `""`), but
-not the `Q`/`P`/`B` steps, which need a `.cm` mask that only exists per platform.
+Without `--mask`, a custom array can still run `--prep C` or `""`; `Q`, `P` and
+`B` need a mask. When a named platform ships more than one `.cm` (MM285 has mm10
+and mm39) the lexicographically first is used — deterministic, and mm10 for
+MM285 — but name `--mask` when the build matters.
+
+> `--index` was the old name for `--platform <ordering>` and still works, with a
+> deprecation notice. "index" read like a search structure; the ordering is the
+> array's identity, which is what `--platform` means.
 
 **It is not the Illumina/sesame manifest with tabs instead of commas.** It is a
 four-column *ordering* derived from a manifest — everything sesame needs to turn
