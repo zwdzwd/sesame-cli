@@ -108,15 +108,30 @@ static int mask_union(const char *platform, const char *maskpath,
     int k = 0;
 
     if (err) { err->code = SESAME_OK; err->msg[0] = '\0'; }
-    /* No recommended track list means we do not know this platform. With an
-     * explicit --mask that is fine: the caller curated the file, so every track
-     * in it counts. Without one there is nothing to go on. */
+    /* No recommended track list means we do not know this platform -- a custom
+     * array. An explicit --mask covers that, but only if it is unambiguous:
+     * see the single-track check below. */
     if (!names && !(maskpath && *maskpath))
         return sesame__fail(err, SESAME_ERR_UNSUPPORTED,
             "no mask set for platform '%s' -- pass --mask <file.cm>",
             platform ? platform : "(none)");
     if (maskpath && *maskpath) {
         snprintf(cm, sizeof cm, "%s", maskpath);      /* named outright */
+        /* A .cm handed over directly must say exactly what to mask. Without a
+         * recommended track list there is no basis for choosing among several,
+         * and unioning them all is the wrong default -- a stock EPICv2 mask has
+         * 25 tracks where the recommended set is 5, so quietly taking all of
+         * them masks 111k probes instead of 50k. Refuse and say so. */
+        if (!names) {
+            snames_t probe = loadSampleNamesFromIndex(cm);
+            int ntrk = probe.n;
+            cleanSampleNames2(probe);
+            if (ntrk > 1)
+                return sesame__fail(err, SESAME_ERR_UNSUPPORTED,
+                    "--mask needs a single-track .cm here (%s has %d). Extract "
+                    "the track you want, or name a published platform so its "
+                    "recommended set picks the tracks.", cm, ntrk);
+        }
     } else if (find_cm(platform, cm, sizeof cm) != 0) {
         char help[1024];
         sesame_asset_missing_help(platform, "mask (.cm)", help, sizeof help);

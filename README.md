@@ -367,6 +367,24 @@ sesame preprocess --platform MyArray.ordering.csv --mask MyArray.mask.cm \
     --prep QCDPB --out out/ idats/
 ```
 
+**Making the mask.** A `.cm` is a bitset with one bit per ordering row, in the
+same order — 1 means drop the probe:
+
+```sh
+# one 0/1 per ordering row
+awk -F'\t' 'NR>1{print (bad) ? 1 : 0}' MyArray.ordering.csv > m.txt
+
+yame pack -f b m.txt MyArray.mask.cm     # -f b = binary/bitset
+echo M_custom > names.txt
+yame index -s names.txt MyArray.mask.cm  # name the track
+```
+
+Given directly, `--mask` wants a **single-track** `.cm`. A published platform's
+mask holds many (EPICv2 has 25) and sesame selects the recommended subset *by
+platform name*, so a file handed over without a name is ambiguous — it would
+have to union all 25, masking 111k probes where the recommended 5 mask 50k.
+sesame refuses and says so instead of guessing.
+
 Without `--mask`, a custom array can still run `--prep C` or `""`; `Q`, `P` and
 `B` need a mask. When a named platform ships more than one `.cm` (MM285 has mm10
 and mm39) the lexicographically first is used — deterministic, and mm10 for

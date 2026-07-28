@@ -490,6 +490,20 @@ sesame <span class="sub">preprocess</span> --platform MyArray.ordering.csv \
 <span class="cm"># without --mask, prep C or "" work; Q/P/B need one</span>
 sesame <span class="sub">preprocess</span> --platform MyArray.ordering.csv \
   --prep C --out out/ idats/</code></pre>
+      <p style="margin-top:9px"><b>Making the mask.</b> A <code class="inl">.cm</code> is
+        a bitset with one bit per ordering row, in the same order — 1 means drop the
+        probe. Write the column, pack it, name the track:</p>
+      <pre><code><span class="cm"># one 0/1 per ordering row, same order as the ordering</span>
+awk -F'\t' 'NR&gt;1{print (bad) ? 1 : 0}' MyArray.ordering.csv &gt; m.txt
+
+yame pack -f b m.txt MyArray.mask.cm       <span class="cm"># -f b = binary/bitset</span>
+echo M_custom &gt; names.txt
+yame index -s names.txt MyArray.mask.cm    <span class="cm"># name the track</span></code></pre>
+      <p style="margin-top:9px">Given directly, <code class="inl">--mask</code> wants a
+        <b>single-track</b> <code class="inl">.cm</code> — a published platform's mask
+        holds many (EPICv2 has 25) and sesame picks the recommended subset by platform
+        name, so handing one over without a name would be ambiguous. It says so rather
+        than guessing.</p>
       <p style="margin-top:9px">Overrides: <code class="inl">--mask</code>
         <code class="inl">--coords</code> <code class="inl">--snp</code>
         <code class="inl">--normals</code>. From an Illumina manifest the ordering is a
