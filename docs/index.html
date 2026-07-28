@@ -748,9 +748,12 @@ yame index -s names.txt MyArray.mask.cm  <span class="cm"># name it</span></code
     if (cards.length < 2) return;
     var GAP = 16;
 
+    /* Three columns is the ceiling however wide the window gets: a fourth
+     * makes each card narrow enough that the code blocks -- which set the
+     * useful minimum width here -- start scrolling horizontally. */
     function colCount() {
       var w = window.innerWidth;
-      return w >= 1440 ? 4 : w >= 980 ? 3 : w >= 640 ? 2 : 1;
+      return w >= 980 ? 3 : w >= 640 ? 2 : 1;
     }
 
     /* fewest columns needed if no column may exceed `cap` */
@@ -799,8 +802,8 @@ yame index -s names.txt MyArray.mask.cm  <span class="cm"># name it</span></code
 
       /* How many columns to actually use. More columns cannot make the page
        * taller, so minimising height alone always picks the maximum -- and that
-       * is how you get a stub column: at 1600px four columns save 4% of height
-       * and leave the last one half empty. So take the FEWEST columns that stay
+       * is how you get a stub column: the last one half empty for a few percent
+       * of height. So take the FEWEST columns that stay
        * within TOL of the best achievable height; fuller columns and wider cards
        * are worth a few percent. */
       var TOL = 1.15, bestH = Infinity, i2;
