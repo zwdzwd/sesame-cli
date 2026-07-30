@@ -54,6 +54,9 @@
   .builton .br{display:inline-flex;align-items:center;padding:.42em .6em;
      color:var(--accent);background:var(--accent-soft);
      font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  /* the class sets display, which would otherwise beat the hidden attribute and
+     show an empty pill whenever the version lookup fails */
+  .builton[hidden]{display:none}
   .builton:hover .bl{filter:brightness(1.08)}
   .builton:hover .br{filter:brightness(.96)}
   .titlerow .badge{margin-left:0}
@@ -70,6 +73,17 @@
   .install .ana{display:inline-flex;align-items:center;padding:.42em .55em;font-size:.72rem;text-decoration:none;
      color:var(--accent);background:var(--accent-soft);border-left:1px solid var(--accent)}
   .install .ana:hover{filter:brightness(.97)}
+  /* agent prompt: the same compact filled treatment as the install action, but
+     its own pill — it copies a prompt for a coding agent, pointing that agent
+     at llms.txt rather than at this page's markup. */
+  #agent-btn{font:inherit;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+     font-size:.74rem;cursor:pointer;border:1px solid var(--accent);border-radius:6px;
+     color:var(--on-accent);background:var(--accent);padding:.42em .7em;line-height:1.15;
+     display:inline-flex;align-items:center;gap:.5em;white-space:nowrap}
+  #agent-btn:hover{filter:brightness(1.08)}
+  #agent-btn:focus-visible{outline:2px solid var(--fg);outline-offset:2px}
+  #agent-btn .ico::before{content:"⧉";opacity:.75}
+  #agent-btn.done .ico::before{content:"✓";opacity:1}
   /* cite: a paired button — the label opens the paper, the stub copies the PMID */
   .citebtn{display:inline-flex;align-items:stretch;border:1px solid var(--accent);border-radius:6px;overflow:hidden}
   .citebtn a,.citebtn button{font:inherit;font-size:.74rem;line-height:1.15;padding:.42em .7em;
@@ -178,10 +192,14 @@
     <h1><b>SE</b>nsible <b>S</b>tep-wise <b>A</b>nalysis of DNA <b>ME</b>thylation</h1>
     <a class="badge badge-ver" id="ver" href="https://github.com/zwdzwd/sesame-cli/tags">latest</a>
     <span class="badge">cli</span>
+    <button id="agent-btn" type="button"
+            data-cmd="Use sesame (sesame-cli) for Infinium DNA methylation analysis: IDAT to betas, QC, DML, CNV, SNP genotyping. Read https://zwdzwd.github.io/sesame-cli/llms.txt first for installation, the shared asset store filled by yame fetch, commands, the prep codes, custom-array orderings, traps, and development guidance."
+            title="Copy a prompt for your coding agent"
+            aria-label="Copy a prompt for your coding agent"><span class="ico"></span>agent prompt</button>
     <span class="install">
       <button id="install-btn" type="button"
               data-cmd="conda install -c zhou-lab -c conda-forge sesame"
-              title="Copy to clipboard"><span class="ico"></span>conda install -c zhou-lab -c conda-forge sesame</button>
+              title="conda install -c zhou-lab -c conda-forge sesame — click to copy"><span class="ico"></span>conda install</button>
       <a class="ana" href="https://anaconda.org/zhou-lab/sesame"
          title="anaconda.org/zhou-lab/sesame" rel="noopener">↗</a>
     </span>
@@ -626,11 +644,14 @@ yame index -s names.txt MyArray.mask.cm  <span class="cm"># name it</span></code
     try{document.execCommand('copy');}catch(e){}
     document.body.removeChild(t);done();
   }
-  // header install box: click the command to copy it (⧉ -> ✓)
-  var ib=document.getElementById('install-btn');
-  if(ib)ib.addEventListener('click',function(){
-    copy(ib.getAttribute('data-cmd'),function(){
-      ib.classList.add('done');setTimeout(function(){ib.classList.remove('done');},1400);
+  // header actions: click to copy the install command / the agent prompt (⧉ -> ✓)
+  ['install-btn','agent-btn'].forEach(function(id){
+    var b=document.getElementById(id);
+    if(!b)return;
+    b.addEventListener('click',function(){
+      copy(b.getAttribute('data-cmd'),function(){
+        b.classList.add('done');setTimeout(function(){b.classList.remove('done');},1400);
+      });
     });
   });
   // header cite button: the stub copies the PMID

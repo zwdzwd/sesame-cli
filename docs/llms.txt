@@ -1,0 +1,154 @@
+# sesame-cli — agent reference
+# Canonical: https://zwdzwd.github.io/sesame-cli/llms.txt
+# Human guide: https://zwdzwd.github.io/sesame-cli/
+# Source: https://github.com/zwdzwd/sesame-cli
+# For exact flags, always run: sesame <command> -h
+
+## What it is
+
+sesame-cli is a single C binary for Infinium DNA methylation analysis: IDAT ->
+betas -> QC, differential methylation, copy number, SNP genotyping. It is a
+standalone reimplementation of the R package sesame / openSesame, validated
+against R as a permanent oracle. No R, no Bioconductor, no network.
+
+The binary is named `sesame`. Arrays: EPIC, EPICv2, HM450, MSA (plus MM285 and
+other published orderings). Numeric outputs are YAME `.cg` files.
+
+## Install
+
+  conda install -c zhou-lab -c conda-forge sesame
+
+Source build needs a C compiler, make, zlib, libcurl and the bundled YAME
+submodule:
+
+  git clone --recurse-submodules https://github.com/zwdzwd/sesame-cli
+  cd sesame-cli && make
+
+Also put `yame` on PATH. sesame downloads nothing; `yame fetch` is how the
+annotation it reads gets there. `sesame version` prints the sesame version, the
+YAME it was built against, and the store path in use.
+
+## Assets and the store
+
+  yame fetch InfiniumAnnotation/EPICv2      # ordering + mask + coords + snp
+  yame fetch genomes/hg38                   # seqinfo, gaps, cytoband, genes
+
+Store root: `$YAME_DATA_HOME`, else `${XDG_DATA_HOME:-$HOME/.local/share}/yame`
+— one variable for the whole suite (yame, kycg, sesame share the store).
+Lookup order for an asset: explicit flag (`--index`/`--platform`, `--mask`,
+`--coords`, `--snp`, `--normals`) -> `<store>/<platform>/` -> `./`.
+
+Per platform: `<P>.ordering.tsv.gz`, `<P>.<genome>.mask.cm(+.idx)`,
+`<P>.<genome>.coord.tsv.gz`, `<P>.<genome>.snp.tsv.gz`, `SHA256SUMS`.
+Downloads are digest-verified; `shasum -a 256 -c SHA256SUMS` re-checks by hand.
+
+Not published: the CNV normal panel `<P>.cnvnormals.cg`. Build one with
+`make cnv-normals` or pass `cnv --normals`.
+
+There is no `sesame fetch` subcommand. A missing asset is an error naming the
+exact `yame fetch` to run — sesame never downloads and never prompts.
+
+## Commands
+
+  preprocess    IDAT -> .cg (+ qc.tsv); the main entry point
+  dml           per-probe OLS + t/F tests + BH -> TSV
+  cnv           log2 vs a normal panel, genome binning, CBS segmentation
+  vcf           rs probes -> sites-only VCF (formatVCF)
+  mliftover     betas across platforms (mLiftOver)
+  impute        fill NA betas (--method mean|neighbors)
+  region        <chr:beg-end> or --gene NAME -> long-form betas TSV
+  deidentify    zero or reversibly scramble SNP beads in an IDAT
+  attach-probe  label a positional .cg/.cm/.tsv with Probe_IDs
+  idat-dump     inspect a raw .idat[.gz]
+  version       version, the yame it links, the store
+
+## Preprocess
+
+  sesame preprocess --out out/ idats/          # dir searched recursively
+  sesame preprocess --output beta --out out/ pfx1 pfx2
+
+Writes one indexed `.cg` per output over the whole cohort (one block per
+sample, named by basename) plus `qc.tsv`. Default
+`--output beta,intensity,pval,qc`.
+
+`--prep` codes apply in the order given; default `QCDPB` (openSesame's):
+  Q qualityMask   C inferInfiniumIChannel   D dyeBiasNL
+  E dyeBiasL      P pOOBAH                  B noob
+`Q`, `P`, `B` read the `.cm` mask, so the platform must be in the store (or
+pass `--mask`). `--prep ""` gives raw betas, bit-identical to R.
+
+Other flags: `--platform`/`--index` (else auto-detected from bead count),
+`--raw-signal` (signal outputs from raw signal; what CNV wants), `--collapse`
+(average EPICv2/MSA replicates to the cg prefix), `--detection pneg`,
+`--threads`, `--min-beads`, `--tmp`.
+
+`qc.tsv` holds 65 metrics per sample; `frac_dt` (fraction of probes above
+detection) is the primary quality read-out.
+
+## Formats
+
+`.cg` is a BGZF container of per-sample blocks plus a `<file>.idx` of sample
+names. Read with `yame unpack` / `yame info`.
+  format 3  intensity.cg  M/U integers (yame derives beta and coverage)
+  format 4  beta.cg, total_intensity.cg, pval.cg  float32, NA negative
+
+A `.cg` is POSITIONAL: one value per ordering row, no Probe_IDs inside. Row i
+is probe i. `sesame attach-probe` joins the ordering back on; a row-count
+mismatch is a hard error, never silent misalignment.
+
+## Custom arrays
+
+`--platform` takes a name or a path to an ordering table; a path is used as a
+path, so a custom or pre-release array needs no special flag.
+
+  sesame preprocess --platform MyArray.ordering.csv --mask MyArray.mask.cm \
+      --prep QCDPB --out out/ idats/
+
+The ordering is four columns with a header: `Probe_ID`, `M` (AddressB_ID, `NA`
+for Infinium-II), `U` (AddressA_ID), `col` (`G`/`R` Infinium-I channel, `2`
+Infinium-II). A legacy fifth `mask` column is still read. Tab or comma (sniffed
+from the header), plain or gzipped. Not the Illumina manifest with tabs — it is
+a projection of it. Row order is permanent: sorting or inserting re-labels every
+`.cg` written against the old file.
+
+Mask: a `.cm` is a bitset, one bit per ordering row, 1 = drop.
+
+  awk -F'\t' 'NR>1{print (bad) ? 1 : 0}' MyArray.ordering.csv > m.txt
+  yame pack -f b m.txt MyArray.mask.cm
+  echo M_custom > names.txt && yame index -s names.txt MyArray.mask.cm
+
+## Traps
+
+- `--mask` given directly wants a SINGLE-track `.cm`. A published platform's
+  mask holds many (EPICv2 has 25) and sesame picks the recommended subset by
+  platform NAME; a nameless file is ambiguous and refused rather than unioned.
+- When a named platform ships several `.cm` (MM285: mm10 and mm39) the
+  lexicographically first wins — name `--mask` when the build matters.
+- A batch is one platform; a failed sample becomes an all-NA block and sets
+  exit status 1 (the run does not abort).
+- `--threads 1` is byte-identical to `--threads N`; block order is command-line
+  order.
+- `vcf` uses RAW signal deliberately — channel inference would erase the
+  Type-I channel-switch genotype.
+- `--index` is the deprecated old name for `--platform <ordering>`.
+- Exit codes: 0 ok, 1 runtime error or a failed sample, 2 usage error.
+
+## Fidelity
+
+R is the oracle. `prep=""` betas and the IDAT reader are bit-identical; every
+intentional divergence is quantified one row per case in
+https://github.com/zwdzwd/sesame-cli/blob/main/NUMERICS.md — read it before
+changing a prep step.
+
+## Development
+
+  make               # ./sesame
+  make test          # golden ladder vs the R oracle (needs Rscript + sesame)
+  make asan          # ASan + UBSan
+  make fuzz-replay   # IDAT-parser corpus
+  make registry      # regenerate src/registry.h from YAME/tools/registry
+
+Layout: `cli/` command, `src/` libsesame, `include/sesame.h` public API,
+`tests/` shell drivers + R oracles, `docs/` the Pages site, `YAME/` submodule.
+`src/registry.h` is generated from YAME's shared catalog — do not hand-edit it;
+the annotation tags come from `YAME/tools/registry/TAGS`, not from sesame.
